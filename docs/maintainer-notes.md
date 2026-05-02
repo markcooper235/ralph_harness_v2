@@ -131,10 +131,49 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 
 ## Smoke Harness Notes
 
-- Framework sanity smoke checks live in `scripts/smoke/e2e-sanity.sh`; local runs default to real Codex and CI runs with mock Codex for deterministic validation.
+### Primary E2E test: e2e-calendar.sh
+
+`scripts/smoke/e2e-calendar.sh` is the primary framework smoke test. It exercises a complete two-sprint lifecycle across two real project types, validating multi-sprint operation end-to-end.
+
+**Projects under test:**
+
+- **nextjs-calendar** — Real Next.js project scaffolded with `create-next-app`, Jest for testing
+  - Sprint 1: domain layer — types, CalendarService, TodoService, barrel/module + integration test
+  - Sprint 2: React components — CalendarView, TodoList, EventForm, CalendarApp with @testing-library/react
+- **angular-calendar** — Real Angular project scaffolded with `ng new`, Jest via ts-jest
+  - Sprint 1: services in `src/app/services/`, tested as `*.spec.ts`
+  - Sprint 2: standalone Angular components in `src/app/components/`, class-only tests
+
+**Lifecycle covered per project:**
+
+```
+install.sh → doctor.sh → ralph-sprint.sh create → ralph-story.sh add →
+story.json (hand-written or --generated) → ralph-story.sh health →
+ralph.sh → ralph-status.sh → ralph-sprint-commit.sh →
+[sprint 2 setup] → ralph.sh → ralph-sprint-commit.sh → ralph-verify.sh
+```
+
+Sprint 2 is skipped for a project if sprint 1 did not commit successfully.
+
+**Flags:**
+
+- `--keep` — retain work directory after run (always retained on failure)
+- `--max-retries N` — per-task retry count (default: 2)
+- `--generated` — use `ralph-story.sh generate` for story.json instead of hand-written files; exercises the full story generation pipeline and adds ~8 Codex sessions
+
+**Running:**
+
+```bash
+bash scripts/smoke/e2e-calendar.sh
+bash scripts/smoke/e2e-calendar.sh --keep
+bash scripts/smoke/e2e-calendar.sh --generated
+```
+
+### Smoke harness guidelines
+
 - Disposable smoke repos should configure a local git identity during setup so E2E runs do not depend on the developer having global `user.name` and `user.email` configured.
 - When the smoke harness runs under a TTY, explicitly redirect stdin from `/dev/null` for intentionally interactive wrappers when they are used in automation-only setup steps.
 - Smoke telemetry should report both token totals and loop iteration counts so efficiency regressions can be traced to planning cost or extra loop churn.
 - Smoke runs should persist a lightweight local benchmark history under `scripts/smoke/.benchmarks/` for before/after efficiency comparison.
 - Smoke retry handling should clear only provably stale workflow locks in disposable smoke repos; core Ralph lock semantics in `ralph.sh` and `ralph-task.sh` are not weakened.
-- Worst-case UI smoke validates runtime UI behavior instead of overfitting to exact implementation spelling.
+- Smoke assertions should be behavior-led when equivalent implementations are acceptable — avoid asserting exact source spelling unless the spelling itself is part of the requirement.

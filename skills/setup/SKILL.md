@@ -38,11 +38,16 @@ Re-run this after local skill edits so runtime behavior matches repo changes.
 ### B) Install Ralph into target project
 
 ```bash
-bash ./install.sh --project /absolute/path/to/target-project [--install-speckit]
+bash ./install.sh --project /absolute/path/to/target-project [--install-speckit] [--force]
 ```
 
 Installs `scripts/ralph/` with loop scripts, helpers, templates, and a sprint scaffold.
-`--install-speckit` installs the SpecKit `specify` CLI, required for story preparation.
+
+Additional flags:
+- `--install-speckit` — install the SpecKit `specify` CLI, required for story preparation
+- `--force` — overwrite existing files on reinstall
+- `--dest RELDIR` — install to a different relative path (default: `scripts/ralph`)
+- `--skip-git-check` — allow installing outside a git repo
 
 ### C) Verify install
 

@@ -44,13 +44,16 @@ roadmap → stories.json (per sprint)
 ./ralph-story.sh health [S-001]            # validate story task containers
 
 # Loop execution
-./ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow]
+./ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
 
 # Status
 ./ralph-status.sh
 
+# Verification
+./ralph-verify.sh [--targeted|--full]
+
 # Closeout
-./ralph-sprint-commit.sh
+./ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression]
 
 # Advanced / recovery helpers
 ./ralph-story.sh add --title "..." --goal "..." --prompt-context "..."
@@ -97,6 +100,7 @@ Importing an existing `prd.json`:
 - `ralph-task.sh` — Execute all tasks in the active story (one Codex session per task)
 - `ralph.sh` — Sprint execution loop: start-next → ralph-task.sh → repeat
 - `ralph-status.sh` — Show sprint, story, branch, and loop state
+- `ralph-verify.sh` — Run typecheck + lint + tests (--targeted or --full)
 - `ralph-fallow.sh` — Code-quality gate (dead code, duplication, lint)
 - `ralph-sprint-commit.sh` — Archive and merge the completed sprint
 - `ralph-sprint-migrate.sh` — Convert sprint from legacy epic/PRD format

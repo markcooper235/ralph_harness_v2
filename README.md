@@ -17,6 +17,7 @@ This repo is the Ralph-for-Codex framework — **story-task architecture**:
 
 - [Current Process](#current-process)
   - [Sprint Workflow](#sprint-workflow)
+  - [Multi-Sprint Workflow](#multi-sprint-workflow)
   - [Standalone (PRD Import)](#standalone-prd-import)
 - [Quick Start](#quick-start)
 - [Core Capabilities](#core-capabilities)
@@ -63,7 +64,24 @@ What happens:
 - `ralph.sh` picks up the next eligible story, runs each task via `ralph-task.sh`, validates binary checks, and merges the story branch back to the sprint branch
 - `ralph-sprint-commit.sh` runs the regression gate, archives sprint artifacts, and merges to `main`/`master`
 
-Repeat for additional sprints:
+### Multi-Sprint Workflow
+
+After sprint 1 completes, activate and run subsequent sprints:
+
+```bash
+# Sprint 1
+./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph.sh
+./scripts/ralph/ralph-sprint-commit.sh          # merges sprint-1 branch to main
+
+# Sprint 2
+./scripts/ralph/ralph-sprint.sh use sprint-2    # activate the next sprint
+./scripts/ralph/ralph-story.sh prepare-all      # prepare sprint-2 stories
+./scripts/ralph/ralph.sh                        # execute sprint-2
+./scripts/ralph/ralph-sprint-commit.sh          # merges sprint-2 branch to main
+```
+
+Or use `next --activate` to automatically select the next ready sprint:
 
 ```bash
 ./scripts/ralph/ralph-sprint.sh next --activate
@@ -71,6 +89,8 @@ Repeat for additional sprints:
 ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh
 ```
+
+`ralph-sprint-commit.sh` closes the sprint branch and merges it to `main`/`master`. The previous sprint must be closed before a new one can be activated.
 
 ### Standalone (PRD Import)
 
@@ -142,12 +162,15 @@ Prerequisites:
 - each task's `checks[]` are binary shell expressions (exit 0 = pass)
 - the fallow gate runs after all task checks pass
 - `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to pass before merging the sprint
+- `ralph-verify.sh --targeted` runs typecheck, lint, and tests scoped to changed files
+- `ralph-verify.sh --full` runs the full suite with known baseline failures filtered out
 
 ### Sprint Management
 
 - `ralph-sprint.sh create <name>` creates a new sprint scaffold
 - `ralph-sprint.sh status` shows active sprint, story readiness, and active story
 - `ralph-sprint.sh mark-ready <name>` promotes a sprint once all stories are ready
+- `ralph-sprint.sh use <name>` activates a sprint (previous sprint must be closed)
 - `ralph-sprint.sh next [--activate]` selects and optionally activates the next ready sprint
 
 ### Closeout
@@ -171,7 +194,7 @@ See [README-local.md](README-local.md).
 
 ```bash
 # Install / validate
-./install.sh [--project PATH] [--install-skills] [--install-prompts] [--install-speckit]
+./install.sh [--project PATH] [--dest RELDIR] [--force] [--install-skills] [--install-prompts] [--install-speckit] [--skip-git-check]
 ./doctor.sh
 
 # Roadmap / sprint planning
@@ -206,6 +229,9 @@ See [README-local.md](README-local.md).
 ./ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
 ./ralph-task.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
 ./ralph-status.sh
+
+# Verification
+./ralph-verify.sh [--targeted|--full]
 
 # Code quality
 ./ralph-fallow.sh [--story PATH] [--dry-run] [--no-autofix]
@@ -279,20 +305,48 @@ Transient files must stay untracked. Ralph will fail or clean up when they drift
 
 ## Smoke Testing The Framework
 
-Run the install-repo E2E smoke suite in disposable repos:
+The primary end-to-end smoke test is `scripts/smoke/e2e-calendar.sh`. It exercises a complete two-sprint lifecycle across two real framework projects (NextJS and Angular), validating multi-sprint operation end-to-end.
+
+### e2e-calendar.sh
+
+Runs a Calendar + Todo app across two sprints and two project types:
+
+- **nextjs-calendar** — Real Next.js project scaffolded with `create-next-app` + Jest
+  - Sprint 1: domain layer (types, calendar service, todo service, barrel/module + integration test)
+  - Sprint 2: React components (CalendarView, TodoList, EventForm, AppComponent)
+- **angular-calendar** — Real Angular project scaffolded with `ng new` + Jest via ts-jest
+  - Sprint 1: domain services in `src/app/services/`, tested as `*.spec.ts`
+  - Sprint 2: standalone Angular components in `src/app/components/`
+
+Each project runs the full lifecycle:
+
+```
+install.sh → doctor.sh → ralph-sprint.sh create → ralph-story.sh add →
+story.json (hand-written or --generated) → ralph-story.sh health →
+ralph.sh → ralph-status.sh → ralph-sprint-commit.sh →
+[sprint 2 setup] → ralph.sh → ralph-sprint-commit.sh → ralph-verify.sh
+```
+
+Sprint 2 is skipped for a project if sprint 1 did not commit successfully.
 
 ```bash
-bash scripts/smoke/e2e-sanity.sh --ci
-bash scripts/smoke/e2e-sanity.sh --with-loop
-bash scripts/smoke/e2e-sanity.sh --with-loop-standalone
-bash scripts/smoke/e2e-sanity.sh --with-loop-epic
-bash scripts/smoke/e2e-sanity.sh --with-loop --app-mode ui
+# Basic run (hand-written story.json files, uses real Codex)
+bash scripts/smoke/e2e-calendar.sh
+
+# Keep work directory after run (always kept on failure)
+bash scripts/smoke/e2e-calendar.sh --keep
+
+# Override per-task retry count
+bash scripts/smoke/e2e-calendar.sh --max-retries 3
+
+# Use ralph-story.sh generate for story.json instead of hand-written files
+# Exercises the full story generation pipeline; adds ~8 Codex sessions
+bash scripts/smoke/e2e-calendar.sh --generated
 ```
 
 Notes:
 
-- local runs default to real `codex`
-- `--ci` uses the mock Codex harness for deterministic checks
+- smoke tests run against real Codex by default; a `CODEX_BIN` override or mock harness can be used for CI
 - smoke telemetry reports token totals and iteration counts
 - benchmark history is stored under `scripts/smoke/.benchmarks/`
 
@@ -310,6 +364,7 @@ Notes:
 | `ralph-task.sh` | Execute all tasks in the active story (one Codex session per task) |
 | `ralph.sh` | Sprint execution loop: start-next → ralph-task.sh → repeat |
 | `ralph-status.sh` | Show current sprint, story, branch, and loop state |
+| `ralph-verify.sh` | Run typecheck + lint + tests (--targeted or --full) |
 | `ralph-fallow.sh` | Code-quality gate: dead code, duplication, lint |
 | `ralph-sprint-commit.sh` | Archive and merge the completed sprint |
 | `ralph-sprint-migrate.sh` | Convert a sprint from legacy epic/PRD format to story-task format |

@@ -1,27 +1,27 @@
 ---
 name: ralph
-description: "Convert PRDs to prd.json format for the Ralph autonomous agent system. Use when you have an existing PRD and need to convert it to Ralph's JSON format. Triggers on: convert this prd, turn this into ralph format, create prd.json from this, ralph json."
+description: "Convert PRDs to prd.json format for import into a Ralph sprint. Use when you have an existing PRD and need to convert it to Ralph's JSON format. Triggers on: convert this prd, turn this into ralph format, create prd.json from this, ralph json."
 ---
 
 # Ralph PRD Converter
 
-Convert a PRD (markdown or text) into `prd.json` for Ralph loop execution.
+Convert a PRD (markdown or text) into `prd.json` for import into a Ralph sprint via `ralph-story.sh import-prd`.
 
 ## Non-Negotiables
 
-- Keep each story completable in one Ralph iteration.
+- Keep each story completable in one focused session (one context window).
 - Order stories by dependency (schema -> backend -> UI -> aggregate views).
 - Require verifiable acceptance criteria only.
 - Include `Typecheck passes` in every story.
-- Add browser verification for UI stories.
+- Add browser verification criteria for UI stories.
 - Set every story to `passes: false` and `notes: ""` initially.
-- Archive prior run data when switching `branchName`.
 
 ## The Job
 
 - Read source PRD content.
 - Create/update `prd.json` in the Ralph directory.
 - Preserve intent, split oversized work, and enforce verifiable criteria.
+- After writing prd.json, the caller runs `ralph-story.sh import-prd` to load it into the active sprint backlog.
 
 ## Required `prd.json` Shape
 
@@ -48,7 +48,7 @@ Convert a PRD (markdown or text) into `prd.json` for Ralph loop execution.
 
 ### 1) Story size (most important)
 
-Each story must be completable in one Ralph iteration (one context window).
+Each story must be completable in one focused session.
 
 - Good: one migration, one backend action, one UI component, one filter control.
 - Too large: "build dashboard", "add full auth", "refactor API".
@@ -101,21 +101,19 @@ If the PRD says "Add notification system", split into focused stories such as:
 5. Add mark-as-read action
 6. Add preferences page
 
-## Archive Safety Before Overwrite
+## After Writing prd.json
 
-Before writing a new `prd.json`:
+Import into the active sprint and run story preparation:
 
-1. If current `prd.json` exists, compare old/new `branchName`.
-2. If changed and `progress.txt` has progress beyond header:
-3. Archive old `prd.json` and `progress.txt` to `archive/YYYY-MM-DD-feature-name/`.
-4. Reset `progress.txt` header.
-
-`ralph.sh` handles this automatically, but manual conversions must do it explicitly.
+```bash
+./scripts/ralph/ralph-story.sh import-prd scripts/ralph/prd.json
+./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph.sh
+```
 
 ## Final Checklist
 
-- [ ] Previous run archived when switching features
-- [ ] Stories are one-iteration size
+- [ ] Stories are one-session size
 - [ ] Dependency order is valid
 - [ ] Every story includes `Typecheck passes`
 - [ ] UI stories include browser verification
