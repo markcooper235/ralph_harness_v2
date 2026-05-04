@@ -444,18 +444,6 @@ _cur_branch="$(git -C "$PROJ_DIR" rev-parse --abbrev-ref HEAD)"
   || fail "Sprint branch not checked out: expected 'ralph/sprint/sprint-1', got '$_cur_branch'"
 log "  Sprint branch confirmed: $_cur_branch"
 
-# Reset sprint to "planned" so STEP 10 prepare-all → STEP 10.5 use exercises
-# the full planned → ready → active lifecycle. `create` bypasses this path by
-# activating directly; resetting here closes that coverage gap (Bug 2).
-(
-  cd "$PROJ_DIR/scripts/ralph"
-  _tmp="$(mktemp)"
-  jq '.status = "planned"' sprints/sprint-1/stories.json > "$_tmp" \
-    && mv "$_tmp" sprints/sprint-1/stories.json
-  rm -f .active-sprint
-)
-log "  Sprint status reset to 'planned' for lifecycle coverage"
-
 assert_file_exists "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories.json"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -510,6 +498,19 @@ for sid in S-001 S-002 S-003; do
 done
 
 log "  All stories: specify + generate complete"
+
+# Reset sprint to "planned" now that specify+generate are done (both require
+# an active sprint to resolve stories.json). prepare-all will promote stories
+# to "ready" and mark the sprint "ready"; STEP 10.5 uses `ralph-sprint.sh use`
+# to complete the planned → ready → active lifecycle (Bug 2 coverage).
+(
+  cd "$PROJ_DIR/scripts/ralph"
+  _tmp="$(mktemp)"
+  jq '.status = "planned"' sprints/sprint-1/stories.json > "$_tmp" \
+    && mv "$_tmp" sprints/sprint-1/stories.json
+  rm -f .active-sprint
+)
+log "  Sprint status reset to 'planned' for lifecycle coverage"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 10: prepare-all — validate stories and promote to ready
