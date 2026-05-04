@@ -4,6 +4,7 @@ set -euo pipefail
 MODE="targeted"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+source "$SCRIPT_DIR/lib/search.sh"
 IGNORE_FILE="$SCRIPT_DIR/known-test-baseline-failures.txt"
 DEFAULT_FULL_IGNORE_PATTERNS=(
   "<rootDir>/tests/playwright/"
@@ -30,10 +31,6 @@ done
 
 cd "$WORKSPACE_ROOT"
 
-has_rg() {
-  command -v rg >/dev/null 2>&1
-}
-
 run_base_checks() {
   echo "[ralph-verify] running typecheck"
   npm run typecheck
@@ -49,13 +46,7 @@ collect_changed_files() {
 }
 
 list_repo_test_files() {
-  if has_rg; then
-    rg --files src app tests 2>/dev/null | rg '(^|/)(__tests__/.*|.*\.(test|spec)\.[^.]+)$' || true
-  else
-    find src app tests -type f 2>/dev/null \
-      | sed 's#^\./##' \
-      | grep -E '(^|/)(__tests__/.*|.*\.(test|spec)\.[^.]+)$' || true
-  fi
+  list_test_files src app tests
 }
 
 append_matching_tests_for_source() {

@@ -189,6 +189,16 @@ validate_story_json() {
   bad_tasks="$(jq -r '.tasks[] | select((.checks | length) == 0) | .id' "$story_file")"
   [ -z "$bad_tasks" ] || fail "[$story_id] tasks with no checks: $bad_tasks"
 
+  # Each check must be syntactically valid shell
+  local bad_checks=0 _chk
+  while IFS= read -r _chk; do
+    bash -n <<< "$_chk" 2>/dev/null || {
+      log "  WARN [$story_id] syntax error in check: $_chk"
+      bad_checks=$((bad_checks + 1))
+    }
+  done < <(jq -r '.tasks[].checks[]' "$story_file" 2>/dev/null)
+  [ "$bad_checks" -eq 0 ] || fail "[$story_id] $bad_checks check(s) with bash syntax errors"
+
   local task_count
   task_count="$(jq '.tasks | length' "$story_file")"
   log "  [$story_id] story.json OK ($task_count tasks)"
@@ -230,6 +240,7 @@ log "  Adding Jest + Testing Library..."
 npm install --save-dev \
   jest @types/jest ts-jest jest-environment-node jest-environment-jsdom \
   @testing-library/react @testing-library/jest-dom \
+  @testing-library/user-event \
   --silent \
   >> "$LOG_DIR/nextjs-create.log" 2>&1
 
@@ -262,6 +273,14 @@ export default config
 TS
 
 mkdir -p lib components __tests__
+
+# Prevent rg from scanning node_modules and .next during specify/generate
+# Codex sessions — without this, rg scans node_modules/next/dist/docs and
+# inflates session size 3-4x.
+cat > .rgignore << 'EOF'
+node_modules/
+.next/
+EOF
 
 cat > lib/index.ts <<'TS'
 export const APP_NAME = "nextjs-phone-validator"
@@ -356,7 +375,12 @@ log "=== Creating sprint and stories ==="
   ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 
   log "  stories.json patched with depends_on"
-)
+) || fail "Sprint and story setup failed"
+
+_cur_branch="$(git -C "$PROJ_DIR" rev-parse --abbrev-ref HEAD)"
+[ "$_cur_branch" = "ralph/sprint/sprint-1" ] \
+  || fail "Sprint branch not checked out: expected 'ralph/sprint/sprint-1', got '$_cur_branch'"
+log "  Sprint branch confirmed: $_cur_branch"
 
 assert_file_exists "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories.json"
 
@@ -369,7 +393,7 @@ log "=== Running SpecKit specify phase (serial, --no-generate) ==="
 for sid in S-001 S-002 S-003; do
   slog="$LOG_DIR/specify-${sid}.log"
   log "  Specifying $sid..."
-  if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex \
+  if ! (cd "$PROJ_DIR/scripts/ralph" && \
         ./ralph-story.sh specify "$sid" --no-generate) > "$slog" 2>&1; then
     cat "$slog" >&2
     fail "specify $sid failed — see $slog"
@@ -410,21 +434,78 @@ for _sid in S-001 S-002 S-003; do
 done
 log "  generate-all PASS"
 
-# Normalize rg checks in generated story.json files.
-# Codex emits rg patterns with \( \[ \] escapes that trigger parse errors in
-# ripgrep's regex engine when combined (e.g. \[]) causes "unopened group").
-# Convert unconditionally: rg "pattern" file → grep -qF "unescaped" file,
-# stripping all \X escape sequences so fixed-string search is safe.
-log "  Normalizing rg → grep -qF in generated story.json checks..."
+# ── Normalize story.json checks ─────────────────────────────────────────────
+# rg is the primary search tool; grep -E is the fallback (see lib/search.sh).
+#
+# Pass 1 — fix \X backslash escapes for chars that are not Rust regex
+#   metacharacters (e.g. \[] triggers "unopened group" in rg).
+#   Keeps: \n \t \r \f \a \e \b \s \v \d \D \w \W \S \p \P \h \H \0-\9 \\ \"
+# Pass 2 — for canonical rg "pattern" file forms, normalise to -q and add a
+#   grep -E fallback so checks run in environments where rg is absent.
+log "  Normalizing story.json checks (rg primary, grep -E fallback)..."
 for _sid in S-001 S-002 S-003; do
   _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$_sid/story.json"
   [ -f "$_sf" ] || continue
   _tmp="$(mktemp)"
-  jq '(.tasks[].checks[] |=
-    if startswith("rg \"") then
-      gsub("^rg \""; "grep -qF \"") | gsub("\\\\(?<c>.)"; .c)
-    else . end
-  )' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
+  jq '
+    (.tasks[].checks[] |=
+      (if test("^rg ") then
+         gsub("\\\\(?<c>[^ntrfaebsvdDwWsSpPhH0-9\\\\/\"])"; .c)
+       else . end) |
+      (if test("^rg \"[^\"]+\" [^ ]+$") then
+         capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
+         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+       elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
+         capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
+         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+       else . end)
+    )
+  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
+done
+
+# ── Reorder story tasks: implementation before tests ─────────────────────────
+# Codex sometimes generates test tasks before the implementation tasks they
+# import, causing "Cannot find module" failures on first execution. Sort tasks
+# by tier so lib/component tasks run before __tests__ tasks, with T-final last.
+# Stable sort: within each tier, original index is used as tiebreak.
+log "  Reordering story tasks (implementation before tests, T-final last)..."
+for _sid in S-001 S-002 S-003; do
+  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$_sid/story.json"
+  [ -f "$_sf" ] || continue
+  _tmp="$(mktemp)"
+  jq '
+    .tasks |= (
+      to_entries |
+      map({
+        key:   .key,
+        value: .value,
+        _pri: (
+          if   (.value.id    | test("final$"))
+            or (.value.title | test("(?i)regression|final"))                  then 99
+          elif (.value.title | test("(?i)test"))                              then 20
+          elif (.value.title | test("(?i)integrat|home.*page|page.*app"))     then 15
+          elif (.value.title | test("(?i)implement|create|build|librar"))     then 10
+          elif (.value.title | test("(?i)confirm|depend|prerequisit"))        then  0
+          else 15 end
+        )
+      }) |
+      sort_by([._pri, .key]) |
+      map(.value)
+    )
+  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
+done
+
+# ── Post-normalization guard (Bug 6) ─────────────────────────────────────────
+# Fail fast if any rg check still carries the specific escape sequences that
+# caused "unopened group" errors (\[ \] \( \)) — these weren't stripped above.
+log "  Verifying rg escape sequences post-normalization..."
+for _sid in S-001 S-002 S-003; do
+  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$_sid/story.json"
+  [ -f "$_sf" ] || continue
+  if jq -r '.tasks[].checks[]' "$_sf" 2>/dev/null \
+      | grep -qE '^rg .*\\[\[\]\(\)]'; then
+    fail "[$_sid] rg checks still contain unstripped \\[ \\] \\( \\) escapes after normalization"
+  fi
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -440,18 +521,22 @@ done
 log "  All story.json files valid"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 10: Run health check to promote stories to ready
+# STEP 10: prepare-all — validate stories and promote to ready
+#
+# prepare-all = specify-all (no-op: artifacts exist) +
+#               generate-all (no-op: story.json exists) +
+#               health per story + promote planned → ready
+# Using prepare-all exercises the full promotion code path and leaves stories
+# in the correct "ready" state before sprint execution.
 # ─────────────────────────────────────────────────────────────────────────────
 
-log "=== Running health checks ==="
-for sid in S-001 S-002 S-003; do
-  hlog="$LOG_DIR/health-${sid}.log"
-  if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-story.sh health "$sid") > "$hlog" 2>&1; then
-    cat "$hlog" >&2
-    fail "health check failed for $sid — see $hlog"
-  fi
-  log "  health $sid PASS"
-done
+log "=== Running prepare-all (validate and promote stories to ready) ==="
+palog="$LOG_DIR/prepare-all.log"
+if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-story.sh prepare-all) > "$palog" 2>&1; then
+  cat "$palog" >&2
+  fail "prepare-all failed — see $palog"
+fi
+log "  prepare-all PASS"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 11: Execute sprint
@@ -590,6 +675,7 @@ echo ""
 echo "── pipeline stages ───────────────────────────────────────────"
 echo "  specify-phase:  PASS"
 echo "  generate-phase: PASS"
+echo "  prepare-all:    PASS"
 if [ "$SPRINT_EXIT" -eq 0 ]; then
   echo "  sprint-run:     PASS"
 else
