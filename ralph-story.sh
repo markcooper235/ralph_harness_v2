@@ -1182,7 +1182,7 @@ cmd_generate_all() {
     if [ "$jobs" -le 1 ]; then
       local sid="${batch[0]}"
       echo "=== generate $sid ==="
-      if cmd_generate "$sid" "${force_flag[@]}"; then
+      if cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}"; then
         count=$((count + 1))
       else
         echo "WARN: generate failed for $sid"
@@ -1193,7 +1193,7 @@ cmd_generate_all() {
       for sid in "${batch[@]}"; do
         local logf
         logf="$(mktemp)"
-        ( cmd_generate "$sid" "${force_flag[@]}" ) > "$logf" 2>&1 &
+        ( cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}" ) > "$logf" 2>&1 &
         pids+=($!)
         logs+=("$logf")
         sids+=("$sid")
