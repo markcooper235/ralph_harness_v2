@@ -10,10 +10,11 @@
 #
 # Pipeline under test:
 #   install.sh → doctor.sh → ralph-sprint.sh create → ralph-story.sh add →
-#   ralph-story.sh specify (--no-generate, serial) → validate .specify/ →
-#   ralph-story.sh generate-all → validate story.json →
-#   ralph-story.sh health → ralph.sh → ralph-sprint-commit.sh →
-#   ralph-verify.sh --full
+#   [per story, dep order]: specify (--no-generate) → validate .specify/ →
+#     generate → normalize/reorder checks → validate story.json →
+#   ralph-story.sh prepare-all (planned→ready) →
+#   ralph-sprint.sh use (ready→active, lifecycle coverage) →
+#   ralph.sh → ralph-sprint-commit.sh → ralph-verify.sh --full
 #
 # Stories:
 #   S-001: PhoneValidatorService  — lib/phone-validator.ts + unit tests
@@ -204,6 +205,67 @@ validate_story_json() {
   log "  [$story_id] story.json OK ($task_count tasks)"
 }
 
+# ── normalize_story_checks ─────────────────────────────────────────────────
+# Fix rg escape sequences and add grep -E fallback in a story's story.json.
+
+normalize_story_checks() {
+  local story_id="$1"
+  local _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$story_id/story.json"
+  [ -f "$_sf" ] || return 0
+  local _tmp
+  _tmp="$(mktemp)"
+  jq '
+    (.tasks[].checks[] |=
+      (if test("^rg ") then
+         gsub("\\\\(?<c>[^ntrfaebsvdDwWsSpPhH0-9\\\\/\"])"; .c)
+       else . end) |
+      (if test("^rg \"[^\"]+\" [^ ]+$") then
+         capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
+         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+       elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
+         capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
+         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+       else . end)
+    )
+  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
+  if jq -r '.tasks[].checks[]' "$_sf" 2>/dev/null \
+      | grep -qE '^rg .*\\[\[\]\(\)]'; then
+    fail "[$story_id] rg checks still contain unstripped \\[ \\] \\( \\) escapes"
+  fi
+}
+
+# ── reorder_story_tasks ────────────────────────────────────────────────────
+# Sort story.json tasks: confirm(0) → implement(10) → integrate(15) →
+# test(20) → T-final(99). Stable sort preserves original order within tiers.
+
+reorder_story_tasks() {
+  local story_id="$1"
+  local _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$story_id/story.json"
+  [ -f "$_sf" ] || return 0
+  local _tmp
+  _tmp="$(mktemp)"
+  jq '
+    .tasks |= (
+      to_entries |
+      map({
+        key:   .key,
+        value: .value,
+        _pri: (
+          if   (.value.id    | test("final$"))
+            or (.value.title | test("(?i)regression|final"))                  then 99
+          elif (.value.title | test("(?i)test"))                              then 20
+          elif (.value.title | test("(?i)integrat|home.*page|page.*app"))     then 15
+          elif (.value.title | test("(?i)implement|create|build|librar"))     then 10
+          elif (.value.title | test("(?i)confirm|depend|prerequisit"))        then  0
+          else 15 end
+        )
+      }) |
+      sort_by([._pri, .key]) |
+      map(.value)
+    )
+  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 1: Install specify CLI if missing
 # ─────────────────────────────────────────────────────────────────────────────
@@ -382,143 +444,72 @@ _cur_branch="$(git -C "$PROJ_DIR" rev-parse --abbrev-ref HEAD)"
   || fail "Sprint branch not checked out: expected 'ralph/sprint/sprint-1', got '$_cur_branch'"
 log "  Sprint branch confirmed: $_cur_branch"
 
+# Reset sprint to "planned" so STEP 10 prepare-all → STEP 10.5 use exercises
+# the full planned → ready → active lifecycle. `create` bypasses this path by
+# activating directly; resetting here closes that coverage gap (Bug 2).
+(
+  cd "$PROJ_DIR/scripts/ralph"
+  _tmp="$(mktemp)"
+  jq '.status = "planned"' sprints/sprint-1/stories.json > "$_tmp" \
+    && mv "$_tmp" sprints/sprint-1/stories.json
+  rm -f .active-sprint
+)
+log "  Sprint status reset to 'planned' for lifecycle coverage"
+
 assert_file_exists "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories.json"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 6: Run specify (--no-generate) for each story — validates SpecKit
+# STEPS 6-9: Specify + validate + generate + validate per story (dep order)
+#
+# Interleaving specify and generate for each story in dependency order ensures
+# that when S-002 is specified, S-001's story.json already exists and is used
+# as prior-story context. Running all specifies first (--no-generate) silently
+# drops that context because story.json is absent at specify time (Bug 5).
+#
+# Per-story flow: specify → validate artifacts → generate → normalize/reorder
+#                 checks → validate story.json
 # ─────────────────────────────────────────────────────────────────────────────
 
-log "=== Running SpecKit specify phase (serial, --no-generate) ==="
+log "=== SpecKit specify + generate per story (dependency order) ==="
+glog="$LOG_DIR/generate-all.log"
 
 for sid in S-001 S-002 S-003; do
   slog="$LOG_DIR/specify-${sid}.log"
-  log "  Specifying $sid..."
+
+  # STEP 6: specify — --no-generate keeps the specify phase independently testable
+  log "  [$sid] Specifying..."
   if ! (cd "$PROJ_DIR/scripts/ralph" && \
         ./ralph-story.sh specify "$sid" --no-generate) > "$slog" 2>&1; then
     cat "$slog" >&2
     fail "specify $sid failed — see $slog"
   fi
-  log "  specify $sid PASS"
-done
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 7: Validate .specify/ artifacts for each story
-# ─────────────────────────────────────────────────────────────────────────────
-
-log "=== Validating SpecKit artifacts ==="
-
-for sid in S-001 S-002 S-003; do
+  # STEP 7: validate .specify/ artifacts immediately
   validate_specify_artifacts "$sid"
-done
+  log "  [$sid] specify PASS"
 
-log "  All SpecKit artifacts present and non-trivial"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 8: Generate story.json for all stories
-# ─────────────────────────────────────────────────────────────────────────────
-
-log "=== Running generate-all (serial to avoid stdin contention) ==="
-glog="$LOG_DIR/generate-all.log"
-(cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex \
-  ./ralph-story.sh generate-all --jobs 1) > "$glog" 2>&1 || true
-
-# Retry any story whose story.json is missing or lacks storyId (transient Codex error)
-for _sid in S-001 S-002 S-003; do
-  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$_sid/story.json"
-  if [ ! -f "$_sf" ] || ! jq -e '.storyId' "$_sf" >/dev/null 2>&1; then
-    log "  Retrying generate for $_sid..."
+  # STEP 8: generate story.json — makes this story's context available to the
+  # next story's specify call (dep-context fix for Bug 5)
+  log "  [$sid] Generating story.json..."
+  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/story.json"
+  if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex \
+        ./ralph-story.sh generate "$sid") >> "$glog" 2>&1; then
+    log "  [$sid] Retrying generate..."
     (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex \
-      ./ralph-story.sh generate "$_sid" --force) >> "$glog" 2>&1 \
-      || fail "generate retry failed for $_sid — see $glog"
+      ./ralph-story.sh generate "$sid" --force) >> "$glog" 2>&1 \
+      || fail "generate $sid failed — see $glog"
   fi
-done
-log "  generate-all PASS"
 
-# ── Normalize story.json checks ─────────────────────────────────────────────
-# rg is the primary search tool; grep -E is the fallback (see lib/search.sh).
-#
-# Pass 1 — fix \X backslash escapes for chars that are not Rust regex
-#   metacharacters (e.g. \[] triggers "unopened group" in rg).
-#   Keeps: \n \t \r \f \a \e \b \s \v \d \D \w \W \S \p \P \h \H \0-\9 \\ \"
-# Pass 2 — for canonical rg "pattern" file forms, normalise to -q and add a
-#   grep -E fallback so checks run in environments where rg is absent.
-log "  Normalizing story.json checks (rg primary, grep -E fallback)..."
-for _sid in S-001 S-002 S-003; do
-  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$_sid/story.json"
-  [ -f "$_sf" ] || continue
-  _tmp="$(mktemp)"
-  jq '
-    (.tasks[].checks[] |=
-      (if test("^rg ") then
-         gsub("\\\\(?<c>[^ntrfaebsvdDwWsSpPhH0-9\\\\/\"])"; .c)
-       else . end) |
-      (if test("^rg \"[^\"]+\" [^ ]+$") then
-         capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
-         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
-       elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
-         capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
-         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
-       else . end)
-    )
-  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
-done
+  # Normalize rg checks (rg primary, grep -E fallback) and reorder tasks
+  normalize_story_checks "$sid"
+  reorder_story_tasks "$sid"
 
-# ── Reorder story tasks: implementation before tests ─────────────────────────
-# Codex sometimes generates test tasks before the implementation tasks they
-# import, causing "Cannot find module" failures on first execution. Sort tasks
-# by tier so lib/component tasks run before __tests__ tasks, with T-final last.
-# Stable sort: within each tier, original index is used as tiebreak.
-log "  Reordering story tasks (implementation before tests, T-final last)..."
-for _sid in S-001 S-002 S-003; do
-  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$_sid/story.json"
-  [ -f "$_sf" ] || continue
-  _tmp="$(mktemp)"
-  jq '
-    .tasks |= (
-      to_entries |
-      map({
-        key:   .key,
-        value: .value,
-        _pri: (
-          if   (.value.id    | test("final$"))
-            or (.value.title | test("(?i)regression|final"))                  then 99
-          elif (.value.title | test("(?i)test"))                              then 20
-          elif (.value.title | test("(?i)integrat|home.*page|page.*app"))     then 15
-          elif (.value.title | test("(?i)implement|create|build|librar"))     then 10
-          elif (.value.title | test("(?i)confirm|depend|prerequisit"))        then  0
-          else 15 end
-        )
-      }) |
-      sort_by([._pri, .key]) |
-      map(.value)
-    )
-  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
-done
-
-# ── Post-normalization guard (Bug 6) ─────────────────────────────────────────
-# Fail fast if any rg check still carries the specific escape sequences that
-# caused "unopened group" errors (\[ \] \( \)) — these weren't stripped above.
-log "  Verifying rg escape sequences post-normalization..."
-for _sid in S-001 S-002 S-003; do
-  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$_sid/story.json"
-  [ -f "$_sf" ] || continue
-  if jq -r '.tasks[].checks[]' "$_sf" 2>/dev/null \
-      | grep -qE '^rg .*\\[\[\]\(\)]'; then
-    fail "[$_sid] rg checks still contain unstripped \\[ \\] \\( \\) escapes after normalization"
-  fi
-done
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 9: Validate generated story.json files
-# ─────────────────────────────────────────────────────────────────────────────
-
-log "=== Validating generated story.json files ==="
-
-for sid in S-001 S-002 S-003; do
+  # STEP 9: validate story.json immediately
   validate_story_json "$sid"
+  log "  [$sid] generate PASS"
 done
 
-log "  All story.json files valid"
+log "  All stories: specify + generate complete"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 10: prepare-all — validate stories and promote to ready
@@ -537,6 +528,29 @@ if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-story.sh prepare-all) > "$palog" 2
   fail "prepare-all failed — see $palog"
 fi
 log "  prepare-all PASS"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 10.5: Activate sprint via 'ralph-sprint.sh use' (Bug 2 lifecycle test)
+#
+# prepare-all promoted stories to "ready" and marked the sprint "ready".
+# Activating via `use` exercises the planned → ready → active path that
+# ralph-sprint.sh create bypasses (it activates directly without going through
+# the ready state).
+# ─────────────────────────────────────────────────────────────────────────────
+
+log "=== Activating sprint via 'ralph-sprint.sh use' (lifecycle test) ==="
+ulog="$LOG_DIR/sprint-use.log"
+if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-sprint.sh use sprint-1) > "$ulog" 2>&1; then
+  cat "$ulog" >&2
+  fail "'ralph-sprint.sh use sprint-1' failed — see $ulog"
+fi
+
+_sprint_status="$(jq -r '.status // "unknown"' \
+  "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories.json" 2>/dev/null || echo "unknown")"
+[ "$_sprint_status" = "active" ] \
+  || fail "Sprint should be 'active' after 'use', got '$_sprint_status'"
+assert_file_exists "$PROJ_DIR/scripts/ralph/.active-sprint"
+log "  Sprint lifecycle PASS: planned → ready → active"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 11: Execute sprint
@@ -676,6 +690,7 @@ echo "── pipeline stages ─────────────────
 echo "  specify-phase:  PASS"
 echo "  generate-phase: PASS"
 echo "  prepare-all:    PASS"
+echo "  sprint-use:     PASS"
 if [ "$SPRINT_EXIT" -eq 0 ]; then
   echo "  sprint-run:     PASS"
 else
