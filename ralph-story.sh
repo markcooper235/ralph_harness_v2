@@ -1101,7 +1101,7 @@ cmd_specify_all() {
     if [ "$jobs" -le 1 ]; then
       local sid="${batch[0]}"
       echo "=== specify $sid ==="
-      if cmd_specify "$sid" "${force_flag[@]}"; then
+      if cmd_specify "$sid" "${force_flag[@]+"${force_flag[@]}"}"; then
         count=$((count + 1))
       else
         echo "WARN: specify failed for $sid"; failed=$((failed + 1))
@@ -1110,7 +1110,7 @@ cmd_specify_all() {
       local pids=() logs=() sids=()
       for sid in "${batch[@]}"; do
         local logf; logf="$(mktemp)"
-        ( cmd_specify "$sid" "${force_flag[@]}" ) > "$logf" 2>&1 &
+        ( cmd_specify "$sid" "${force_flag[@]+"${force_flag[@]}"}" ) > "$logf" 2>&1 &
         pids+=($!); logs+=("$logf"); sids+=("$sid")
       done
       local j rc
@@ -1233,10 +1233,10 @@ cmd_prepare_all() {
   done
 
   echo "=== prepare-all: specify ==="
-  cmd_specify_all "${force_flag[@]}" --jobs "$jobs" || true
+  cmd_specify_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs" || true
   echo ""
   echo "=== prepare-all: generate ==="
-  cmd_generate_all "${force_flag[@]}" --jobs "$jobs" || true
+  cmd_generate_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs" || true
   echo ""
   echo "=== prepare-all: health + promote ==="
   resolve_stories_file
