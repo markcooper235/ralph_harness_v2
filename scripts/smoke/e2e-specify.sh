@@ -24,11 +24,14 @@
 #                                   integration (depends on S-001, S-002)
 #
 # Usage:
-#   ./scripts/smoke/e2e-specify.sh [--keep] [--max-retries N]
+#   ./scripts/smoke/e2e-specify.sh [--keep] [--max-retries N] [--reuse-dir DIR]
 #
 # Flags:
-#   --keep          Keep work directory on success (always kept on failure)
-#   --max-retries N Retry count per task (default: 2)
+#   --keep            Keep work directory on success (always kept on failure)
+#   --max-retries N   Retry count per task (default: 2)
+#   --reuse-dir DIR   Skip project setup and specify/generate; reuse an
+#                     existing work directory from a previous --keep run.
+#                     Story branches left mid-run are reset to "ready".
 #
 # Requires:
 #   specify CLI (installed automatically via uv → pip → npx if missing)
@@ -52,11 +55,13 @@ source "$SCRIPT_DIR/assert.sh"
 
 KEEP=0
 MAX_RETRIES=2
+REUSE_DIR=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --keep)        KEEP=1; shift ;;
     --max-retries) MAX_RETRIES="${2:-2}"; shift 2 ;;
+    --reuse-dir)   REUSE_DIR="${2:-}"; shift 2 ;;
     -h|--help)
       sed -n '/^# Usage/,/^[^#]/p' "$0" | head -n -1 | sed 's/^# \?//'
       exit 0 ;;
@@ -64,7 +69,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-WORK_DIR="$(mktemp -d /tmp/ralph-specify-smoke.XXXXXX)"
+if [ -n "$REUSE_DIR" ]; then
+  [ -d "$REUSE_DIR" ] || { echo "ERROR: --reuse-dir: directory does not exist: $REUSE_DIR" >&2; exit 1; }
+  WORK_DIR="$(cd "$REUSE_DIR" && pwd)"
+  KEEP=1
+else
+  WORK_DIR="$(mktemp -d /tmp/ralph-specify-smoke.XXXXXX)"
+fi
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
 
@@ -216,16 +227,18 @@ normalize_story_checks() {
   _tmp="$(mktemp)"
   jq '
     (.tasks[].checks[] |=
-      (if test("^rg ") then
-         gsub("\\\\(?<c>[^ntrfaebsvdDwWsSpPhH0-9\\\\/\"])"; .c)
-       else . end) |
-      (if test("^rg \"[^\"]+\" [^ ]+$") then
-         capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
-         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
-       elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
-         capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
-         "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
-       else . end)
+      if type == "string" then
+        (if test("^rg ") then
+           gsub("\\\\(?<c>[^ntrfaebsvdDwWsSpPhH0-9\\\\/\"])"; .c)
+         else . end) |
+        (if test("^rg \"[^\"]+\" [^ ]+$") then
+           capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
+           "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+         elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
+           capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
+           "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+         else . end)
+      else . end
     )
   ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
   if jq -r '.tasks[].checks[]' "$_sf" 2>/dev/null \
@@ -286,6 +299,51 @@ reorder_story_tasks() {
 
 log "=== Ensuring specify CLI is available ==="
 ensure_specify
+
+if [ -n "$REUSE_DIR" ]; then
+  # ── --reuse-dir: skip project setup, validate existing project ──────────────
+  log "=== Reusing existing work dir: $WORK_DIR ==="
+  [ -d "$PROJ_DIR" ] \
+    || fail "--reuse-dir: project directory missing: $PROJ_DIR"
+  [ -f "$PROJ_DIR/scripts/ralph/ralph.sh" ] \
+    || fail "--reuse-dir: ralph not installed in $PROJ_DIR/scripts/ralph"
+  assert_file_exists "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories.json"
+  log "  Project and sprint structure OK"
+
+  # Reset any story branches left mid-run: "active" → "ready", delete branches.
+  log "  Cleaning up mid-run story state..."
+  (
+    cd "$PROJ_DIR"
+    _sf="scripts/ralph/sprints/sprint-1/stories.json"
+
+    # Switch to sprint branch — may be on a story branch from a partial run
+    _cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+    if [ "$_cur" != "ralph/sprint/sprint-1" ]; then
+      git checkout ralph/sprint/sprint-1 2>/dev/null \
+        || fail "Cannot checkout sprint branch for resume"
+    fi
+
+    # Reset active (stuck) stories → ready
+    _tmp="$(mktemp)"
+    jq '
+      (.stories[] | select(.status == "active")) |= .status = "ready" |
+      .activeStoryId = null
+    ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
+
+    # Delete stale story branches so ralph.sh can re-create them cleanly
+    git branch | grep -E 'ralph/sprint-[0-9]+/story-' | sed 's/^[* ]*//' \
+      | while IFS= read -r _br; do
+          git branch -D "$_br" 2>/dev/null && log "  Deleted stale branch: $_br" || true
+        done
+
+    git add "$_sf"
+    git diff --cached --quiet \
+      || git commit -m "chore(ralph): reset active stories to ready for resume" --quiet
+  )
+  log "  Mid-run cleanup complete"
+
+else
+  # ── Fresh run: create project from scratch ────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 2: Set up NextJS project
@@ -460,6 +518,8 @@ log "  Sprint branch confirmed: $_cur_branch"
 
 assert_file_exists "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories.json"
 
+fi  # end: fresh run vs --reuse-dir
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEPS 6-9: Specify + validate + generate + validate per story (dep order)
 #
@@ -477,6 +537,21 @@ glog="$LOG_DIR/generate-all.log"
 
 for sid in S-001 S-002 S-003; do
   slog="$LOG_DIR/specify-${sid}.log"
+  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/story.json"
+
+  if [ -n "$REUSE_DIR" ] \
+      && [ -f "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/.specify/spec.md" ] \
+      && [ -f "$_sf" ]; then
+    # --reuse-dir: artifacts already exist — validate and normalize only
+    log "  [$sid] Reusing existing specify+generate artifacts"
+    validate_specify_artifacts "$sid"
+    log "  [$sid] specify PASS (reused)"
+    normalize_story_checks "$sid"
+    reorder_story_tasks "$sid"
+    validate_story_json "$sid"
+    log "  [$sid] generate PASS (reused)"
+    continue
+  fi
 
   # STEP 6: specify — --no-generate keeps the specify phase independently testable
   log "  [$sid] Specifying..."
@@ -493,7 +568,6 @@ for sid in S-001 S-002 S-003; do
   # STEP 8: generate story.json — makes this story's context available to the
   # next story's specify call (dep-context fix for Bug 5)
   log "  [$sid] Generating story.json..."
-  _sf="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/story.json"
   if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex \
         ./ralph-story.sh generate "$sid") >> "$glog" 2>&1; then
     log "  [$sid] Retrying generate..."
