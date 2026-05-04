@@ -235,8 +235,10 @@ normalize_story_checks() {
 }
 
 # ── reorder_story_tasks ────────────────────────────────────────────────────
-# Sort story.json tasks: confirm(0) → implement(10) → integrate(15) →
-# test(20) → T-final(99). Stable sort preserves original order within tiers.
+# Topological sort of story.json tasks, respecting depends_on constraints.
+# Within each tier of simultaneously-eligible tasks, a title-based priority
+# breaks ties: confirm(0) → implement(5) → integrate/default(10) → test(20)
+# → final/regression(99).
 
 reorder_story_tasks() {
   local story_id="$1"
@@ -246,22 +248,34 @@ reorder_story_tasks() {
   _tmp="$(mktemp)"
   jq '
     .tasks |= (
-      to_entries |
-      map({
-        key:   .key,
-        value: .value,
-        _pri: (
-          if   (.value.id    | test("final$"))
-            or (.value.title | test("(?i)regression|final"))                  then 99
-          elif (.value.title | test("(?i)test"))                              then 20
-          elif (.value.title | test("(?i)integrat|home.*page|page.*app"))     then 15
-          elif (.value.title | test("(?i)implement|create|build|librar"))     then 10
-          elif (.value.title | test("(?i)confirm|depend|prerequisit"))        then  0
-          else 15 end
-        )
-      }) |
-      sort_by([._pri, .key]) |
-      map(.value)
+      . as $all |
+      # Kahn topological sort: repeatedly emit the lowest-priority eligible task.
+      # "Eligible" = all depends_on are already in the emitted set.
+      reduce range(length) as $_ (
+        { rem: $all, done: [] };
+        (.done | map(.id)) as $placed |
+        (
+          .rem | map(select(
+            .depends_on | length == 0
+              or all(. as $d | $placed | any(. == $d))
+          )) |
+          sort_by(
+            if   (.id    | test("final$"))
+              or (.title | test("(?i)regression|final"))              then 99
+            elif (.title | test("(?i)test|spec"))                     then 20
+            elif (.title | test("(?i)integrat|home.*page|page.*app")) then 10
+            elif (.title | test("(?i)implement|create|build|librar")) then  5
+            elif (.title | test("(?i)confirm|depend|prerequisit"))    then  0
+            else 10 end
+          ) | .[0]
+        ) as $next |
+        if $next then
+          { rem: (.rem | map(select(.id != $next.id))), done: (.done + [$next]) }
+        else
+          { rem: [], done: (.done + .rem) }
+        end
+      ) |
+      .done
     )
   ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 }
