@@ -326,7 +326,7 @@ if [ -n "$REUSE_DIR" ]; then
     # Reset active (stuck) stories → ready
     _tmp="$(mktemp)"
     jq '
-      (.stories[] | select(.status == "active")) |= .status = "ready" |
+      (.stories[] | select(.status == "active")) |= . + {"status": "ready"} |
       .activeStoryId = null
     ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 
@@ -587,6 +587,15 @@ done
 
 log "  All stories: specify + generate complete"
 
+# Commit any normalize/reorder changes to story.json so the working tree is
+# clean before the lifecycle reset and ralph.sh's uncommitted-change check.
+(
+  cd "$PROJ_DIR/scripts/ralph"
+  git add sprints/sprint-1/stories/
+  git diff --cached --quiet \
+    || git commit -m "chore(ralph): normalize and reorder story.json checks" --quiet
+)
+
 # Reset sprint to "planned" now that specify+generate are done (both require
 # an active sprint to resolve stories.json). We keep .active-sprint in place
 # so prepare-all (which also calls specify-all/generate-all) can still resolve
@@ -598,6 +607,9 @@ log "  All stories: specify + generate complete"
   jq '.status = "planned"' sprints/sprint-1/stories.json > "$_tmp" \
     && mv "$_tmp" sprints/sprint-1/stories.json
   # .active-sprint stays — prepare-all needs it to resolve the sprint
+  git add sprints/sprint-1/stories.json
+  git diff --cached --quiet \
+    || git commit -m "chore(ralph): reset sprint to planned for lifecycle test" --quiet
 )
 log "  Sprint status reset to 'planned' for lifecycle coverage (.active-sprint retained for prepare-all)"
 
