@@ -331,10 +331,14 @@ if [ -n "$REUSE_DIR" ]; then
     ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 
     # Delete stale story branches so ralph.sh can re-create them cleanly
-    git branch | grep -E 'ralph/sprint-[0-9]+/story-' | sed 's/^[* ]*//' \
-      | while IFS= read -r _br; do
-          git branch -D "$_br" 2>/dev/null && log "  Deleted stale branch: $_br" || true
-        done
+    _stale_branches="$(git branch | grep -E 'ralph/sprint-[0-9]+/story-' \
+                        | sed 's/^[* ]*//' || true)"
+    if [ -n "$_stale_branches" ]; then
+      while IFS= read -r _br; do
+        [ -n "$_br" ] || continue
+        git branch -D "$_br" 2>/dev/null && log "  Deleted stale branch: $_br" || true
+      done <<< "$_stale_branches"
+    fi
 
     git add "$_sf"
     git diff --cached --quiet \
