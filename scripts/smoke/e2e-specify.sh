@@ -500,17 +500,18 @@ done
 log "  All stories: specify + generate complete"
 
 # Reset sprint to "planned" now that specify+generate are done (both require
-# an active sprint to resolve stories.json). prepare-all will promote stories
-# to "ready" and mark the sprint "ready"; STEP 10.5 uses `ralph-sprint.sh use`
-# to complete the planned → ready → active lifecycle (Bug 2 coverage).
+# an active sprint to resolve stories.json). We keep .active-sprint in place
+# so prepare-all (which also calls specify-all/generate-all) can still resolve
+# stories.json. After prepare-all promotes to "ready" we remove .active-sprint
+# so that 'ralph-sprint.sh use' can complete the planned→ready→active path.
 (
   cd "$PROJ_DIR/scripts/ralph"
   _tmp="$(mktemp)"
   jq '.status = "planned"' sprints/sprint-1/stories.json > "$_tmp" \
     && mv "$_tmp" sprints/sprint-1/stories.json
-  rm -f .active-sprint
+  # .active-sprint stays — prepare-all needs it to resolve the sprint
 )
-log "  Sprint status reset to 'planned' for lifecycle coverage"
+log "  Sprint status reset to 'planned' for lifecycle coverage (.active-sprint retained for prepare-all)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 10: prepare-all — validate stories and promote to ready
@@ -540,6 +541,10 @@ log "  prepare-all PASS"
 # ─────────────────────────────────────────────────────────────────────────────
 
 log "=== Activating sprint via 'ralph-sprint.sh use' (lifecycle test) ==="
+# Remove .active-sprint so 'ralph-sprint.sh use' can activate the sprint cleanly
+# (use requires: sprint status="ready" AND no currently active sprint).
+rm -f "$PROJ_DIR/scripts/ralph/.active-sprint"
+log "  .active-sprint removed — 'use' will re-create it"
 ulog="$LOG_DIR/sprint-use.log"
 if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-sprint.sh use sprint-1) > "$ulog" 2>&1; then
   cat "$ulog" >&2
