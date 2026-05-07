@@ -52,6 +52,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/assert.sh"
+# shellcheck source=./lib/token-parser.sh
+source "$SCRIPT_DIR/lib/token-parser.sh"
+
+BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
+BENCH_FILE="$BENCH_DIR/e2e-specify.tsv"
 
 KEEP=0
 MAX_RETRIES=2
@@ -825,6 +830,43 @@ overall_exit=0
 [ "$SPRINT_EXIT" -eq 0 ]  || overall_exit=1
 [ "$COMMIT_EXIT" -eq 0 ]  || overall_exit=1
 [ "$VERIFY_EXIT" -eq 0 ]  || overall_exit=1
+
+# ── Efficiency metrics ───────────────────────────────────────────────────────
+specify_tokens=0
+generate_tokens=0
+sprint_tokens=0
+for sid in S-001 S-002 S-003; do
+  specify_tokens=$((specify_tokens + $(extract_tokens_from_log "$LOG_DIR/specify-${sid}.log")))
+done
+generate_tokens="$(extract_tokens_from_log "$LOG_DIR/generate-all.log")"
+sprint_tokens="$(extract_tokens_from_log "$sprint_log")"
+total_tokens=$((specify_tokens + generate_tokens + sprint_tokens))
+stories_completed=0
+if [ -f "$sprint_log" ]; then
+  stories_completed="$(awk '/=== Story .* COMPLETE ===/ { c += 1 } END { print c + 0 }' "$sprint_log")"
+fi
+
+echo ""
+echo "── efficiency metrics ────────────────────────────────────────"
+if [ "$total_tokens" -eq 0 ]; then
+  echo "  tokens: unavailable (no 'tokens used' markers in codex output)"
+else
+  echo "  tokens: specify=$specify_tokens generate=$generate_tokens sprint=$sprint_tokens total=$total_tokens"
+fi
+echo "  stories completed: $stories_completed"
+
+mkdir -p "$BENCH_DIR"
+status_label="pass"
+[ "$overall_exit" -eq 0 ] || status_label="fail"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$(date -Iseconds)" \
+  "$status_label" \
+  "$specify_tokens" \
+  "$generate_tokens" \
+  "$sprint_tokens" \
+  "$total_tokens" \
+  "$stories_completed" \
+  >>"$BENCH_FILE"
 
 if [ "$overall_exit" -eq 0 ]; then
   log "PASS — SpecKit pipeline completed end-to-end successfully"

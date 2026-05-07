@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=./assert.sh
 source "$SCRIPT_DIR/assert.sh"
+# shellcheck source=./lib/token-parser.sh
+source "$SCRIPT_DIR/lib/token-parser.sh"
 
 KEEP_REPO=0
 WORK_DIR="$(mktemp -d /tmp/ralph-worst-ui-XXXXXX)"
@@ -64,42 +66,6 @@ EOF
 done
 
 mkdir -p "$TMP_HOME" "$TEST_REPO"
-
-extract_tokens_from_log() {
-  local log_file="$1"
-  [ -f "$log_file" ] || {
-    echo 0
-    return 0
-  }
-
-  awk '
-    {
-      line = $0
-      lower = tolower(line)
-      gsub(/,/, "", line)
-      gsub(/,/, "", lower)
-
-      if (pending_tokens_used == 1) {
-        if (match(line, /([0-9]+)/, m)) {
-          sum += m[1]
-        }
-        pending_tokens_used = 0
-      }
-
-      if (match(lower, /tokens used[[:space:]]*([0-9]+)/, m)) {
-        sum += m[1]
-        next
-      }
-      if (lower ~ /tokens used/) {
-        pending_tokens_used = 1
-        next
-      }
-    }
-    END {
-      print sum + 0
-    }
-  ' "$log_file"
-}
 
 extract_story_complete_count_from_log() {
   local log_file="$1"
@@ -755,6 +721,13 @@ assert_contains "$WORK_DIR/test-sprint.log" "test ok"
 assert_contains "$WORK_DIR/runtime-sprint.log" "browser ok: $expected_headline \| $expected_status \| $expected_cta \| $expected_state"
 assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint regression: PASS"
 assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Deleted source sprint branch:"
+
+echo "[worst-ui] running ralph-verify --full post-commit"
+(
+  cd "$SPRINT_REPO/scripts/ralph"
+  ./ralph-verify.sh --full > "$WORK_DIR/verify-full.log" 2>&1
+)
+assert_contains "$WORK_DIR/verify-full.log" "full verification passed"
 
 loop_tokens="$(extract_tokens_from_log "$WORK_DIR/loop-S-001.log")"
 loop_tokens=$((loop_tokens + $(extract_tokens_from_log "$WORK_DIR/loop-S-002.log")))

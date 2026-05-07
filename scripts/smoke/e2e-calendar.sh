@@ -62,6 +62,11 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/assert.sh"
+# shellcheck source=./lib/token-parser.sh
+source "$SCRIPT_DIR/lib/token-parser.sh"
+
+BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
+BENCH_FILE="$BENCH_DIR/e2e-calendar.tsv"
 
 KEEP=0
 MAX_RETRIES=2
@@ -278,6 +283,62 @@ validate_sprint() {
     validate_story "$abs_path"
     log "  validated: $(basename "$(dirname "$abs_path")")/story.json"
   done < <(jq -r '.stories[].story_path' "$stories_file")
+}
+
+# ── prepare_and_activate ───────────────────────────────────────────────────────
+# Reset the sprint and its stories to "planned", run ralph-story.sh prepare-all
+# (specify-all + generate-all + health + promote), then activate via
+# ralph-sprint.sh use. Exercises the full planned → ready → active lifecycle
+# path that ralph-sprint.sh create bypasses.
+
+prepare_and_activate() {
+  local proj_dir="$1"
+  local proj_label="$2"
+  local sprint="${3:-sprint-1}"
+  local ralph_dir="$proj_dir/scripts/ralph"
+  local sf="$ralph_dir/sprints/$sprint/stories.json"
+
+  log "  Resetting $proj_label $sprint to 'planned' for lifecycle coverage..."
+  (
+    cd "$proj_dir"
+    _tmp="$(mktemp)"
+    jq '.status = "planned" | .stories |= [.[] | .status = "planned"]' "$sf" > "$_tmp" \
+      && mv "$_tmp" "$sf"
+    git add "$sf"
+    git diff --cached --quiet \
+      || git commit -m "chore(ralph): reset $sprint to planned for lifecycle test" --quiet
+  )
+
+  local palog="$LOG_DIR/${proj_label}-${sprint}-prepare-all.log"
+  log "  Running prepare-all for $proj_label $sprint..."
+  if ! (cd "$ralph_dir" && ./ralph-story.sh prepare-all) > "$palog" 2>&1; then
+    cat "$palog" >&2
+    fail "prepare-all failed for $proj_label $sprint — see $palog"
+  fi
+
+  # Commit any prepare-all changes to stories.json before activating
+  (
+    cd "$proj_dir"
+    git add -A "scripts/ralph/sprints/$sprint/"
+    git diff --cached --quiet \
+      || git commit -m "chore(ralph): prepare-all promote $proj_label $sprint" --quiet
+  )
+
+  rm -f "$ralph_dir/.active-sprint"
+
+  local ulog="$LOG_DIR/${proj_label}-${sprint}-use.log"
+  log "  Activating $proj_label $sprint via 'ralph-sprint.sh use'..."
+  if ! (cd "$ralph_dir" && ./ralph-sprint.sh use "$sprint") > "$ulog" 2>&1; then
+    cat "$ulog" >&2
+    fail "ralph-sprint.sh use failed for $proj_label $sprint — see $ulog"
+  fi
+
+  local sprint_status
+  sprint_status="$(jq -r '.status // "unknown"' "$sf" 2>/dev/null || echo "unknown")"
+  [ "$sprint_status" = "active" ] \
+    || fail "$proj_label $sprint: expected status=active after 'use', got '$sprint_status'"
+  assert_file_exists "$ralph_dir/.active-sprint"
+  log "  $proj_label $sprint: lifecycle PASS (planned → ready → active)"
 }
 
 # ── Execution helpers ──────────────────────────────────────────────────────────
@@ -1231,6 +1292,9 @@ for proj_label in nextjs angular; do
     fi
     log "  health OK: $proj_label $sid"
   done
+
+  # Lifecycle coverage: planned → ready → active via prepare-all + sprint use
+  prepare_and_activate "$proj_dir" "$proj_label" "sprint-1"
 done
 
 log ""
@@ -2076,6 +2140,9 @@ if [ "$NEXTJS_S2_SKIPPED" -eq 0 ] || [ "$ANGULAR_S2_SKIPPED" -eq 0 ]; then
       fi
       log "  health OK: $proj_label sprint-2 $sid"
     done
+
+    # Lifecycle coverage: planned → ready → active via prepare-all + sprint use
+    prepare_and_activate "$proj_dir" "$proj_label" "sprint-2"
   done
 
   log ""
@@ -2294,6 +2361,55 @@ for proj_label in nextjs angular; do
     echo "  $proj_label/$sprint: retries=$retries  structural_short_circuits=$structural  blocked=$blocked"
   done
 done
+
+# ── Efficiency metrics ─────────────────────────────────────────────────────────
+
+echo ""
+echo "── efficiency metrics ────────────────────────────────────────"
+total_tokens_all=0
+total_stories_all=0
+for proj_label in nextjs angular; do
+  proj_tokens=0
+  proj_stories=0
+  proj_generate_tokens=0
+  for sid in S-001 S-002 S-003 S-004; do
+    proj_generate_tokens=$((proj_generate_tokens + $(extract_tokens_from_log "$LOG_DIR/${proj_label}-generate-${sid}.log")))
+  done
+  for sprint in sprint-1 sprint-2; do
+    sprint_log="$LOG_DIR/${proj_label}-${sprint}.log"
+    [ -f "$sprint_log" ] || continue
+    sprint_tokens="$(extract_tokens_from_log "$sprint_log")"
+    sprint_stories="$(awk '/=== Story .* COMPLETE ===/ { c += 1 } END { print c + 0 }' "$sprint_log")"
+    proj_tokens=$((proj_tokens + sprint_tokens))
+    proj_stories=$((proj_stories + sprint_stories))
+    echo "  $proj_label/$sprint: tokens=$sprint_tokens stories_completed=$sprint_stories"
+  done
+  if [ "$proj_generate_tokens" -gt 0 ]; then
+    echo "  $proj_label/generate: tokens=$proj_generate_tokens"
+    proj_tokens=$((proj_tokens + proj_generate_tokens))
+  fi
+  echo "  $proj_label TOTAL: tokens=$proj_tokens stories_completed=$proj_stories"
+  total_tokens_all=$((total_tokens_all + proj_tokens))
+  total_stories_all=$((total_stories_all + proj_stories))
+done
+if [ "$total_tokens_all" -eq 0 ]; then
+  echo "  ALL: tokens=unavailable (no 'tokens used' markers in codex output) stories_completed=$total_stories_all"
+else
+  echo "  ALL: tokens=$total_tokens_all stories_completed=$total_stories_all"
+fi
+
+mkdir -p "$BENCH_DIR"
+mode_label="default"
+[ "$GENERATED" -eq 1 ] && mode_label="generated"
+status_label="pass"
+[ "$overall_exit" -eq 0 ] || status_label="fail"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$(date -Iseconds)" \
+  "$status_label" \
+  "$mode_label" \
+  "$total_tokens_all" \
+  "$total_stories_all" \
+  >>"$BENCH_FILE"
 
 # ── Generation mode note ───────────────────────────────────────────────────────
 
