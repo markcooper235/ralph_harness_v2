@@ -245,6 +245,24 @@ effective_story_status_for_migration() {
   esac
 }
 
+effective_story_passes_for_migration() {
+  local story_status="$1"
+  local tasks_json="$2"
+
+  case "$story_status" in
+    done|abandoned)
+      if echo "$tasks_json" | jq -e 'length > 0 and all(.[]; (.passes // false) == true)' >/dev/null 2>&1; then
+        printf 'true\n'
+      else
+        printf 'false\n'
+      fi
+      ;;
+    *)
+      printf 'false\n'
+      ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # Load epics
 # ---------------------------------------------------------------------------
@@ -310,13 +328,16 @@ for i in $(seq 0 $((EPIC_COUNT - 1))); do
 
   # Build story.json from PRD if available
   if [ -f "$story_path_abs" ] && [ "$FORCE" -eq 0 ]; then
+    existing_story_status="$(jq -r '.status // "planned"' "$story_path_abs")"
+    existing_story_passes="$(jq -r '.passes // false' "$story_path_abs")"
     story_entry="$(jq -n \
       --arg id "$story_id" \
       --arg title "$epic_title" \
       --argjson priority "$epic_priority" \
       --argjson effort "$epic_effort" \
       --arg ps "$epic_planning_source" \
-      --arg status "$epic_status" \
+      --arg status "$existing_story_status" \
+      --argjson passes "$existing_story_passes" \
       --argjson depends "$deps_json" \
       --arg path "$story_path_rel" \
       --arg goal "$epic_goal" \
@@ -328,6 +349,7 @@ for i in $(seq 0 $((EPIC_COUNT - 1))); do
         "effort": $effort,
         "planningSource": $ps,
         "status": $status,
+        "passes": $passes,
         "depends_on": $depends,
         "story_path": $path,
         "goal": $goal,
@@ -495,6 +517,7 @@ Reconstruct this story manually before execution."
   fi
 
   # Build stories.json entry after migration status is finalized
+  story_passes="$(effective_story_passes_for_migration "$effective_story_status" "$TASKS_JSON")"
   story_entry="$(jq -n \
     --arg id "$story_id" \
     --arg title "$epic_title" \
@@ -502,6 +525,7 @@ Reconstruct this story manually before execution."
     --argjson effort "$epic_effort" \
     --arg ps "$epic_planning_source" \
     --arg status "$effective_story_status" \
+    --argjson passes "$story_passes" \
     --argjson depends "$deps_json" \
     --arg path "$story_path_rel" \
     --arg goal "$epic_goal" \
@@ -513,6 +537,7 @@ Reconstruct this story manually before execution."
       "effort": $effort,
       "planningSource": $ps,
       "status": $status,
+      "passes": $passes,
       "depends_on": $depends,
       "story_path": $path,
       "goal": $goal,
@@ -545,6 +570,7 @@ Reconstruct this story manually before execution."
     --arg prdRef "$PRD_MD_REF" \
     --argjson tasks "$TASKS_JSON" \
     --argjson tasksRecovered "$(if [ "$TASKS_RECOVERED" = "true" ]; then echo true; else echo false; fi)" \
+    --argjson passes "$story_passes" \
     '{
       "version": 1,
       "project": $project,
@@ -570,7 +596,7 @@ Reconstruct this story manually before execution."
         "tasks_recovered": $tasksRecovered
       },
       "tasks": $tasks,
-      "passes": false
+      "passes": $passes
     }')"
 
   if dry; then
@@ -616,6 +642,8 @@ fi
 SPRINT_STATUS="planned"
 if [ -n "$ACTIVE_EPIC_ID" ] || jq -e '[.epics[]? | select(.status == "active")] | length > 0' "$EPICS_FILE" >/dev/null 2>&1; then
   SPRINT_STATUS="active"
+elif echo "$STORIES_ENTRIES" | jq -e 'length > 0 and all(.[]; .status == "done" or .status == "abandoned")' >/dev/null 2>&1; then
+  SPRINT_STATUS="closed"
 fi
 
 stories_json="$(jq -n \
