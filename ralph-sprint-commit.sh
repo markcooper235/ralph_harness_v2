@@ -20,14 +20,14 @@ SKIP_REGRESSION=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target master|main] [--dry-run] [--keep] [--skip-regression]
+Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression]
 
 Behavior:
   1. Validates active sprint exists and all stories are done/abandoned
   2. Runs sprint regression gate (ralph-sprint-test.sh) if present
   3. Ensures sprint branch exists (ralph/sprint/<active-sprint>)
   4. Archives sprint-level artifacts to scripts/ralph/tasks/archive/sprints/
-  5. Merges sprint branch into target branch (master preferred, else main)
+  5. Merges sprint branch into its recorded parent branch (or explicit target)
   6. Clears active Ralph sprint/prd state for next sprint/standalone run
 
 Options:
@@ -73,6 +73,22 @@ default_target_branch() {
     return 0
   fi
   fail "Could not find target branch (master or main)."
+}
+
+branch_parent_from_upstream() {
+  local branch="$1"
+  git for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>/dev/null | head -n1
+}
+
+resolve_sprint_merge_target() {
+  local sprint_branch="$1"
+  local parent_branch
+  parent_branch="$(branch_parent_from_upstream "$sprint_branch")"
+  if [ -n "$parent_branch" ]; then
+    printf '%s\n' "$parent_branch"
+    return 0
+  fi
+  default_target_branch
 }
 
 ensure_clean_worktree() {
@@ -160,7 +176,7 @@ if ! git show-ref --verify --quiet "refs/heads/$SPRINT_BRANCH"; then
 fi
 
 if [ -z "$TARGET_BRANCH" ]; then
-  TARGET_BRANCH="$(default_target_branch)"
+  TARGET_BRANCH="$(resolve_sprint_merge_target "$SPRINT_BRANCH")"
 fi
 
 if [ "$SPRINT_BRANCH" = "$TARGET_BRANCH" ]; then

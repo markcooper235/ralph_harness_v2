@@ -22,6 +22,18 @@ fail() { echo "ERROR: $1" >&2; exit 1; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"; }
 require_cmd jq
 
+branch_parent_from_upstream() {
+  local branch="$1"
+  git -C "$WORKSPACE_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>/dev/null | head -n1
+}
+
+set_branch_parent() {
+  local branch="$1"
+  local parent="$2"
+  [ -n "$branch" ] && [ -n "$parent" ] || return 0
+  git -C "$WORKSPACE_ROOT" branch --set-upstream-to="$parent" "$branch" >/dev/null 2>&1 || true
+}
+
 get_active_sprint() {
   [ -f "$ACTIVE_SPRINT_FILE" ] || return 1
   awk 'NF {print; exit}' "$ACTIVE_SPRINT_FILE"
@@ -935,9 +947,13 @@ cmd_start_next() {
     [ -n "$active_sprint" ] && sprint_branch="ralph/sprint/$active_sprint"
     if git -C "$WORKSPACE_ROOT" show-ref --verify --quiet "refs/heads/$story_branch" 2>/dev/null; then
       git -C "$WORKSPACE_ROOT" checkout "$story_branch"
+      if [ -n "$sprint_branch" ] && [ -z "$(branch_parent_from_upstream "$story_branch")" ]; then
+        set_branch_parent "$story_branch" "$sprint_branch"
+      fi
       echo "Checked out story branch: $story_branch"
     elif [ -n "$sprint_branch" ] && git -C "$WORKSPACE_ROOT" show-ref --verify --quiet "refs/heads/$sprint_branch" 2>/dev/null; then
       git -C "$WORKSPACE_ROOT" checkout -b "$story_branch" "$sprint_branch"
+      set_branch_parent "$story_branch" "$sprint_branch"
       echo "Created story branch: $story_branch (from $sprint_branch)"
     else
       git -C "$WORKSPACE_ROOT" checkout -b "$story_branch"

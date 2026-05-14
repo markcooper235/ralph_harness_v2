@@ -72,7 +72,30 @@ sprint_branch_name() {
   printf '%s/%s' "$SPRINT_BRANCH_PREFIX" "$sprint"
 }
 
-default_base_branch() {
+branch_parent_from_upstream() {
+  local branch="$1"
+  git for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>/dev/null | head -n1
+}
+
+set_branch_parent() {
+  local branch="$1"
+  local parent="$2"
+  [ -n "$branch" ] && [ -n "$parent" ] || return 0
+  git branch --set-upstream-to="$parent" "$branch" >/dev/null 2>&1 || true
+}
+
+resolve_branch_parent() {
+  local branch="$1"
+  local parent
+  parent="$(branch_parent_from_upstream "$branch")"
+  if [ -n "$parent" ]; then
+    printf '%s\n' "$parent"
+    return 0
+  fi
+  default_primary_branch
+}
+
+default_primary_branch() {
   if git show-ref --verify --quiet refs/heads/master; then
     printf 'master\n'
     return 0
@@ -82,6 +105,17 @@ default_base_branch() {
     return 0
   fi
   fail "Could not find base branch (master or main) for sprint branch creation."
+}
+
+default_base_branch() {
+  local current_branch
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+  if [ -n "$current_branch" ] && [[ "$current_branch" != ralph/* ]] \
+    && git show-ref --verify --quiet "refs/heads/$current_branch"; then
+    printf '%s\n' "$current_branch"
+    return 0
+  fi
+  default_primary_branch
 }
 
 ensure_sprint_branch_exists() {
@@ -94,6 +128,7 @@ ensure_sprint_branch_exists() {
 
   base_branch="$(default_base_branch)"
   git branch "$sprint_branch" "$base_branch"
+  set_branch_parent "$sprint_branch" "$base_branch"
   echo "Created sprint branch: $sprint_branch (from $base_branch)"
 }
 
@@ -465,7 +500,7 @@ remove_sprint() {
   local sprint_raw="$1"
   shift
   local sprint hard_delete assume_yes drop_branch
-  local stories_file sprint_dir tasks_dir archive_dir stamp sprint_branch base_branch active
+  local stories_file sprint_dir tasks_dir archive_dir stamp sprint_branch parent_branch active
 
   sprint="$(normalize_sprint_name "$sprint_raw")"
   [ -n "$sprint" ] || fail "Invalid sprint name."
@@ -524,18 +559,17 @@ EOF
 
   sprint_branch="$(sprint_branch_name "$sprint")"
   if git show-ref --verify --quiet "refs/heads/$sprint_branch"; then
+    parent_branch="$(resolve_branch_parent "$sprint_branch")"
     if [ "$drop_branch" -eq 1 ]; then
       if [ "$(git branch --show-current)" = "$sprint_branch" ]; then
-        base_branch="$(default_base_branch)"
-        git checkout "$base_branch" >/dev/null
+        git checkout "$parent_branch" >/dev/null
       fi
       git branch -D "$sprint_branch" >/dev/null
       echo "Deleted sprint branch: $sprint_branch"
     else
-      base_branch="$(default_base_branch)"
-      if git merge-base --is-ancestor "$sprint_branch" "$base_branch"; then
+      if git merge-base --is-ancestor "$sprint_branch" "$parent_branch"; then
         if [ "$(git branch --show-current)" = "$sprint_branch" ]; then
-          git checkout "$base_branch" >/dev/null
+          git checkout "$parent_branch" >/dev/null
         fi
         git branch -d "$sprint_branch" >/dev/null
         echo "Deleted merged sprint branch: $sprint_branch"

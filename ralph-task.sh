@@ -48,6 +48,11 @@ EOF
 fail() { echo "ERROR: $1" >&2; exit 1; }
 log()  { [ "$QUIET" -eq 0 ] && echo "$1"; }
 
+branch_parent_from_upstream() {
+  local branch="$1"
+  git -C "$WORKSPACE_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>/dev/null | head -n1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --story)       STORY_FILE="${2:-}"; shift 2 ;;
@@ -588,15 +593,17 @@ Total changed: ${_story_total_diff}"
       fi
     fi
 
-    # Merge story branch back to sprint branch, then delete it
+    # Merge story branch back to its recorded parent branch, then delete it
     _story_branch="$(jq -r '.branchName // ""' "$STORY_FILE" 2>/dev/null || true)"
     _story_title="$(jq -r '.title // ""' "$STORY_FILE" 2>/dev/null || true)"
     _sprint=""
     [ -f "$SCRIPT_DIR/.active-sprint" ] && _sprint="$(awk 'NF {print; exit}' "$SCRIPT_DIR/.active-sprint")"
     if [ -n "$_story_branch" ] && [ -n "$_sprint" ]; then
       _sprint_branch="ralph/sprint/$_sprint"
+      _merge_target_branch="$(branch_parent_from_upstream "$_story_branch")"
+      [ -n "$_merge_target_branch" ] || _merge_target_branch="$_sprint_branch"
       _meta_stories_file="$SCRIPT_DIR/sprints/${_sprint}/stories.json"
-      if git -C "$WORKSPACE_ROOT" show-ref --verify --quiet "refs/heads/$_sprint_branch" 2>/dev/null; then
+      if git -C "$WORKSPACE_ROOT" show-ref --verify --quiet "refs/heads/$_merge_target_branch" 2>/dev/null; then
         # Commit story metadata on the story branch before switching branches.
         # git checkout fails if story.json has uncommitted changes that would be
         # removed (the sprint branch does not track story.json at this path).
@@ -606,8 +613,8 @@ Total changed: ${_story_total_diff}"
           git -C "$WORKSPACE_ROOT" commit -m "chore(ralph): $STORY_ID complete — story metadata"
           log "Committed story metadata on story branch."
         fi
-        log "--- Merging $STORY_ID → sprint branch ---"
-        git -C "$WORKSPACE_ROOT" checkout "$_sprint_branch"
+        log "--- Merging $STORY_ID → parent branch ---"
+        git -C "$WORKSPACE_ROOT" checkout "$_merge_target_branch"
         if git -C "$WORKSPACE_ROOT" -c merge.renames=false merge --no-ff "$_story_branch" \
               -m "merge: $STORY_ID — $_story_title"; then
           git -C "$WORKSPACE_ROOT" branch -d "$_story_branch" 2>/dev/null \
@@ -616,7 +623,7 @@ Total changed: ${_story_total_diff}"
           log "Merged and deleted story branch: $_story_branch"
           rm -f "$STORY_DIR"/.task-log-*.txt "$STORY_DIR"/.fallow-autofix.txt "$STORY_DIR"/.fallow-report.json
         else
-          log "WARN: Merge conflict merging $_story_branch → $_sprint_branch. Resolve manually then delete $_story_branch."
+          log "WARN: Merge conflict merging $_story_branch → $_merge_target_branch. Resolve manually then delete $_story_branch."
         fi
       fi
     fi
