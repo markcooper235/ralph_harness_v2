@@ -122,6 +122,446 @@ resolve_story_path() {
   fi
 }
 
+resolve_repo_relative_path() {
+  local raw_path="$1"
+  if [[ "$raw_path" != /* ]]; then
+    printf '%s\n' "$WORKSPACE_ROOT/$raw_path"
+  else
+    printf '%s\n' "$raw_path"
+  fi
+}
+
+story_is_unrecovered_migration_placeholder() {
+  local story_path="$1"
+  [ -f "$story_path" ] || return 1
+  jq -e '.migration.tasks_recovered == false' "$story_path" >/dev/null 2>&1
+}
+
+infer_checks_from_text() {
+  local text="$1"
+  local checks="[]"
+
+  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(typecheck|tsc|type check|type-check)($|[^[:alnum:]_])'; then
+    checks="$(echo "$checks" | jq '. + ["npm run typecheck"]')"
+  fi
+  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(test|tests|jest|vitest|pytest|go test)($|[^[:alnum:]_])'; then
+    checks="$(echo "$checks" | jq '. + ["npm test"]')"
+  fi
+  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(lint|eslint)($|[^[:alnum:]_])'; then
+    checks="$(echo "$checks" | jq '. + ["npm run lint"]')"
+  fi
+  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(build)($|[^[:alnum:]_])'; then
+    checks="$(echo "$checks" | jq '. + ["npm run build"]')"
+  fi
+  if printf '%s\n' "$text" | grep -Eqi 'verify in browser|playwright|cypress|verification'; then
+    checks="$(echo "$checks" | jq '. + ["echo browser verification required"]')"
+  fi
+
+  if [ "$checks" = "[]" ]; then
+    checks='["npm run typecheck"]'
+  fi
+
+  echo "$checks"
+}
+
+extract_markdown_section_body() {
+  local file="$1"
+  local heading="$2"
+  awk -v heading="$heading" '
+    $0 == heading { in_section=1; next }
+    in_section && /^## / { exit }
+    in_section { print }
+  ' "$file"
+}
+
+extract_markdown_section_body_any() {
+  local file="$1"
+  shift
+  local heading body
+  for heading in "$@"; do
+    body="$(extract_markdown_section_body "$file" "$heading")"
+    if [ -n "$(printf '%s\n' "$body" | awk 'NF { print; exit }')" ]; then
+      printf '%s\n' "$body"
+      return 0
+    fi
+  done
+  return 1
+}
+
+json_array_from_markdown_bullets() {
+  local text="$1"
+  printf '%s\n' "$text" \
+    | sed -n -E 's/^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]*//p' \
+    | awk 'NF' \
+    | jq -R . \
+    | jq -s .
+}
+
+json_first_slice_from_markdown() {
+  local text="$1"
+  local source destination entrypoint
+  source="$(printf '%s\n' "$text" | sed -n 's/^[[:space:]]*-[[:space:]]*exact source:[[:space:]]*//Ip' | head -n 1)"
+  destination="$(printf '%s\n' "$text" | sed -n 's/^[[:space:]]*-[[:space:]]*destination:[[:space:]]*//Ip' | head -n 1)"
+  entrypoint="$(printf '%s\n' "$text" | sed -n 's/^[[:space:]]*-[[:space:]]*\(entrypoint\|workflow\|commands\|caller workflow\):[[:space:]]*//Ip' | head -n 1)"
+  jq -n \
+    --arg source "$source" \
+    --arg destination "$destination" \
+    --arg entrypoint "$entrypoint" \
+    '{
+      source: $source,
+      destination: $destination,
+      entrypoint: $entrypoint
+    }'
+}
+
+json_scope_from_text() {
+  local text="$1"
+  {
+    printf '%s\n' "$text" | grep -oE '`[^`]+`' | tr -d '`' || true
+    printf '%s\n' "$text" | grep -oE '([A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+' || true
+    printf '%s\n' "$text" | grep -oE '([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+' || true
+  } \
+    | sed -E 's/^[("'\''`]+//; s/[)"'\''`.,;:]+$//' \
+    | awk 'NF && !seen[$0]++' \
+    | jq -R . \
+    | jq -s '
+        unique
+        | map(select(length > 0)) as $all
+        | $all
+        | map(select(
+            . as $candidate
+            | ($all | any(. != $candidate and endswith("/" + $candidate))) | not
+          ))
+      '
+}
+
+scope_fallback_from_spec() {
+  local task_scope_json="$1"
+  local support_json="$2"
+  local first_slice_json="$3"
+  printf '%s' "$task_scope_json" | jq \
+    --argjson support "$support_json" \
+    --argjson first_slice "$first_slice_json" \
+    '
+      if length > 0 then
+        .
+      else
+        (
+          (($support // []) + [($first_slice.destination // empty), ($first_slice.source // empty)])
+          | map(select(type == "string" and length > 0))
+          | map(sub("^[./]+"; ""))
+          | map(select(test("\\.(md|txt)$") | not))
+          | unique
+        )
+      end
+    '
+}
+
+parse_legacy_markdown_story_json() {
+  local markdown_path="$1"
+  local output_path="$2"
+  local story_id="$3"
+  local title="$4"
+  local description="$5"
+  local branch_name="$6"
+  local sprint="$7"
+  local priority="$8"
+  local depends_json="$9"
+  local project_name="${10}"
+
+  [ -f "$markdown_path" ] || return 1
+
+  local user_stories_body scope_body out_scope_body slice_body support_body invariants_body definition_body
+  user_stories_body="$(extract_markdown_section_body_any "$markdown_path" '## User Stories' '## Stories' '## Implementation Stories' || true)"
+  [ -n "$user_stories_body" ] || return 1
+
+  if ! printf '%s\n' "$user_stories_body" | grep -Eq '^(### ([Ss]tory[[:space:]]+[0-9]+:|[0-9]+[.)][[:space:]]+|[^#].+)|[Ss]tory[[:space:]]+[[:alnum:]]+([:.-][[:space:]].*)?)'; then
+    return 1
+  fi
+
+  scope_body="$(extract_markdown_section_body_any "$markdown_path" '## Scope' '## In Scope' || true)"
+  out_scope_body="$(extract_markdown_section_body_any "$markdown_path" '## Out of Scope' '## Not In Scope' || true)"
+  slice_body="$(extract_markdown_section_body_any "$markdown_path" '## First Slice Expectations' '## First Slice' '## Initial Slice' || true)"
+  support_body="$(extract_markdown_section_body_any "$markdown_path" '## Allowed Supporting Files' '## Supporting Files' '## Files in Scope' || true)"
+  invariants_body="$(extract_markdown_section_body_any "$markdown_path" '## Preserved Invariants' '## Invariants' || true)"
+  definition_body="$(extract_markdown_section_body_any "$markdown_path" '## Definition of Done' '## Verification' '## Done Criteria' || true)"
+
+  local spec_scope
+  spec_scope="$(printf '%s\n' "$scope_body" | awk 'NF { print }' | paste -sd ' ' -)"
+  [ -n "$spec_scope" ] || spec_scope="$description"
+
+  local out_scope_json invariants_json support_json verification_json first_slice_json
+  out_scope_json="$(json_array_from_markdown_bullets "$out_scope_body")"
+  invariants_json="$(json_array_from_markdown_bullets "$invariants_body")"
+  support_json="$(json_array_from_markdown_bullets "$support_body")"
+  verification_json="$(json_array_from_markdown_bullets "$definition_body")"
+  first_slice_json="$(json_first_slice_from_markdown "$slice_body")"
+
+  local tasks_json
+  tasks_json="$(
+    printf '%s\n' "$user_stories_body" | awk '
+      BEGIN {
+        task_index = 0
+        state = ""
+        title = ""
+        desc = ""
+        acceptance = ""
+        proof = ""
+      }
+      function trim(str) {
+        gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", str)
+        return str
+      }
+      function emit_task() {
+        if (title == "") return
+        task_index += 1
+        gsub(/\n+$/, "", desc)
+        gsub(/\n+$/, "", acceptance)
+        gsub(/\n+$/, "", proof)
+        printf("{\"id\":\"T-%02d\",\"title\":%s,\"desc\":%s,\"acceptance\":%s,\"proof\":%s}\n",
+          task_index,
+          tojson(trim(title)),
+          tojson(trim(desc)),
+          tojson(trim(acceptance)),
+          tojson(trim(proof)))
+      }
+      function tojson(str,    out, i, c) {
+        out = "\""
+        for (i = 1; i <= length(str); i++) {
+          c = substr(str, i, 1)
+          if (c == "\\") out = out "\\\\"
+          else if (c == "\"") out = out "\\\""
+          else if (c == "\n") out = out "\\n"
+          else out = out c
+        }
+        return out "\""
+      }
+      function normalize_title(raw,    cleaned) {
+        cleaned = raw
+        sub(/^###[[:space:]]*/, "", cleaned)
+        sub(/^[Ss]tory[[:space:]]+[0-9]+:[[:space:]]*/, "", cleaned)
+        sub(/^[0-9]+[.)][[:space:]]*/, "", cleaned)
+        sub(/^[Ss]tory[[:space:]]+[[:alnum:]]+[[:space:]]*[-:][[:space:]]*/, "", cleaned)
+        sub(/^[*][*](.*)[*][*]$/, "\\1", cleaned)
+        return trim(cleaned)
+      }
+      function is_story_heading(raw,    probe) {
+        probe = raw
+        if (probe ~ /^### /) return 1
+        if (probe ~ /^[Ss]tory[[:space:]]+[[:alnum:]]+([:.-][[:space:]].*)?$/) return 1
+        return 0
+      }
+      /^[#[:space:]]*\**Acceptance Criteria:?\**[[:space:]]*$/ { state = "accept"; next }
+      /^[#[:space:]]*\**Proof Obligations:?\**[[:space:]]*$/ { state = "proof"; next }
+      /^[#[:space:]]*\**Description:?\**[[:space:]]*$/ { state = "desc"; next }
+      /^[#[:space:]]*\**Description:[[:space:]]+/ {
+        sub(/^[#[:space:]]*\**Description:[[:space:]]*/, "", $0)
+        state = "desc"
+        if (desc == "") desc = $0
+        else desc = desc "\n" $0
+        next
+      }
+      {
+        if (is_story_heading($0)) {
+          emit_task()
+          title = normalize_title($0)
+          if (title == "" || title ~ /^[Ss]tory[[:space:]]+[[:alnum:]]+$/) {
+            title = trim($0)
+            sub(/^###[[:space:]]*/, "", title)
+          }
+          desc = ""
+          acceptance = ""
+          proof = ""
+          state = "desc"
+          next
+        }
+        if ($0 ~ /^[#[:space:]]*\**Acceptance Criteria:?\**[[:space:]]*$/) { state = "accept"; next }
+        if ($0 ~ /^[#[:space:]]*\**Proof Obligations:?\**[[:space:]]*$/) { state = "proof"; next }
+        if ($0 ~ /^[#[:space:]]*\**Description:?\**[[:space:]]*$/) { state = "desc"; next }
+        if (state == "desc") {
+          if (desc == "") desc = $0
+          else desc = desc "\n" $0
+        } else if (state == "accept" && $0 ~ /^[[:space:]]*([-*]|[0-9]+[.)])/) {
+          sub(/^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]*/, "", $0)
+          if (acceptance == "") acceptance = $0
+          else acceptance = acceptance "\n" $0
+        } else if (state == "proof" && $0 ~ /^[[:space:]]*([-*]|[0-9]+[.)])/) {
+          sub(/^[[:space:]]*([-*]|[0-9]+[.)])[[:space:]]*/, "", $0)
+          if (proof == "") proof = $0
+          else proof = proof "\n" $0
+        } else if (state == "desc" && $0 ~ /^[[:space:]]*$/) {
+          next
+        }
+      }
+      END { emit_task() }
+    ' | jq -Rs '
+      split("\n")
+      | map(select(length > 0) | fromjson)
+    '
+  )"
+
+  local final_tasks_json="[]"
+  local previous_task_id=""
+  while IFS= read -r task_row; do
+    [ -n "$task_row" ] || continue
+    local task_id task_title task_desc task_acceptance_block task_proof_block
+    local task_context task_acceptance_summary scope_text scope_json checks_json depends_task
+    task_id="$(printf '%s' "$task_row" | jq -r '.id')"
+    task_title="$(printf '%s' "$task_row" | jq -r '.title')"
+    task_desc="$(printf '%s' "$task_row" | jq -r '.desc')"
+    task_acceptance_block="$(printf '%s' "$task_row" | jq -r '.acceptance')"
+    task_proof_block="$(printf '%s' "$task_row" | jq -r '.proof')"
+
+    task_context="$task_desc"
+    if [ -n "$task_acceptance_block" ]; then
+      if [ -n "$task_context" ]; then
+        task_context="$task_context"$'\n\n'"Acceptance Criteria:"$'\n'
+      else
+        task_context="Acceptance Criteria:"$'\n'
+      fi
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        task_context="$task_context- $line"$'\n'
+      done < <(printf '%s\n' "$task_acceptance_block")
+    fi
+    if [ -n "$task_proof_block" ]; then
+      if [ -n "$task_context" ]; then
+        task_context="$task_context"$'\n'"Proof Obligations:"$'\n'
+      else
+        task_context="Proof Obligations:"$'\n'
+      fi
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        task_context="$task_context- $line"$'\n'
+      done < <(printf '%s\n' "$task_proof_block")
+    fi
+    task_context="${task_context%$'\n'}"
+    [ -n "$task_context" ] || task_context="Recover implementation details from preserved legacy PRD markdown."
+
+    task_acceptance_summary="$(printf '%s\n%s\n' "$task_acceptance_block" "$task_proof_block" | awk 'NF { print }' | paste -sd ' ' -)"
+    [ -n "$task_acceptance_summary" ] || task_acceptance_summary="$task_title completed according to legacy PRD markdown."
+
+    scope_text="$(printf '%s\n%s\n%s\n' "$task_desc" "$task_acceptance_block" "$task_proof_block")"
+    scope_json="$(json_scope_from_text "$scope_text")"
+    scope_json="$(scope_fallback_from_spec "$scope_json" "$support_json" "$first_slice_json")"
+    checks_json="$(infer_checks_from_text "$task_acceptance_summary")"
+    depends_task="[]"
+    if [ -n "$previous_task_id" ]; then
+      depends_task="$(jq -nc --arg dep "$previous_task_id" '[$dep]')"
+    fi
+    final_tasks_json="$(printf '%s' "$final_tasks_json" | jq \
+      --arg id "$task_id" \
+      --arg title "$task_title" \
+      --arg context "$task_context" \
+      --arg acceptance "$task_acceptance_summary" \
+      --argjson scope "$scope_json" \
+      --argjson checks "$checks_json" \
+      --argjson depends "$depends_task" \
+      '. + [{
+        "id": $id,
+        "title": $title,
+        "context": $context,
+        "scope": $scope,
+        "acceptance": $acceptance,
+        "checks": $checks,
+        "depends_on": $depends,
+        "status": "pending",
+        "passes": false
+      }]')"
+    previous_task_id="$task_id"
+  done < <(printf '%s' "$tasks_json" | jq -c '.[]')
+
+  [ "$(printf '%s' "$final_tasks_json" | jq 'length')" -gt 0 ] || return 1
+
+  local prd_ref="$markdown_path"
+  if [[ "$prd_ref" == "$WORKSPACE_ROOT/"* ]]; then
+    prd_ref="${prd_ref#$WORKSPACE_ROOT/}"
+  fi
+
+  jq -n \
+    --argjson version 1 \
+    --arg project "$project_name" \
+    --arg sid "$story_id" \
+    --arg title "$title" \
+    --arg desc "$description" \
+    --arg branch "$branch_name" \
+    --arg sprint "$sprint" \
+    --argjson priority "$priority" \
+    --argjson depends "$depends_json" \
+    --arg scope "$spec_scope" \
+    --argjson out_scope "$out_scope_json" \
+    --argjson first_slice "$first_slice_json" \
+    --argjson invariants "$invariants_json" \
+    --argjson support "$support_json" \
+    --argjson verification "$verification_json" \
+    --arg prd_ref "$prd_ref" \
+    --argjson tasks "$final_tasks_json" \
+    '{
+      "version": $version,
+      "project": $project,
+      "storyId": $sid,
+      "title": $title,
+      "description": $desc,
+      "branchName": $branch,
+      "sprint": $sprint,
+      "priority": $priority,
+      "depends_on": $depends,
+      "status": "planned",
+      "spec": {
+        "scope": $scope,
+        "out_of_scope": $out_scope,
+        "first_slice": $first_slice,
+        "preserved_invariants": $invariants,
+        "supporting_files": $support,
+        "verification": $verification,
+        "prdRef": $prd_ref
+      },
+      "migration": {
+        "source": "legacy-prd-markdown",
+        "tasks_recovered": true
+      },
+      "tasks": $tasks,
+      "passes": false
+    }' > "$output_path"
+}
+
+mark_guided_migration_recovery() {
+  local story_path="$1"
+  local fallback_reason="$2"
+  local prd_ref="$3"
+  local tmp
+  tmp="$(mktemp)"
+  jq \
+    --arg reason "$fallback_reason" \
+    --arg prd_ref "$prd_ref" \
+    '
+      .migration = ((.migration // {}) + {
+        source: "legacy-placeholder-guided-recovery",
+        tasks_recovered: true,
+        recoveryMode: "guided-codex-fallback",
+        recoveryWarnings: (
+          [
+            "Task plan was regenerated through guided fallback recovery rather than deterministic legacy markdown compilation.",
+            $reason
+          ]
+          | map(select(length > 0))
+        )
+      })
+      | if ($prd_ref | length) > 0 then
+          .spec = ((.spec // {}) + { prdRef: $prd_ref })
+        else
+          .
+        end
+      | .spec.verification = (
+          ((.spec.verification // []) + [
+            "Legacy migration fallback recovery used guided generation; review task scope and acceptance checks before execution."
+          ])
+          | unique
+        )
+    ' "$story_path" > "$tmp"
+  mv "$tmp" "$story_path"
+}
+
 # ---------------------------------------------------------------------------
 # list
 # ---------------------------------------------------------------------------
@@ -378,6 +818,15 @@ _health_story() {
   if [ ! -f "$story_path" ]; then
     echo "  [MISSING] story.json not found: $story_path"
     return 1
+  fi
+
+  if jq -e '.migration.tasks_recovered == false' "$story_path" >/dev/null 2>&1; then
+    if [ "$story_status" = "done" ] || [ "$story_status" = "abandoned" ]; then
+      echo "  [INFO] Historical migration placeholder retained (task-level data was not recoverable)"
+    else
+      echo "  [MIGRATION] task-level data was not recovered; regenerate this story before execution"
+      issues=$((issues + 1))
+    fi
   fi
 
   # Validate SpecKit artifacts if .specify/ exists (catches partial SpecKit runs)
@@ -667,10 +1116,18 @@ cmd_generate() {
   [ -n "$raw_path" ] || fail "story_path not set for $story_id in $STORIES_FILE"
 
   local story_path_abs
-  if [[ "$raw_path" != /* ]]; then
-    story_path_abs="$WORKSPACE_ROOT/$raw_path"
-  else
-    story_path_abs="$raw_path"
+  story_path_abs="$(resolve_repo_relative_path "$raw_path")"
+
+  local placeholder_recovery=0 existing_branch_name="" existing_prd_ref="" existing_prd_abs=""
+  if [ -f "$story_path_abs" ]; then
+    existing_branch_name="$(jq -r '.branchName // empty' "$story_path_abs" 2>/dev/null || true)"
+    existing_prd_ref="$(jq -r '.spec.prdRef // empty' "$story_path_abs" 2>/dev/null || true)"
+    if story_is_unrecovered_migration_placeholder "$story_path_abs"; then
+      placeholder_recovery=1
+      if [ -n "$existing_prd_ref" ]; then
+        existing_prd_abs="$(resolve_repo_relative_path "$existing_prd_ref")"
+      fi
+    fi
   fi
 
   if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ]; then
@@ -689,6 +1146,10 @@ cmd_generate() {
   depends_on_arr="$(printf '%s' "$story_meta" | jq -c '.depends_on // []')"
 
   local branch_name="ralph/$sprint/story-$story_id"
+  [ -n "$existing_branch_name" ] && branch_name="$existing_branch_name"
+  local project_name
+  project_name="$(jq -r '.project // empty' "$STORIES_FILE")"
+  [ -n "$project_name" ] || project_name="$(basename "$WORKSPACE_ROOT")"
 
   # Check for SpecKit artifacts (.specify/ in story directory)
   local story_dir specify_dir has_speckit
@@ -727,9 +1188,36 @@ $dep_context"
   tasks.md: $specify_dir/tasks.md
 
 Use the story-specify skill to convert these artifacts into story.json."
+  elif [ "$placeholder_recovery" -eq 1 ]; then
+    if [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
+      skill_instruction="Legacy migration placeholder detected — recover the story plan from the preserved PRD markdown.
+Primary source PRD markdown: $existing_prd_abs
+
+Use the story-generate skill and replace the placeholder entirely with a real story.json plan."
+    else
+      skill_instruction="Legacy migration placeholder detected, but the preserved PRD markdown is unavailable.
+Recover the story plan from the backlog metadata below, using goal and planning context as the primary source.
+
+Use the story-generate skill and replace the placeholder entirely with a real story.json plan."
+    fi
   else
     skill_instruction="No SpecKit artifacts found.
 Use the story-generate skill for schema and task design rules."
+  fi
+
+  local placeholder_section=""
+  if [ "$placeholder_recovery" -eq 1 ]; then
+    placeholder_section="Migration recovery:
+- Existing story.json is a migration placeholder and should be fully replaced.
+- Preserve storyId: $story_id
+- Preserve branchName: $branch_name"
+    if [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
+      placeholder_section="$placeholder_section
+- Primary source markdown: $existing_prd_ref"
+    else
+      placeholder_section="$placeholder_section
+- Primary source markdown unavailable; recover from goal and planning context."
+    fi
   fi
 
   local prompt
@@ -747,6 +1235,7 @@ Story backlog entry:
 - depends_on: $depends_on_arr
 
 $dep_section
+$placeholder_section
 $skill_instruction
 
 Write the completed story.json to: $story_path_abs
@@ -762,6 +1251,14 @@ GENPROMPT
 )"
 
   if [ "$dry_run" -eq 1 ]; then
+    if [ "$placeholder_recovery" -eq 1 ] && [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
+      echo "=== DRY RUN: deterministic migration recovery for $story_id ==="
+      echo "Markdown source: $existing_prd_abs"
+      echo "Output path:      $story_path_abs"
+      echo "Branch name:      $branch_name"
+      echo "Fallback:         guided Codex generation if markdown structure is unsupported"
+      return 0
+    fi
     echo "=== DRY RUN: generate prompt for $story_id ==="
     printf '%s\n' "$prompt"
     echo "=== Would write to: $story_path_abs ==="
@@ -770,17 +1267,65 @@ GENPROMPT
 
   echo "Generating story.json for $story_id..."
   mkdir -p "$(dirname "$story_path_abs")"
+  local deterministic_recovery=0 fallback_reason=""
+  if [ "$placeholder_recovery" -eq 1 ] && [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
+    if parse_legacy_markdown_story_json \
+      "$existing_prd_abs" \
+      "$story_path_abs" \
+      "$story_id" \
+      "$title" \
+      "$goal" \
+      "$branch_name" \
+      "$sprint" \
+      "$priority" \
+      "$depends_on_arr" \
+      "$project_name"; then
+      deterministic_recovery=1
+      echo "Recovered migration placeholder for $story_id from legacy PRD markdown."
+    else
+      fallback_reason="Preserved PRD markdown could not be deterministically parsed; guided fallback recovery was used."
+      echo "WARN: deterministic markdown recovery could not parse $existing_prd_ref; falling back to guided generation."
+    fi
+  elif [ "$placeholder_recovery" -eq 1 ]; then
+    fallback_reason="Preserved PRD markdown was unavailable; guided fallback recovery was used."
+  fi
 
-  codex_exec_prompt "$prompt" "$WORKSPACE_ROOT"
+  if [ "$deterministic_recovery" -eq 0 ]; then
+    codex_exec_prompt "$prompt" "$WORKSPACE_ROOT"
+  fi
 
   if [ ! -f "$story_path_abs" ]; then
-    fail "Codex did not write story.json to: $story_path_abs"
+    fail "story.json was not written to: $story_path_abs"
   fi
   if ! jq -e '.tasks | length > 0' "$story_path_abs" >/dev/null 2>&1; then
     fail "Generated story.json has no tasks: $story_path_abs"
   fi
   if ! jq -e '.storyId' "$story_path_abs" >/dev/null 2>&1; then
     fail "Generated story.json is missing storyId: $story_path_abs"
+  fi
+
+  if [ "$placeholder_recovery" -eq 1 ] && [ "$deterministic_recovery" -eq 0 ]; then
+    mark_guided_migration_recovery "$story_path_abs" "$fallback_reason" "$existing_prd_ref"
+    echo "Annotated $story_id with guided migration recovery provenance."
+  fi
+
+  if [ "$placeholder_recovery" -eq 1 ]; then
+    local tmp
+    tmp="$(mktemp)"
+    jq --arg id "$story_id" '
+      .stories = (
+        .stories
+        | map(
+            if .id == $id and .status == "blocked" then
+              .status = "planned"
+            else
+              .
+            end
+          )
+      )
+    ' "$STORIES_FILE" > "$tmp"
+    mv "$tmp" "$STORIES_FILE"
+    echo "Recovered migration placeholder for $story_id; story status reset to planned."
   fi
 
   local task_count
@@ -1079,6 +1624,11 @@ cmd_specify_all() {
     raw_path="$(jq -r --arg id "$sid" '.stories[] | select(.id == $id) | .story_path // ""' "$STORIES_FILE")"
     [[ "$raw_path" != /* ]] && story_path_abs="$WORKSPACE_ROOT/$raw_path" || story_path_abs="$raw_path"
     specify_dir="$(dirname "$story_path_abs")/.specify"
+    if story_is_unrecovered_migration_placeholder "$story_path_abs"; then
+      echo "SKIP $sid: migration placeholder (recover in generate phase)"
+      skipped=$((skipped + 1))
+      continue
+    fi
     if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ]; then
       echo "SKIP $sid: story.json exists"
       skipped=$((skipped + 1))
@@ -1145,14 +1695,14 @@ cmd_generate_all() {
   local force_flag=()
   [ "$force" -eq 1 ] && force_flag+=(--force)
 
-  local pending=() skipped=0
+  local pending=() placeholder_pending=() skipped=0
   while IFS= read -r sid; do
     local raw_path story_path_abs specify_dir
     raw_path="$(jq -r --arg id "$sid" '.stories[] | select(.id == $id) | .story_path // ""' "$STORIES_FILE")"
-    [[ "$raw_path" != /* ]] && story_path_abs="$WORKSPACE_ROOT/$raw_path" || story_path_abs="$raw_path"
+    story_path_abs="$(resolve_repo_relative_path "$raw_path")"
     specify_dir="$(dirname "$story_path_abs")/.specify"
 
-    if [ ! -f "$specify_dir/spec.md" ]; then
+    if [ ! -f "$specify_dir/spec.md" ] && ! { [ "$force" -eq 1 ] && story_is_unrecovered_migration_placeholder "$story_path_abs"; }; then
       echo "SKIP $sid: no SpecKit artifacts (run specify-all first)"
       skipped=$((skipped + 1))
       continue
@@ -1164,12 +1714,38 @@ cmd_generate_all() {
       continue
     fi
 
-    pending+=("$sid")
+    if [ "$force" -eq 1 ] && story_is_unrecovered_migration_placeholder "$story_path_abs"; then
+      placeholder_pending+=("$sid")
+    else
+      pending+=("$sid")
+    fi
   done < <(jq -r '.stories[] | select(.status != "done" and .status != "abandoned") | .id' "$STORIES_FILE")
 
-  local count=0 failed=0 total="${#pending[@]}"
+  local count=0 failed=0 total=$(( ${#pending[@]} + ${#placeholder_pending[@]} ))
   if [ "$total" -eq 0 ]; then
     echo "generate-all: nothing to do ($skipped skipped)."
+    return 0
+  fi
+
+  if [ "${#placeholder_pending[@]}" -gt 0 ]; then
+    echo "generate-all: processing ${#placeholder_pending[@]} migration placeholder(s) serially to keep stories.json updates safe."
+    local sid
+    for sid in "${placeholder_pending[@]}"; do
+      echo "=== generate $sid ==="
+      if cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}"; then
+        count=$((count + 1))
+      else
+        echo "WARN: generate failed for $sid"
+        failed=$((failed + 1))
+      fi
+    done
+  fi
+
+  total="${#pending[@]}"
+  if [ "$total" -eq 0 ]; then
+    echo ""
+    echo "generate-all: $count generated, $skipped skipped, $failed failed."
+    [ "$failed" -eq 0 ] || return 1
     return 0
   fi
 

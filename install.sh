@@ -18,6 +18,7 @@ FORCE=0
 INSTALL_SKILLS=0
 INSTALL_PROMPTS=0
 INSTALL_SPECKIT=0
+MIGRATE_LEGACY=1
 SKIP_GIT_CHECK=0
 
 usage() {
@@ -31,6 +32,8 @@ Options:
   --install-skills      Copy skills into ~/.codex/skills
   --install-prompts     Copy /command prompts to Global prompts directory
   --install-speckit     Install the SpecKit CLI (specify) via uv, pip, or npx
+  --migrate-legacy      Migrate any legacy epics.json sprints to stories.json (default)
+  --no-migrate-legacy   Skip automatic legacy sprint migration during install
   --skip-git-check      Allow installing outside a git repo
   -h, --help            Show help
 
@@ -66,6 +69,10 @@ while [[ $# -gt 0 ]]; do
       INSTALL_PROMPTS=1; shift;;
     --install-speckit)
       INSTALL_SPECKIT=1; shift;;
+    --migrate-legacy)
+      MIGRATE_LEGACY=1; shift;;
+    --no-migrate-legacy)
+      MIGRATE_LEGACY=0; shift;;
     --skip-git-check)
       SKIP_GIT_CHECK=1; shift;;
     -h|--help)
@@ -130,6 +137,36 @@ copy_file_if_missing() {
   copy_file "$src" "$dst"
 }
 
+deprecated_legacy_stub() {
+  local path="$1"
+  local replacement="$2"
+  local note="$3"
+  cat > "$path" <<EOF
+#!/bin/bash
+echo "This legacy Ralph command has been removed in the story-task architecture." >&2
+echo "" >&2
+echo "Command: $(basename "$path")" >&2
+echo "Use instead: $replacement" >&2
+echo "$note" >&2
+exit 1
+EOF
+  chmod +x "$path"
+}
+
+collect_legacy_sprints() {
+  [ -d "$DEST_DIR_REL/sprints" ] || return 0
+  find "$DEST_DIR_REL/sprints" -mindepth 2 -maxdepth 2 -type f -name epics.json 2>/dev/null \
+    | while IFS= read -r epics_file; do
+        local sprint_dir sprint_name
+        sprint_dir="$(dirname "$epics_file")"
+        sprint_name="$(basename "$sprint_dir")"
+        if [ ! -f "$sprint_dir/stories.json" ]; then
+          printf '%s\n' "$sprint_name"
+        fi
+      done \
+    | sort -u
+}
+
 # Core story-task workflow
 copy_file "$SOURCE_DIR/ralph.sh" "$DEST_DIR_REL/ralph.sh"
 copy_file "$SOURCE_DIR/doctor.sh" "$DEST_DIR_REL/doctor.sh"
@@ -153,6 +190,34 @@ copy_file "$SOURCE_DIR/new-local-extension.sh.example" "$DEST_DIR_REL/new-local-
 copy_file "$SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-test-baseline-failures.txt"
 copy_file "$SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
 copy_file "$SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
+deprecated_legacy_stub \
+  "$DEST_DIR_REL/ralph-prd.sh" \
+  "./$DEST_DIR_REL/ralph-roadmap.sh or ./$DEST_DIR_REL/ralph-story.sh import-prd <path>" \
+  "Standalone PRD priming is no longer part of the active framework."
+deprecated_legacy_stub \
+  "$DEST_DIR_REL/ralph-prime.sh" \
+  "./$DEST_DIR_REL/ralph-story.sh specify <story-id> or ./$DEST_DIR_REL/ralph-story.sh prepare-all" \
+  "PRD-to-runtime priming has been replaced by story generation and SpecKit artifacts."
+deprecated_legacy_stub \
+  "$DEST_DIR_REL/ralph-epic.sh" \
+  "./$DEST_DIR_REL/ralph-story.sh add|list|set-status" \
+  "Epics were replaced by stories as the sprint planning unit."
+deprecated_legacy_stub \
+  "$DEST_DIR_REL/ralph-commit.sh" \
+  "./$DEST_DIR_REL/ralph-sprint-commit.sh" \
+  "Sprint closeout is now handled at the sprint level after all stories complete."
+deprecated_legacy_stub \
+  "$DEST_DIR_REL/ralph-archive.sh" \
+  "./$DEST_DIR_REL/ralph-sprint-commit.sh" \
+  "Archive and merge behavior is now part of sprint closeout."
+deprecated_legacy_stub \
+  "$DEST_DIR_REL/ralph-spec-check.sh" \
+  "./$DEST_DIR_REL/ralph-story.sh specify <story-id>" \
+  "Spec validation now flows through SpecKit artifacts and story generation."
+deprecated_legacy_stub \
+  "$DEST_DIR_REL/ralph-spec-strengthen.sh" \
+  "./$DEST_DIR_REL/ralph-story.sh specify <story-id> --force" \
+  "Spec strengthening is no longer a standalone workflow command."
 chmod +x \
   "$DEST_DIR_REL/ralph.sh" \
   "$DEST_DIR_REL/doctor.sh" \
@@ -239,9 +304,33 @@ if [ "$INSTALL_SPECKIT" -eq 1 ]; then
   fi
 fi
 
+legacy_sprints=()
+while IFS= read -r sprint_name; do
+  [ -n "$sprint_name" ] || continue
+  legacy_sprints+=("$sprint_name")
+done < <(collect_legacy_sprints)
+
+if [ "${#legacy_sprints[@]}" -gt 0 ]; then
+  echo "Detected legacy Ralph sprint(s) that still use epics.json:"
+  printf '  %s\n' "${legacy_sprints[@]}"
+  if [ "$MIGRATE_LEGACY" -eq 1 ]; then
+    require_cmd jq
+    for sprint_name in "${legacy_sprints[@]}"; do
+      echo "Migrating legacy sprint: $sprint_name"
+      (
+        cd "$DEST_DIR_REL"
+        ./ralph-sprint-migrate.sh --sprint "$sprint_name"
+      )
+    done
+  else
+    echo "Re-run with default migration enabled, or migrate manually with:"
+    echo "  cd $DEST_DIR_REL && ./ralph-sprint-migrate.sh --sprint <sprint-name>"
+  fi
+fi
+
 # Commit installed files into the target repo so they are versioned from day one.
 if [ "$SKIP_GIT_CHECK" -ne 1 ]; then
-  git add "$DEST_DIR_REL" "$GITIGNORE_DEST"
+  git add -A "$DEST_DIR_REL" "$GITIGNORE_DEST"
   if ! git diff --cached --quiet; then
     git commit -m "chore: install Ralph workflow tooling into $DEST_DIR_REL"
     echo "Committed Ralph scripts to git."
@@ -260,6 +349,11 @@ echo ""
 echo "  Per-sprint preparation (after roadmap creates a sprint):"
 echo "    ./$DEST_DIR_REL/ralph-story.sh prepare-all --jobs 2"
 echo "    ./$DEST_DIR_REL/ralph-sprint.sh mark-ready <sprint-name>"
+if [ "${#legacy_sprints[@]}" -gt 0 ] && [ "$MIGRATE_LEGACY" -eq 0 ]; then
+echo ""
+echo "  Legacy sprint upgrade detected:"
+echo "    bash install.sh --project $PROJECT_DIR --migrate-legacy"
+fi
 echo ""
 echo "  Sprint activation (previous sprint must be closed):"
 echo "    ./$DEST_DIR_REL/ralph-sprint.sh use <sprint-name>"

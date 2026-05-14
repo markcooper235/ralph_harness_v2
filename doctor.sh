@@ -10,6 +10,19 @@ ROADMAP_FILE="$SCRIPT_DIR/roadmap.json"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
 LEGACY_ARCHIVE_DIR="$SCRIPT_DIR/archive"
+LEGACY_TRANSIENT_FILES=(
+  "$SCRIPT_DIR/prd.json"
+  "$SCRIPT_DIR/progress.txt"
+  "$SCRIPT_DIR/.completion-state.json"
+  "$SCRIPT_DIR/.active-prd"
+)
+LEGACY_COMMANDS=(
+  "$SCRIPT_DIR/ralph-prd.sh"
+  "$SCRIPT_DIR/ralph-prime.sh"
+  "$SCRIPT_DIR/ralph-epic.sh"
+  "$SCRIPT_DIR/ralph-commit.sh"
+  "$SCRIPT_DIR/ralph-archive.sh"
+)
 
 fail() {
   echo "ERROR: $1" >&2
@@ -18,6 +31,20 @@ fail() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+collect_legacy_sprints() {
+  [ -d "$SPRINTS_DIR" ] || return 0
+  find "$SPRINTS_DIR" -mindepth 2 -maxdepth 2 -type f -name epics.json 2>/dev/null \
+    | while IFS= read -r epics_file; do
+        local sprint_dir sprint_name
+        sprint_dir="$(dirname "$epics_file")"
+        sprint_name="$(basename "$sprint_dir")"
+        if [ ! -f "$sprint_dir/stories.json" ]; then
+          printf '%s\n' "$sprint_name"
+        fi
+      done \
+    | sort -u
 }
 
 echo "Ralph doctor"
@@ -62,6 +89,18 @@ if [ ! -f "$ROADMAP_FILE" ]; then
   echo "      Run: $SCRIPT_DIR/ralph-roadmap.sh to define your product roadmap."
 fi
 
+legacy_sprints=()
+while IFS= read -r sprint_name; do
+  [ -n "$sprint_name" ] || continue
+  legacy_sprints+=("$sprint_name")
+done < <(collect_legacy_sprints)
+
+if [ "${#legacy_sprints[@]}" -gt 0 ]; then
+  echo "WARN: legacy sprint(s) still use epics.json and need migration:"
+  printf '      %s\n' "${legacy_sprints[@]}"
+  echo "      Run: cd $SCRIPT_DIR && ./ralph-sprint-migrate.sh --sprint <sprint-name>"
+fi
+
 if [ -f "$ACTIVE_SPRINT_FILE" ]; then
   ACTIVE_SPRINT="$(awk 'NF {print; exit}' "$ACTIVE_SPRINT_FILE" || true)"
   if [ -n "${ACTIVE_SPRINT:-}" ]; then
@@ -74,6 +113,29 @@ if [ -f "$ACTIVE_SPRINT_FILE" ]; then
       echo "WARN: active sprint '$ACTIVE_SPRINT' has no stories.json: $STORIES_FILE"
     fi
   fi
+fi
+
+tracked_legacy=""
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  tracked_legacy+="$path"$'\n'
+done < <(git ls-files -- "${LEGACY_TRANSIENT_FILES[@]}" 2>/dev/null || true)
+if [ -n "$tracked_legacy" ]; then
+  echo "WARN: legacy transient Ralph files are still tracked in git:"
+  printf '%s' "$tracked_legacy" | sed 's/^/      /'
+  echo "      Remove them from git tracking after migration if they are no longer needed."
+fi
+
+deprecated_found=0
+for legacy_cmd in "${LEGACY_COMMANDS[@]}"; do
+  if [ -f "$legacy_cmd" ]; then
+    if grep -q "This legacy Ralph command has been removed" "$legacy_cmd" 2>/dev/null; then
+      deprecated_found=1
+    fi
+  fi
+done
+if [ "$deprecated_found" -eq 1 ]; then
+  echo "OK: deprecated legacy command stubs are installed to catch old workflow calls"
 fi
 
 if [ -d "$LEGACY_ARCHIVE_DIR" ] && find "$LEGACY_ARCHIVE_DIR" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then

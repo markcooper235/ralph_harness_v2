@@ -1,5 +1,7 @@
 # Ralph Golden-Path Review
 
+Archived note: this document describes the pre-story-task Ralph architecture and intentionally references legacy commands such as `ralph-prd.sh`, `ralph-prime.sh`, and `ralph-archive.sh`. Those commands are no longer part of the active framework and are kept here only as historical context.
+
 ## Findings
 
 ### 1. The implemented flow mostly matches the intended artifact policy
