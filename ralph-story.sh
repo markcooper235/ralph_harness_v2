@@ -257,6 +257,18 @@ scope_fallback_from_spec() {
     '
 }
 
+task_id_from_prd_story() {
+  local raw_id="$1"
+  local fallback_index="$2"
+  local num
+  num="$(printf '%s\n' "$raw_id" | sed -n 's/^US-\?0*\([0-9][0-9]*\)$/\1/p')"
+  if [ -n "$num" ]; then
+    printf 'T-%02d\n' "$num"
+  else
+    printf 'T-%02d\n' "$fallback_index"
+  fi
+}
+
 parse_legacy_markdown_story_json() {
   local markdown_path="$1"
   local output_path="$2"
@@ -560,6 +572,219 @@ mark_guided_migration_recovery() {
         )
     ' "$story_path" > "$tmp"
   mv "$tmp" "$story_path"
+}
+
+mark_prd_bridge_migration_recovery() {
+  local story_path="$1"
+  local prd_ref="$2"
+  local tmp
+  tmp="$(mktemp)"
+  jq \
+    --arg prd_ref "$prd_ref" \
+    '
+      .migration = ((.migration // {}) + {
+        source: "legacy-prd-json-bridge",
+        tasks_recovered: true,
+        recoveryMode: "guided-prd-json-bridge",
+        recoveryWarnings: [
+          "Task plan was recovered by converting preserved PRD markdown into a temporary prd.json bridge before generating story.json."
+        ]
+      })
+      | if ($prd_ref | length) > 0 then
+          .spec = ((.spec // {}) + { prdRef: $prd_ref })
+        else
+          .
+        end
+      | .spec.verification = (
+          ((.spec.verification // []) + [
+            "Legacy migration used a temporary prd.json bridge; review generated tasks and acceptance checks before execution."
+          ])
+          | unique
+        )
+    ' "$story_path" > "$tmp"
+  mv "$tmp" "$story_path"
+}
+
+bridge_markdown_to_prd_json() {
+  local markdown_path="$1"
+  local temp_prd_path="$2"
+  local branch_name="$3"
+  local project_name="$4"
+  local story_title="$5"
+  local story_goal="$6"
+
+  local prompt
+  prompt="$(cat <<PRDBRIDGE
+## Recover temporary prd.json for legacy migration
+
+Source PRD markdown: $markdown_path
+
+Use the PRD skill to normalize the markdown structure, then use the Ralph PRD converter rules to produce a valid temporary prd.json for migration recovery.
+
+Write the temporary prd.json to: $temp_prd_path
+
+Requirements:
+1. project: $project_name
+2. branchName: $branch_name
+3. description should summarize: $story_goal
+4. Preserve the PRD intent, but split oversized work into focused userStories when needed.
+5. Every user story must include verifiable acceptance criteria and "Typecheck passes".
+6. Add "Tests pass" and lint/browser verification only when the markdown warrants it.
+7. Set every story to passes=false and notes="".
+8. Do not write story.json in this step.
+PRDBRIDGE
+)"
+
+  codex_exec_prompt "$prompt" "$WORKSPACE_ROOT"
+  [ -f "$temp_prd_path" ] || return 1
+  jq -e '.userStories | length > 0' "$temp_prd_path" >/dev/null 2>&1
+}
+
+build_story_json_from_prd_json() {
+  local prd_json_path="$1"
+  local output_path="$2"
+  local story_id="$3"
+  local title="$4"
+  local description="$5"
+  local branch_name="$6"
+  local sprint="$7"
+  local priority="$8"
+  local depends_json="$9"
+  local project_name="${10}"
+  local markdown_path="${11:-}"
+
+  [ -f "$prd_json_path" ] || return 1
+  jq -e '.userStories | length > 0' "$prd_json_path" >/dev/null 2>&1 || return 1
+
+  local scope_body out_scope_body slice_body support_body invariants_body definition_body
+  local spec_scope out_scope_json invariants_json support_json verification_json first_slice_json
+
+  if [ -n "$markdown_path" ] && [ -f "$markdown_path" ]; then
+    scope_body="$(extract_markdown_section_body_any "$markdown_path" '## Scope' '## In Scope' || true)"
+    out_scope_body="$(extract_markdown_section_body_any "$markdown_path" '## Out of Scope' '## Not In Scope' || true)"
+    slice_body="$(extract_markdown_section_body_any "$markdown_path" '## First Slice Expectations' '## First Slice' '## Initial Slice' || true)"
+    support_body="$(extract_markdown_section_body_any "$markdown_path" '## Allowed Supporting Files' '## Supporting Files' '## Files in Scope' || true)"
+    invariants_body="$(extract_markdown_section_body_any "$markdown_path" '## Preserved Invariants' '## Invariants' || true)"
+    definition_body="$(extract_markdown_section_body_any "$markdown_path" '## Definition of Done' '## Verification' '## Done Criteria' || true)"
+  else
+    scope_body=""
+    out_scope_body=""
+    slice_body=""
+    support_body=""
+    invariants_body=""
+    definition_body=""
+  fi
+
+  spec_scope="$(printf '%s\n' "$scope_body" | awk 'NF { print }' | paste -sd ' ' -)"
+  [ -n "$spec_scope" ] || spec_scope="$(jq -r '.description // empty' "$prd_json_path")"
+  [ -n "$spec_scope" ] || spec_scope="$description"
+  out_scope_json="$(json_array_from_markdown_bullets "$out_scope_body")"
+  invariants_json="$(json_array_from_markdown_bullets "$invariants_body")"
+  support_json="$(json_array_from_markdown_bullets "$support_body")"
+  verification_json="$(json_array_from_markdown_bullets "$definition_body")"
+  first_slice_json="$(json_first_slice_from_markdown "$slice_body")"
+
+  local final_tasks_json="[]"
+  local previous_task_id=""
+  local index=1
+  while IFS= read -r us_row; do
+    [ -n "$us_row" ] || continue
+    local raw_us_id task_id us_title us_desc us_acceptance us_scope us_context acceptance_summary checks_json depends_task
+    raw_us_id="$(printf '%s' "$us_row" | jq -r '.id // empty')"
+    task_id="$(task_id_from_prd_story "$raw_us_id" "$index")"
+    us_title="$(printf '%s' "$us_row" | jq -r '.title // ""')"
+    us_desc="$(printf '%s' "$us_row" | jq -r '.description // ""')"
+    us_acceptance="$(printf '%s' "$us_row" | jq -c '.acceptanceCriteria // []')"
+    us_scope="$(printf '%s' "$us_row" | jq -c '.scopePaths // []')"
+    us_context="$us_desc"
+    if [ "$(printf '%s' "$us_acceptance" | jq 'length')" -gt 0 ]; then
+      local ac_lines
+      ac_lines="$(printf '%s' "$us_acceptance" | jq -r '.[]' | sed 's/^/- /')"
+      if [ -n "$us_context" ]; then
+        us_context="$us_context"$'\n\n'"Acceptance Criteria:"$'\n'"$ac_lines"
+      else
+        us_context="Acceptance Criteria:"$'\n'"$ac_lines"
+      fi
+    fi
+    acceptance_summary="$(printf '%s' "$us_acceptance" | jq -r 'join(". ")')"
+    [ -n "$acceptance_summary" ] || acceptance_summary="$us_title completed according to temporary prd.json recovery."
+    checks_json="$(infer_checks_from_text "$(printf '%s' "$us_acceptance" | jq -r 'join(" ")')")"
+    us_scope="$(scope_fallback_from_spec "$us_scope" "$support_json" "$first_slice_json")"
+    depends_task="[]"
+    if [ -n "$previous_task_id" ]; then
+      depends_task="$(jq -nc --arg dep "$previous_task_id" '[$dep]')"
+    fi
+    final_tasks_json="$(printf '%s' "$final_tasks_json" | jq \
+      --arg id "$task_id" \
+      --arg title "$us_title" \
+      --arg context "$us_context" \
+      --arg acceptance "$acceptance_summary" \
+      --argjson scope "$us_scope" \
+      --argjson checks "$checks_json" \
+      --argjson depends "$depends_task" \
+      '. + [{
+        "id": $id,
+        "title": $title,
+        "context": $context,
+        "scope": $scope,
+        "acceptance": $acceptance,
+        "checks": $checks,
+        "depends_on": $depends,
+        "status": "pending",
+        "passes": false
+      }]')"
+    previous_task_id="$task_id"
+    index=$((index + 1))
+  done < <(jq -c '.userStories[]' "$prd_json_path")
+
+  [ "$(printf '%s' "$final_tasks_json" | jq 'length')" -gt 0 ] || return 1
+
+  local prd_ref="$markdown_path"
+  if [ -n "$prd_ref" ] && [[ "$prd_ref" == "$WORKSPACE_ROOT/"* ]]; then
+    prd_ref="${prd_ref#$WORKSPACE_ROOT/}"
+  fi
+
+  jq -n \
+    --argjson version 1 \
+    --arg project "$project_name" \
+    --arg sid "$story_id" \
+    --arg title "$title" \
+    --arg desc "$description" \
+    --arg branch "$branch_name" \
+    --arg sprint "$sprint" \
+    --argjson priority "$priority" \
+    --argjson depends "$depends_json" \
+    --arg scope "$spec_scope" \
+    --argjson out_scope "$out_scope_json" \
+    --argjson first_slice "$first_slice_json" \
+    --argjson invariants "$invariants_json" \
+    --argjson support "$support_json" \
+    --argjson verification "$verification_json" \
+    --arg prd_ref "$prd_ref" \
+    --argjson tasks "$final_tasks_json" \
+    '{
+      "version": $version,
+      "project": $project,
+      "storyId": $sid,
+      "title": $title,
+      "description": $desc,
+      "branchName": $branch,
+      "sprint": $sprint,
+      "priority": $priority,
+      "depends_on": $depends,
+      "status": "planned",
+      "spec": {
+        "scope": $scope,
+        "out_of_scope": $out_scope,
+        "first_slice": $first_slice,
+        "preserved_invariants": $invariants,
+        "supporting_files": $support,
+        "verification": $verification,
+        "prdRef": $prd_ref
+      },
+      "tasks": $tasks,
+      "passes": false
+    }' > "$output_path"
 }
 
 # ---------------------------------------------------------------------------
@@ -1267,7 +1492,7 @@ GENPROMPT
 
   echo "Generating story.json for $story_id..."
   mkdir -p "$(dirname "$story_path_abs")"
-  local deterministic_recovery=0 fallback_reason=""
+  local deterministic_recovery=0 prd_bridge_recovery=0 fallback_reason="" temp_bridge_prd=""
   if [ "$placeholder_recovery" -eq 1 ] && [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
     if parse_legacy_markdown_story_json \
       "$existing_prd_abs" \
@@ -1283,14 +1508,39 @@ GENPROMPT
       deterministic_recovery=1
       echo "Recovered migration placeholder for $story_id from legacy PRD markdown."
     else
-      fallback_reason="Preserved PRD markdown could not be deterministically parsed; guided fallback recovery was used."
-      echo "WARN: deterministic markdown recovery could not parse $existing_prd_ref; falling back to guided generation."
+      echo "WARN: deterministic markdown recovery could not parse $existing_prd_ref; trying temporary prd.json bridge."
+      temp_bridge_prd="$(mktemp "${TMPDIR:-/tmp}/ralph-prd-bridge.XXXXXX.json")"
+      if bridge_markdown_to_prd_json \
+        "$existing_prd_abs" \
+        "$temp_bridge_prd" \
+        "$branch_name" \
+        "$project_name" \
+        "$title" \
+        "$goal" \
+        && build_story_json_from_prd_json \
+          "$temp_bridge_prd" \
+          "$story_path_abs" \
+          "$story_id" \
+          "$title" \
+          "$goal" \
+          "$branch_name" \
+          "$sprint" \
+          "$priority" \
+          "$depends_on_arr" \
+          "$project_name" \
+          "$existing_prd_abs"; then
+        prd_bridge_recovery=1
+        echo "Recovered migration placeholder for $story_id through temporary prd.json bridge."
+      else
+        fallback_reason="Preserved PRD markdown could not be deterministically parsed or bridged through prd.json; guided fallback recovery was used."
+        echo "WARN: temporary prd.json bridge recovery could not complete for $existing_prd_ref; falling back to guided generation."
+      fi
     fi
   elif [ "$placeholder_recovery" -eq 1 ]; then
     fallback_reason="Preserved PRD markdown was unavailable; guided fallback recovery was used."
   fi
 
-  if [ "$deterministic_recovery" -eq 0 ]; then
+  if [ "$deterministic_recovery" -eq 0 ] && [ "$prd_bridge_recovery" -eq 0 ]; then
     codex_exec_prompt "$prompt" "$WORKSPACE_ROOT"
   fi
 
@@ -1304,7 +1554,14 @@ GENPROMPT
     fail "Generated story.json is missing storyId: $story_path_abs"
   fi
 
-  if [ "$placeholder_recovery" -eq 1 ] && [ "$deterministic_recovery" -eq 0 ]; then
+  if [ -n "$temp_bridge_prd" ] && [ -f "$temp_bridge_prd" ]; then
+    rm -f "$temp_bridge_prd"
+  fi
+
+  if [ "$placeholder_recovery" -eq 1 ] && [ "$prd_bridge_recovery" -eq 1 ]; then
+    mark_prd_bridge_migration_recovery "$story_path_abs" "$existing_prd_ref"
+    echo "Annotated $story_id with temporary prd.json bridge provenance."
+  elif [ "$placeholder_recovery" -eq 1 ] && [ "$deterministic_recovery" -eq 0 ]; then
     mark_guided_migration_recovery "$story_path_abs" "$fallback_reason" "$existing_prd_ref"
     echo "Annotated $story_id with guided migration recovery provenance."
   fi

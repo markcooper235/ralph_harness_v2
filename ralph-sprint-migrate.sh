@@ -255,6 +255,8 @@ log ""
 STORIES_ENTRIES="[]"
 MIGRATED=0
 SKIPPED=0
+AUTO_RECOVERED=0
+declare -a RECOVERY_PENDING=()
 
 for i in $(seq 0 $((EPIC_COUNT - 1))); do
   epic="$(jq ".epics[$i]" "$EPICS_FILE")"
@@ -467,6 +469,7 @@ Reconstruct this story manually before execution."
         }
       ]')"
     STORY_VERIFICATION="$(jq -n --arg note "Migration placeholder only; regenerate story plan before running this story." '[$note]')"
+    RECOVERY_PENDING+=("$story_id")
   fi
 
   # Build stories.json entry after migration status is finalized
@@ -498,7 +501,7 @@ Reconstruct this story manually before execution."
 
   # Fall back to goal as scope if no PRD parsed
   [ -z "$STORY_SCOPE" ] && STORY_SCOPE="$epic_goal"
-  [ -z "$STORY_BRANCH" ] && STORY_BRANCH="ralph/$TARGET_SPRINT/$(echo "$epic_title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')"
+  [ -z "$STORY_BRANCH" ] && STORY_BRANCH="ralph/$TARGET_SPRINT/$(epic_branch_suffix "$epic_id")"
 
   story_json="$(jq -n \
     --arg version "1" \
@@ -623,10 +626,24 @@ else
   echo "$stories_json" | jq '.'
 fi
 
+if [ "$DRY_RUN" -eq 0 ] && [ "${#RECOVERY_PENDING[@]}" -gt 0 ]; then
+  log ""
+  log "Auto-recovering ${#RECOVERY_PENDING[@]} migrated placeholder stor$( [ "${#RECOVERY_PENDING[@]}" -eq 1 ] && printf 'y' || printf 'ies' )..."
+  for story_id in "${RECOVERY_PENDING[@]}"; do
+    log "  Recovering $story_id..."
+    if "$SCRIPT_DIR/ralph-story.sh" generate "$story_id" --force; then
+      AUTO_RECOVERED=$((AUTO_RECOVERED + 1))
+    else
+      fail "Automatic recovery failed for $story_id. Resolve the preserved legacy source and rerun migration with --force."
+    fi
+  done
+fi
+
 log ""
 log "=== Migration complete ==="
 log "  Migrated: $MIGRATED stories"
 log "  Skipped:  $SKIPPED (already had story.json)"
+log "  Recovered automatically: $AUTO_RECOVERED"
 log ""
 log "Next steps:"
 log "  ./ralph-story.sh list"
