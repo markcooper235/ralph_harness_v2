@@ -38,7 +38,7 @@ Ralph has one primary workflow: **sprint mode**. A standalone PRD can be importe
 
 ```bash
 # 1. Install and validate
-bash /path/to/ralph/install.sh [--install-speckit]
+bash /path/to/ralph/install.sh
 ./scripts/ralph/doctor.sh
 
 # 2. Plan a roadmap (creates sprints and stories.json backlog)
@@ -121,7 +121,7 @@ Optional global installs:
 ```bash
 bash /path/to/ralph/install.sh --install-skills
 bash /path/to/ralph/install.sh --install-prompts
-bash /path/to/ralph/install.sh --install-speckit
+bash /path/to/ralph/install.sh
 ```
 
 Prerequisites:
@@ -129,7 +129,7 @@ Prerequisites:
 - [Codex CLI](https://github.com/openai/codex) installed and authenticated
 - `jq`
 - a git repository
-- SpecKit CLI (`specify`) — required for story preparation (installed via `--install-speckit`)
+- SpecKit CLI (`specify`) — required for story preparation (bootstrapped repo-locally during install)
 
 ---
 

@@ -178,7 +178,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 - `--force` — overwrite existing files
 - `--install-skills` — copy skills to `~/.codex/skills`
 - `--install-prompts` — copy prompts to `~/.codex/prompts`
-- `--install-speckit` — install the SpecKit `specify` CLI
+- `--install-speckit` — compatibility flag; install already ensures repo-local SpecKit by default
 - `--skip-git-check` — allow installing outside a git repo
 
 ### Roadmap and sprint planning

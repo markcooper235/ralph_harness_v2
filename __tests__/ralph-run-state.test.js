@@ -368,6 +368,70 @@ test('ralph-sprint use succeeds for the first sprint with no previous sprint', (
   assert.equal(run('git', ['branch', '--show-current'], { cwd: repoDir }).trim(), 'ralph/sprint/sprint-user-auth')
 })
 
+test('doctor accepts a repo-local specify wrapper installed under scripts/ralph/bin', () => {
+  const repoDir = initTempRepo()
+  const localSpecifyPath = path.join(repoDir, 'scripts/ralph/bin/specify')
+
+  writeExecutable(
+    localSpecifyPath,
+    `#!/bin/bash
+set -euo pipefail
+if [ "\${1:-}" = "version" ]; then
+  echo "specify test stub"
+  exit 0
+fi
+exit 0
+`
+  )
+
+  const output = run('./scripts/ralph/doctor.sh', [], {
+    cwd: repoDir,
+    env: {
+      CODEX_BIN: path.join(REPO_ROOT, 'scripts/smoke/mock-codex.sh'),
+    },
+  })
+
+  assert.match(output, /WARN: specify is available via the repo-local wrapper only|OK: specify available via repo-local persistent install/)
+})
+
+test('doctor warns when the repo-local specify wrapper exists without a persistent local install', () => {
+  const repoDir = initTempRepo()
+  const localSpecifyPath = path.join(repoDir, 'scripts/ralph/bin/specify')
+  const fakeGlobalPath = path.join(repoDir, 'fake-global')
+
+  fs.mkdirSync(fakeGlobalPath, { recursive: true })
+  writeExecutable(
+    path.join(fakeGlobalPath, 'specify'),
+    `#!/bin/bash
+set -euo pipefail
+if [ "\${1:-}" = "version" ]; then
+  echo "global specify stub"
+  exit 0
+fi
+exit 0
+`
+  )
+
+  writeExecutable(
+    localSpecifyPath,
+    `#!/bin/bash
+set -euo pipefail
+exec "${path.join(fakeGlobalPath, 'specify')}" "$@"
+`
+  )
+
+  const output = run('./scripts/ralph/doctor.sh', [], {
+    cwd: repoDir,
+    env: {
+      CODEX_BIN: path.join(REPO_ROOT, 'scripts/smoke/mock-codex.sh'),
+      PATH: `${fakeGlobalPath}:${process.env.PATH}`,
+    },
+  })
+
+  assert.match(output, /WARN: specify is available via the repo-local wrapper only/)
+  assert.match(output, /runtime fallback/)
+})
+
 test('ralph-story generate --force recovers a migration placeholder from PRD markdown and unblocks the story', () => {
   const repoDir = initTempRepo()
   const prdPath = 'scripts/ralph/tasks/prds/prd-epic-003.md'

@@ -16,6 +16,7 @@ STORIES_FILE="${RALPH_STORIES_FILE:-}"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 source "$SCRIPT_DIR/lib/codex-exec.sh"
+source "$SCRIPT_DIR/lib/specify.sh"
 
 fail() { echo "ERROR: $1" >&2; exit 1; }
 
@@ -37,18 +38,6 @@ set_branch_parent() {
 get_active_sprint() {
   [ -f "$ACTIVE_SPRINT_FILE" ] || return 1
   awk 'NF {print; exit}' "$ACTIVE_SPRINT_FILE"
-}
-
-find_specify_bin() {
-  if command -v specify >/dev/null 2>&1; then
-    echo "specify"; return 0
-  fi
-  if command -v npx >/dev/null 2>&1; then
-    if npx --yes specify version >/dev/null 2>&1; then
-      echo "npx --yes specify"; return 0
-    fi
-  fi
-  return 1
 }
 
 resolve_stories_file() {

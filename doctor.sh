@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
+source "$SCRIPT_DIR/lib/specify.sh"
 ROADMAP_FILE="$SCRIPT_DIR/roadmap.json"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
@@ -73,10 +74,26 @@ else
   echo "OK: .specify/ artifacts are not gitignored"
 fi
 
-if command -v specify >/dev/null 2>&1; then
-  echo "OK: specify CLI found"
-elif command -v npx >/dev/null 2>&1 && npx --yes specify version >/dev/null 2>&1; then
-  echo "OK: specify available via npx"
+if specify_bin="$(find_specify_bin)"; then
+  specify_source="$(describe_specify_bin "$specify_bin")"
+  case "$specify_source" in
+    "repo-local persistent install")
+      echo "OK: specify available via repo-local persistent install"
+      ;;
+    "repo-local wrapper")
+      echo "WARN: specify is available via the repo-local wrapper only"
+      echo "      This repo can run SpecKit, but it is relying on a runtime fallback (global specify or uvx)."
+      echo "      For a self-contained repo-local install, ensure Python venv support or uv is available, then re-run install.sh."
+      ;;
+    "npx fallback")
+      echo "WARN: specify is available via npx fallback"
+      echo "      This works, but it is not a durable repo-local install and may depend on network/tooling at runtime."
+      echo "      For a self-contained repo-local install, ensure Python venv support or uv is available, then re-run install.sh."
+      ;;
+    *)
+      echo "OK: specify CLI found via global install"
+      ;;
+  esac
 else
   fail "'specify' CLI not found — required for story specification.
   Install: uvx --from git+https://github.com/github/spec-kit.git specify init <PROJECT>

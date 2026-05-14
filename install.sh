@@ -17,7 +17,7 @@ DEST_PARENT_REL="$(dirname "$DEST_DIR_REL")"
 FORCE=0
 INSTALL_SKILLS=0
 INSTALL_PROMPTS=0
-INSTALL_SPECKIT=0
+INSTALL_SPECKIT=1
 MIGRATE_LEGACY=1
 SKIP_GIT_CHECK=0
 
@@ -31,7 +31,7 @@ Options:
   --force               Force overwrite of existing files
   --install-skills      Copy skills into ~/.codex/skills
   --install-prompts     Copy /command prompts to Global prompts directory
-  --install-speckit     Install the SpecKit CLI (specify) via uv, pip, or npx
+  --install-speckit     Ensure the repo-local SpecKit CLI (specify) is installed
   --migrate-legacy      Migrate any legacy epics.json sprints to stories.json (default)
   --no-migrate-legacy   Skip automatic legacy sprint migration during install
   --skip-git-check      Allow installing outside a git repo
@@ -115,7 +115,7 @@ if [ "$SKIP_GIT_CHECK" -ne 1 ]; then
 fi
 
 mkdir -p "$DEST_DIR_REL"
-mkdir -p "$DEST_DIR_REL/lib" "$DEST_DIR_REL/templates"
+mkdir -p "$DEST_DIR_REL/bin" "$DEST_DIR_REL/lib" "$DEST_DIR_REL/templates"
 
 copy_file() {
   local src="$1"
@@ -184,6 +184,8 @@ copy_file "$SOURCE_DIR/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralph-sprint
 copy_file "$SOURCE_DIR/lib/codex-exec.sh" "$DEST_DIR_REL/lib/codex-exec.sh"
 copy_file "$SOURCE_DIR/lib/editor-intake.sh" "$DEST_DIR_REL/lib/editor-intake.sh"
 copy_file "$SOURCE_DIR/lib/search.sh" "$DEST_DIR_REL/lib/search.sh"
+copy_file "$SOURCE_DIR/lib/specify.sh" "$DEST_DIR_REL/lib/specify.sh"
+copy_file "$SOURCE_DIR/bin/specify" "$DEST_DIR_REL/bin/specify"
 copy_file "$SOURCE_DIR/templates/prd-intake.md" "$DEST_DIR_REL/templates/prd-intake.md"
 copy_file "$SOURCE_DIR/README-local.md" "$DEST_DIR_REL/README-local.md"
 copy_file "$SOURCE_DIR/new-local-extension.sh.example" "$DEST_DIR_REL/new-local-extension.sh.example"
@@ -231,7 +233,77 @@ chmod +x \
   "$DEST_DIR_REL/ralph-status.sh" \
   "$DEST_DIR_REL/ralph-cleanup.sh" \
   "$DEST_DIR_REL/ralph-verify.sh" \
-  "$DEST_DIR_REL/lib/editor-intake.sh"
+  "$DEST_DIR_REL/lib/editor-intake.sh" \
+  "$DEST_DIR_REL/bin/specify"
+
+ensure_repo_local_speckit() {
+  local repo_specify="$PROJECT_DIR/$DEST_DIR_REL/bin/specify"
+  local repo_venv="$PROJECT_DIR/$DEST_DIR_REL/.venv-specify"
+  local repo_pip="$repo_venv/bin/pip"
+  local python_bin=""
+  local venv_warned=0
+
+  if [ -x "$repo_venv/bin/specify" ] && "$repo_venv/bin/specify" version >/dev/null 2>&1; then
+    echo "SpecKit already installed in repo: $repo_venv"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    python_bin="python"
+  fi
+
+  if [ -n "$python_bin" ]; then
+    echo "Bootstrapping repo-local SpecKit into $DEST_DIR_REL/.venv-specify..."
+    rm -rf "$repo_venv"
+    if "$python_bin" -m venv "$repo_venv"; then
+      if "$repo_pip" install "git+https://github.com/github/spec-kit.git"; then
+        if [ -x "$repo_venv/bin/specify" ] && "$repo_venv/bin/specify" version >/dev/null 2>&1; then
+          echo "Installed repo-local SpecKit: $DEST_DIR_REL/.venv-specify"
+          return 0
+        fi
+      else
+        echo "WARN: Repo-local SpecKit pip install failed; falling back to wrapper resolution."
+      fi
+    else
+      echo "WARN: Could not create repo-local SpecKit virtualenv; falling back to wrapper resolution."
+      echo "      If this is Debian/Ubuntu, you may need: apt install python3-venv"
+      venv_warned=1
+    fi
+  else
+    echo "WARN: No Python interpreter found for repo-local SpecKit bootstrap."
+  fi
+
+  if "$repo_specify" version >/dev/null 2>&1; then
+    if [ -x "$repo_venv/bin/specify" ]; then
+      echo "SpecKit ready: durable repo-local install at $DEST_DIR_REL/.venv-specify"
+    else
+      echo "SpecKit available in repo via $DEST_DIR_REL/bin/specify"
+      echo "      This is a wrapper-based fallback, not a durable repo-local install."
+    fi
+    return 0
+  fi
+
+  if command -v specify >/dev/null 2>&1; then
+    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to global specify."
+    echo "      The repo is usable, but SpecKit is not installed persistently inside the repo."
+    return 0
+  fi
+
+  if command -v uvx >/dev/null 2>&1; then
+    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to uvx."
+    echo "      This works, but may depend on network/tooling at runtime instead of a durable repo-local install."
+    return 0
+  fi
+
+  echo "WARN: Could not bootstrap repo-local SpecKit and no wrapper fallback is available."
+  if [ "$venv_warned" -eq 0 ]; then
+    echo "      Install Python 3.11+ with venv support or install uv, then re-run: bash install.sh --project $PROJECT_DIR"
+  else
+    echo "      Install Python venv support or uv, then re-run: bash install.sh --project $PROJECT_DIR"
+  fi
+}
 
 
 # Sprint-aware bootstrap directories (sprints and tasks created by ralph-roadmap.sh).
@@ -289,19 +361,7 @@ if [ "$INSTALL_PROMPTS" -eq 1 ]; then
 fi
 
 if [ "$INSTALL_SPECKIT" -eq 1 ]; then
-  echo "Installing SpecKit (specify CLI)..."
-  if command -v uv >/dev/null 2>&1; then
-    uv tool install "git+https://github.com/github/spec-kit.git" && echo "SpecKit installed via uv."
-  elif command -v pip >/dev/null 2>&1; then
-    pip install "git+https://github.com/github/spec-kit.git" && echo "SpecKit installed via pip."
-  elif command -v npx >/dev/null 2>&1; then
-    echo "SpecKit available via npx (no persistent install required)."
-    echo "  Run: npx specify init <PROJECT>"
-  else
-    echo "WARN: Cannot install SpecKit — uv, pip, and npx not found."
-    echo "      Install uv (recommended): https://docs.astral.sh/uv/getting-started/installation/"
-    echo "      Then re-run: bash install.sh --install-speckit"
-  fi
+  ensure_repo_local_speckit
 fi
 
 legacy_sprints=()
