@@ -1332,6 +1332,217 @@ exit 93
   assert.equal(stories.stories[0].status, 'planned')
 })
 
+test('ralph-story generate --force can bridge valid markdown-only recovery through temporary prd.json into three tasks', () => {
+  const repoDir = initTempRepo()
+  const prdPath = 'scripts/ralph/tasks/prds/prd-epic-010.md'
+  const storyPath = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-010/story.json')
+  const promptLog = path.join(repoDir, 'mock-codex-prd-bridge.log')
+  const mockCodexPath = path.join(repoDir, 'mock-codex-prd-bridge.sh')
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'),
+    storiesJson('sprint-1', {
+      status: 'planned',
+      stories: [
+        {
+          id: 'S-010',
+          title: 'Bridge markdown recovery epic',
+          priority: 6,
+          effort: 3,
+          status: 'blocked',
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-010/story.json',
+          goal: 'Recover a valid markdown-only legacy PRD by bridging through temporary prd.json',
+          promptContext: 'Prefer prd.json bridge recovery before direct guided story generation.',
+        },
+      ],
+    })
+  )
+  writeFile(
+    path.join(repoDir, prdPath),
+    `# Legacy PRD
+
+## Scope
+Recover a valid markdown-only legacy PRD through a temporary prd.json bridge.
+
+## Out of Scope
+- rewriting the main framework flow
+
+## First Slice Expectations
+- exact source: scripts/ralph/tasks/prds/prd-epic-010.md
+- destination: scripts/ralph/sprints/sprint-1/stories/S-010/story.json
+- entrypoint: ./scripts/ralph/ralph-story.sh generate S-010 --force
+
+## Allowed Supporting Files
+- src/bridge-helper.ts
+- scripts/ralph/ralph-story.sh
+
+## Preserved Invariants
+- Preserve branch naming
+- Preserve placeholder-only recovery behavior
+
+## Definition of Done
+- npm run typecheck succeeds
+- npm test succeeds
+
+## User Stories
+#### Story Alpha
+**Description:** Rebuild the first portion of the plan from markdown-only legacy content.
+**Acceptance Criteria:**
+- Typecheck passes
+- Tests pass
+
+#### Story Beta
+**Description:** Preserve verification context and scope decisions.
+**Acceptance Criteria:**
+- Lint passes
+
+#### Story Gamma
+**Description:** Keep the normal framework path unchanged.
+**Acceptance Criteria:**
+- Tests pass
+`
+  )
+  writeFile(
+    storyPath,
+    JSON.stringify(
+      {
+        version: 1,
+        project: 'tmp-ralph-test',
+        storyId: 'S-010',
+        title: 'Bridge markdown recovery epic',
+        description: 'Recover a valid markdown-only legacy PRD by bridging through temporary prd.json',
+        branchName: 'ralph/sprint-1/epic-010',
+        sprint: 'sprint-1',
+        priority: 6,
+        depends_on: [],
+        status: 'blocked',
+        spec: {
+          scope: 'Recover a valid markdown-only legacy PRD by bridging through temporary prd.json',
+          out_of_scope: [],
+          first_slice: {},
+          preserved_invariants: [],
+          supporting_files: [],
+          verification: ['Migration placeholder only; regenerate story plan before running this story.'],
+          prdRef: prdPath,
+        },
+        migration: {
+          source: 'legacy-epic',
+          tasks_recovered: false,
+        },
+        tasks: [
+          {
+            id: 'T-01',
+            title: 'Recover legacy story plan',
+            context: 'Legacy migration could not recover task-level data.',
+            scope: [],
+            acceptance: 'Regenerate before execution.',
+            checks: ['test -n "legacy-migration-placeholder"'],
+            depends_on: [],
+            status: 'pending',
+            passes: false,
+          },
+        ],
+        passes: false,
+      },
+      null,
+      2
+    )
+  )
+
+  writeExecutable(
+    mockCodexPath,
+    `#!/bin/bash
+set -euo pipefail
+if [ "$1" = "--yolo" ] && [ "$2" = "exec" ] && [ "$3" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--dangerously-bypass-approvals-and-sandbox" ] && [ "$3" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+prompt="$(cat)"
+printf '%s' "$prompt" > "${promptLog}"
+target="$(printf '%s' "$prompt" | sed -n 's|^Write the temporary prd.json to: ||p' | head -n 1)"
+if [ -z "$target" ]; then
+  echo "Unexpected prompt: no temporary prd.json target" >&2
+  exit 94
+fi
+mkdir -p "$(dirname "$target")"
+cat > "$target" <<'JSON'
+{
+  "project": "tmp-ralph-test",
+  "branchName": "ralph/sprint-1/epic-010",
+  "description": "Recovered through temporary prd.json bridge",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Bridge task one",
+      "description": "Recover the first portion of the plan",
+      "acceptanceCriteria": ["Typecheck passes", "Tests pass"],
+      "scopePaths": ["src/bridge-helper.ts"],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Bridge task two",
+      "description": "Preserve verification context",
+      "acceptanceCriteria": ["Lint passes", "Typecheck passes"],
+      "scopePaths": ["scripts/ralph/ralph-story.sh"],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Bridge task three",
+      "description": "Keep the normal framework path unchanged",
+      "acceptanceCriteria": ["Tests pass", "Typecheck passes"],
+      "scopePaths": ["__tests__/ralph-run-state.test.js"],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
+JSON
+`
+  )
+
+  const output = run('./scripts/ralph/ralph-story.sh', ['generate', 'S-010', '--force'], {
+    cwd: repoDir,
+    env: { CODEX_BIN: mockCodexPath },
+  })
+
+  assert.match(output, /trying temporary prd\.json bridge/)
+  assert.match(output, /Recovered migration placeholder for S-010 through temporary prd\.json bridge/)
+  assert.match(output, /Annotated S-010 with temporary prd\.json bridge provenance/)
+
+  const story = JSON.parse(fs.readFileSync(storyPath, 'utf8'))
+  assert.equal(story.branchName, 'ralph/sprint-1/epic-010')
+  assert.equal(story.spec.prdRef, prdPath)
+  assert.equal(story.migration.source, 'legacy-prd-json-bridge')
+  assert.equal(story.migration.tasks_recovered, true)
+  assert.equal(story.migration.recoveryMode, 'guided-prd-json-bridge')
+  assert.equal(story.tasks.length, 3)
+  assert.deepEqual(story.tasks.map((task) => task.id), ['T-01', 'T-02', 'T-03'])
+  assert.deepEqual(story.tasks[1].depends_on, ['T-01'])
+  assert.deepEqual(story.tasks[2].depends_on, ['T-02'])
+  assert.deepEqual(story.tasks[0].checks.sort(), ['npm run typecheck', 'npm test'])
+  assert.deepEqual(story.tasks[1].checks.sort(), ['npm run lint', 'npm run typecheck'])
+  assert.match(story.spec.verification.join(' '), /temporary prd\.json bridge/i)
+
+  const stories = JSON.parse(fs.readFileSync(path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'), 'utf8'))
+  assert.equal(stories.stories[0].status, 'planned')
+  const promptText = fs.readFileSync(promptLog, 'utf8')
+  assert.match(promptText, /Use the PRD skill to normalize the markdown structure/)
+  assert.match(promptText, /use the Ralph PRD converter rules to produce a valid temporary prd\.json/i)
+})
+
 test('ralph-story generate-all --force handles placeholders serially while still generating normal stories', () => {
   const repoDir = initTempRepo()
   const placeholderPrdPath = 'scripts/ralph/tasks/prds/prd-epic-005.md'

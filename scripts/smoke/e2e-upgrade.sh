@@ -3,10 +3,13 @@
 #
 # Exercises the paths:
 #   1. old main install -> seed legacy epic/PRD data -> upgrade to current branch
-#      -> auto-migrate legacy sprint -> verify distinct story/task recovery
-#   2. markdown-only legacy epic fallback -> blocked placeholder story
+#      -> auto-migrate legacy sprint -> auto-recover every recoverable epic
+#   2. direct task recovery from live/archived legacy prd.json
 #   3. deterministic recovery from a valid legacy PRD markdown without Codex
-#   4. deprecated legacy commands become explicit upgrade stubs
+#   4. temporary prd.json bridge recovery for valid markdown-only legacy PRDs
+#   5. guided recovery from preserved markdown when deterministic + bridge fail
+#   6. guided recovery from backlog metadata when preserved markdown is missing
+#   7. deprecated legacy commands become explicit upgrade stubs
 #
 # Usage:
 #   ./scripts/smoke/e2e-upgrade.sh [--keep]
@@ -132,6 +135,45 @@ cat > "$RALPH_DIR/sprints/sprint-1/epics.json" <<'JSON'
       "goal": "Migrate a markdown-only legacy epic safely",
       "openQuestions": [],
       "promptContext": "markdown-only context"
+    },
+    {
+      "id": "EPIC-004",
+      "title": "Deterministic markdown recovery epic",
+      "priority": 4,
+      "effort": 2,
+      "status": "planned",
+      "planningSource": "local",
+      "dependsOn": ["EPIC-003"],
+      "prdPaths": ["scripts/ralph/tasks/prds/prd-epic-004.md"],
+      "goal": "Recover deterministically from a valid legacy PRD markdown",
+      "openQuestions": [],
+      "promptContext": "Use the preserved PRD markdown directly and do not invoke guided fallback."
+    },
+    {
+      "id": "EPIC-005",
+      "title": "Bridge markdown recovery epic",
+      "priority": 5,
+      "effort": 3,
+      "status": "planned",
+      "planningSource": "local",
+      "dependsOn": ["EPIC-004"],
+      "prdPaths": ["scripts/ralph/tasks/prds/prd-epic-005.md"],
+      "goal": "Recover a valid markdown-only legacy PRD by bridging through temporary prd.json",
+      "openQuestions": [],
+      "promptContext": "Prefer prd.json bridge recovery before direct guided story generation."
+    },
+    {
+      "id": "EPIC-006",
+      "title": "Missing markdown recovery epic",
+      "priority": 6,
+      "effort": 1,
+      "status": "planned",
+      "planningSource": "local",
+      "dependsOn": ["EPIC-005"],
+      "prdPaths": ["scripts/ralph/tasks/prds/missing-epic-006.md"],
+      "goal": "Recover safely when preserved markdown is missing",
+      "openQuestions": [],
+      "promptContext": "Use backlog metadata when no preserved markdown file is available."
     }
   ]
 }
@@ -147,6 +189,98 @@ MD
 
 cat > "$RALPH_DIR/tasks/prds/prd-epic-003.md" <<'MD'
 # Markdown-only Epic PRD
+MD
+
+cat > "$RALPH_DIR/tasks/prds/prd-epic-004.md" <<'MD'
+# Legacy PRD
+
+## Scope
+Recover a valid legacy PRD deterministically during upgrade smoke.
+
+## Out of Scope
+- changing non-placeholder stories
+
+## First Slice Expectations
+- exact source: scripts/ralph/tasks/prds/prd-epic-004.md
+- destination: scripts/ralph/sprints/sprint-1/stories/S-004/story.json
+- entrypoint: ./scripts/ralph/ralph-story.sh generate S-004 --force
+
+## Allowed Supporting Files
+- scripts/ralph/ralph-story.sh
+- __tests__/ralph-run-state.test.js
+
+## Preserved Invariants
+- Keep branch names stable
+- Keep migration placeholder recovery isolated
+
+## Definition of Done
+- npm run typecheck succeeds
+- npm test succeeds
+- npm run lint succeeds
+
+## User Stories
+### Story 1: Rebuild the task container
+Create a deterministic story plan from the preserved markdown and write scripts/ralph/sprints/sprint-1/stories/S-004/story.json.
+Acceptance Criteria
+- story.json includes migration metadata
+- npm run typecheck succeeds
+
+Proof Obligations
+- npm test succeeds
+
+### Story 2: Preserve verification context
+Keep preserved verification context accurate in scripts/ralph/ralph-story.sh.
+Acceptance Criteria
+- npm run lint succeeds
+
+### Story 3: Protect the normal framework flow
+Ensure non-placeholder generation behavior remains unchanged in __tests__/ralph-run-state.test.js.
+Acceptance Criteria
+- npm test succeeds
+MD
+
+cat > "$RALPH_DIR/tasks/prds/prd-epic-005.md" <<'MD'
+# Legacy PRD
+
+## Scope
+Recover a valid markdown-only legacy PRD through a temporary prd.json bridge during upgrade smoke.
+
+## Out of Scope
+- rewriting the main framework flow
+
+## First Slice Expectations
+- exact source: scripts/ralph/tasks/prds/prd-epic-005.md
+- destination: scripts/ralph/sprints/sprint-1/stories/S-005/story.json
+- entrypoint: ./scripts/ralph/ralph-story.sh generate S-005 --force
+
+## Allowed Supporting Files
+- src/bridge-helper.ts
+- scripts/ralph/ralph-story.sh
+
+## Preserved Invariants
+- Preserve branch naming
+- Preserve placeholder-only recovery behavior
+
+## Definition of Done
+- npm run typecheck succeeds
+- npm test succeeds
+
+## User Stories
+#### Story Alpha
+**Description:** Rebuild the first portion of the plan from markdown-only legacy content.
+**Acceptance Criteria:**
+- Typecheck passes
+- Tests pass
+
+#### Story Beta
+**Description:** Preserve verification context and scope decisions.
+**Acceptance Criteria:**
+- Lint passes
+
+#### Story Gamma
+**Description:** Keep the normal framework path unchanged.
+**Acceptance Criteria:**
+- Tests pass
 MD
 
 cat > "$RALPH_DIR/.active-prd" <<'JSON'
@@ -215,49 +349,7 @@ JSON
 git -C "$TEST_REPO" add scripts/ralph
 git -C "$TEST_REPO" commit -m "seed legacy sprint state" >/dev/null
 
-log "upgrading framework to current branch"
-bash "$REPO_ROOT/install.sh" --project "$TEST_REPO" > "$WORK_DIR/install-upgrade.log" 2>&1
-
-STORIES_FILE="$RALPH_DIR/sprints/sprint-1/stories.json"
-STORY_ONE="$RALPH_DIR/sprints/sprint-1/stories/S-001/story.json"
-STORY_TWO="$RALPH_DIR/sprints/sprint-1/stories/S-002/story.json"
-STORY_THREE="$RALPH_DIR/sprints/sprint-1/stories/S-003/story.json"
-
-assert_file_exists "$STORIES_FILE"
-assert_file_exists "$STORY_ONE"
-assert_file_exists "$STORY_TWO"
-assert_file_exists "$STORY_THREE"
-
-assert_json_expr "$STORIES_FILE" '.status == "active"'
-assert_json_expr "$STORIES_FILE" '.activeStoryId == "S-001"'
-assert_json_expr "$STORIES_FILE" '.stories | length == 3'
-assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-002") | .depends_on == ["S-001"]'
-assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-003") | .depends_on == ["S-002"]'
-assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-003") | .status == "blocked"'
-
-assert_json_expr "$STORY_ONE" '.branchName == "ralph/sprint-1/epic-001"'
-assert_json_expr "$STORY_ONE" '.tasks | length == 1'
-assert_json_expr "$STORY_ONE" '.tasks[0].title == "Active task"'
-assert_json_expr "$STORY_ONE" '.tasks[0].scope == ["src/active.ts"]'
-assert_json_expr "$STORY_ONE" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-001.md"'
-assert_json_expr "$STORY_ONE" '(.tasks[0].checks | sort) == (["npm run typecheck", "npm test"] | sort)'
-
-assert_json_expr "$STORY_TWO" '.branchName == "ralph/sprint-1/epic-002"'
-assert_json_expr "$STORY_TWO" '.tasks | length == 1'
-assert_json_expr "$STORY_TWO" '.tasks[0].title == "Archived task"'
-assert_json_expr "$STORY_TWO" '.tasks[0].scope == ["src/archived.ts"]'
-assert_json_expr "$STORY_TWO" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-002.md"'
-assert_json_expr "$STORY_TWO" '.migration.tasks_recovered == true'
-assert_json_expr "$STORY_TWO" '(.tasks[0].checks | sort) == (["npm run lint", "npm test"] | sort)'
-
-assert_json_expr "$STORY_THREE" '.status == "blocked"'
-assert_json_expr "$STORY_THREE" '.tasks | length == 1'
-assert_json_expr "$STORY_THREE" '.tasks[0].title == "Recover legacy story plan"'
-assert_json_expr "$STORY_THREE" '.migration.tasks_recovered == false'
-assert_json_expr "$STORY_THREE" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-003.md"'
-assert_json_expr "$STORY_THREE" '.tasks[0].context | test("generate S-003 --force")'
-
-cat > "$TEST_REPO/mock-codex-fallback.sh" <<'EOF'
+cat > "$TEST_REPO/mock-codex-auto-recovery.sh" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 if [ "${1:-}" = "--yolo" ] && [ "${2:-}" = "exec" ] && [ "${3:-}" = "--help" ]; then
@@ -269,9 +361,71 @@ if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--dangerously-bypass-approvals-and-san
   exit 0
 fi
 prompt="$(cat)"
-target="$(printf '%s' "$prompt" | sed -n 's|^Write the completed story.json to: ||p' | head -n 1)"
-mkdir -p "$(dirname "$target")"
-cat > "$target" <<'JSON'
+log_path="$(cd "$(dirname "$0")" && pwd)/mock-codex-auto-recovery.log"
+printf '%s' "$prompt" >> "$log_path"
+printf '\n---\n' >> "$log_path"
+
+bridge_target="$(printf '%s' "$prompt" | sed -n 's|^Write the temporary prd.json to: ||p' | head -n 1)"
+story_target="$(printf '%s' "$prompt" | sed -n 's|^Write the completed story.json to: ||p' | head -n 1)"
+
+if [[ "$bridge_target" == *"/S-004/"* ]] || [[ "$story_target" == *"/S-004/"* ]]; then
+  echo "Codex should not run for deterministic markdown recovery" >&2
+  exit 91
+fi
+
+if [ -n "$bridge_target" ]; then
+  if printf '%s' "$prompt" | grep -q 'ralph/sprint-1/epic-005'; then
+    mkdir -p "$(dirname "$bridge_target")"
+    cat > "$bridge_target" <<'JSON'
+{
+  "project": "upgrade-smoke",
+  "branchName": "ralph/sprint-1/epic-005",
+  "description": "Recovered through temporary prd.json bridge",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Bridge task one",
+      "description": "Recover the first portion of the plan",
+      "acceptanceCriteria": ["Typecheck passes", "Tests pass"],
+      "scopePaths": ["src/bridge-helper.ts"],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Bridge task two",
+      "description": "Preserve verification context",
+      "acceptanceCriteria": ["Lint passes", "Typecheck passes"],
+      "scopePaths": ["scripts/ralph/ralph-story.sh"],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Bridge task three",
+      "description": "Keep the normal framework path unchanged",
+      "acceptanceCriteria": ["Tests pass", "Typecheck passes"],
+      "scopePaths": ["scripts/ralph/ralph-status.sh"],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
+JSON
+    exit 0
+  fi
+  echo "temporary prd.json bridge intentionally unsupported for this story" >&2
+  exit 95
+fi
+
+[ -n "$story_target" ] || { echo "Expected recovery target in prompt" >&2; exit 94; }
+mkdir -p "$(dirname "$story_target")"
+
+if [[ "$story_target" == *"/S-003/"* ]]; then
+  cat > "$story_target" <<'JSON'
 {
   "version": 1,
   "project": "upgrade-smoke",
@@ -307,128 +461,39 @@ cat > "$target" <<'JSON'
   "passes": false
 }
 JSON
-EOF
-chmod +x "$TEST_REPO/mock-codex-fallback.sh"
-
-(
-  cd "$TEST_REPO"
-  CODEX_BIN="$TEST_REPO/mock-codex-fallback.sh" ./scripts/ralph/ralph-story.sh generate S-003 --force > "$WORK_DIR/generate-fallback.log" 2>&1
-)
-
-assert_json_expr "$STORY_THREE" '.migration.source == "legacy-placeholder-guided-recovery"'
-assert_json_expr "$STORY_THREE" '.migration.tasks_recovered == true'
-assert_json_expr "$STORY_THREE" '.migration.recoveryMode == "guided-codex-fallback"'
-assert_json_expr "$STORY_THREE" '.migration.recoveryWarnings | length >= 2'
-assert_json_expr "$STORY_THREE" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-003.md"'
-assert_json_expr "$STORY_THREE" '.spec.verification | any(. == "Legacy migration fallback recovery used guided generation; review task scope and acceptance checks before execution.")'
-assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-003") | .status == "planned"'
-if ! grep -q "Annotated S-003 with guided migration recovery provenance" "$WORK_DIR/generate-fallback.log"; then
-  fail "expected guided fallback provenance annotation during markdown-only recovery"
+  exit 0
 fi
 
-STORY_FOUR="$RALPH_DIR/sprints/sprint-1/stories/S-004/story.json"
-PRD_FOUR_REL="scripts/ralph/tasks/prds/prd-epic-004.md"
-PRD_FOUR_ABS="$TEST_REPO/$PRD_FOUR_REL"
-
-cat > "$PRD_FOUR_ABS" <<'MD'
-# Legacy PRD
-
-## Scope
-Recover a valid legacy PRD deterministically during upgrade smoke.
-
-## Out of Scope
-- changing non-placeholder stories
-
-## First Slice Expectations
-- exact source: scripts/ralph/tasks/prds/prd-epic-004.md
-- destination: scripts/ralph/sprints/sprint-1/stories/S-004/story.json
-- entrypoint: ./scripts/ralph/ralph-story.sh generate S-004 --force
-
-## Allowed Supporting Files
-- scripts/ralph/ralph-story.sh
-- __tests__/ralph-run-state.test.js
-
-## Preserved Invariants
-- Keep branch names stable
-- Keep migration placeholder recovery isolated
-
-## Definition of Done
-- npm run typecheck succeeds
-- npm test succeeds
-- npm run lint succeeds
-
-## User Stories
-### Story 1: Rebuild the task container
-Create a deterministic story plan from the preserved markdown and write scripts/ralph/sprints/sprint-1/stories/S-004/story.json.
-Acceptance Criteria
-- story.json includes migration metadata
-- npm run typecheck succeeds
-
-Proof Obligations
-- npm test succeeds
-
-### Story 2: Preserve verification context
-Keep preserved verification context accurate in scripts/ralph/ralph-story.sh.
-Acceptance Criteria
-- npm run lint succeeds
-
-### Story 3: Protect the normal framework flow
-Ensure non-placeholder generation behavior remains unchanged in __tests__/ralph-run-state.test.js.
-Acceptance Criteria
-- npm test succeeds
-MD
-
-tmp_json="$(mktemp)"
-jq '
-  .stories += [{
-    "id": "S-004",
-    "title": "Deterministic markdown recovery epic",
-    "priority": 4,
-    "effort": 2,
-    "planningSource": "local",
-    "status": "blocked",
-    "depends_on": ["S-003"],
-    "story_path": "scripts/ralph/sprints/sprint-1/stories/S-004/story.json",
-    "goal": "Recover deterministically from a valid legacy PRD markdown",
-    "promptContext": "Use the preserved PRD markdown directly and do not invoke guided fallback."
-  }]
-' "$STORIES_FILE" > "$tmp_json"
-mv "$tmp_json" "$STORIES_FILE"
-
-mkdir -p "$(dirname "$STORY_FOUR")"
-cat > "$STORY_FOUR" <<JSON
+if [[ "$story_target" == *"/S-006/"* ]]; then
+  printf '%s' "$prompt" > "$(cd "$(dirname "$0")" && pwd)/mock-codex-missing-markdown.prompt"
+  cat > "$story_target" <<'JSON'
 {
   "version": 1,
   "project": "upgrade-smoke",
-  "storyId": "S-004",
-  "title": "Deterministic markdown recovery epic",
-  "description": "Recover deterministically from a valid legacy PRD markdown",
-  "branchName": "ralph/sprint-1/epic-004",
+  "storyId": "S-006",
+  "title": "Missing markdown recovery epic",
+  "description": "Recovered from backlog metadata",
+  "branchName": "ralph/sprint-1/epic-006",
   "sprint": "sprint-1",
-  "priority": 4,
-  "depends_on": ["S-003"],
-  "status": "blocked",
+  "priority": 6,
+  "depends_on": ["S-005"],
+  "status": "planned",
   "spec": {
-    "scope": "Recover deterministically from a valid legacy PRD markdown",
+    "scope": "Recovered when markdown was unavailable",
     "out_of_scope": [],
     "first_slice": {},
     "preserved_invariants": [],
     "supporting_files": [],
-    "verification": ["Migration placeholder only; regenerate story plan before running this story."],
-    "prdRef": "$PRD_FOUR_REL"
-  },
-  "migration": {
-    "source": "legacy-epic",
-    "tasks_recovered": false
+    "verification": []
   },
   "tasks": [
     {
       "id": "T-01",
-      "title": "Recover legacy story plan",
-      "context": "Legacy migration could not recover task-level data.",
-      "scope": [],
-      "acceptance": "Regenerate before execution.",
-      "checks": ["test -n \"legacy-migration-placeholder\""],
+      "title": "Backlog metadata recovery task",
+      "context": "Use goal and prompt context to recover the plan",
+      "scope": ["src/missing-markdown.ts"],
+      "acceptance": "Tests pass.",
+      "checks": ["npm test"],
       "depends_on": [],
       "status": "pending",
       "passes": false
@@ -437,20 +502,70 @@ cat > "$STORY_FOUR" <<JSON
   "passes": false
 }
 JSON
+  exit 0
+fi
 
-cat > "$TEST_REPO/mock-codex-deterministic.sh" <<'EOF'
-#!/bin/bash
-set -euo pipefail
-echo "Codex should not run for deterministic markdown recovery" >&2
-exit 91
+echo "Unexpected automatic recovery prompt" >&2
+exit 96
 EOF
-chmod +x "$TEST_REPO/mock-codex-deterministic.sh"
+chmod +x "$TEST_REPO/mock-codex-auto-recovery.sh"
 
-(
-  cd "$TEST_REPO"
-  CODEX_BIN="$TEST_REPO/mock-codex-deterministic.sh" ./scripts/ralph/ralph-story.sh generate S-004 --force > "$WORK_DIR/generate-deterministic.log" 2>&1
-)
+log "upgrading framework to current branch"
+CODEX_BIN="$TEST_REPO/mock-codex-auto-recovery.sh" bash "$REPO_ROOT/install.sh" --project "$TEST_REPO" > "$WORK_DIR/install-upgrade.log" 2>&1
 
+STORIES_FILE="$RALPH_DIR/sprints/sprint-1/stories.json"
+STORY_ONE="$RALPH_DIR/sprints/sprint-1/stories/S-001/story.json"
+STORY_TWO="$RALPH_DIR/sprints/sprint-1/stories/S-002/story.json"
+STORY_THREE="$RALPH_DIR/sprints/sprint-1/stories/S-003/story.json"
+STORY_FOUR="$RALPH_DIR/sprints/sprint-1/stories/S-004/story.json"
+STORY_FIVE="$RALPH_DIR/sprints/sprint-1/stories/S-005/story.json"
+STORY_SIX="$RALPH_DIR/sprints/sprint-1/stories/S-006/story.json"
+
+assert_file_exists "$STORIES_FILE"
+assert_file_exists "$STORY_ONE"
+assert_file_exists "$STORY_TWO"
+assert_file_exists "$STORY_THREE"
+assert_file_exists "$STORY_FOUR"
+assert_file_exists "$STORY_FIVE"
+assert_file_exists "$STORY_SIX"
+
+assert_json_expr "$STORIES_FILE" '.status == "active"'
+assert_json_expr "$STORIES_FILE" '.activeStoryId == "S-001"'
+assert_json_expr "$STORIES_FILE" '.stories | length == 6'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-002") | .depends_on == ["S-001"]'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-003") | .depends_on == ["S-002"]'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-004") | .depends_on == ["S-003"]'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-005") | .depends_on == ["S-004"]'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-006") | .depends_on == ["S-005"]'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-003") | .status == "planned"'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-004") | .status == "planned"'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-005") | .status == "planned"'
+assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-006") | .status == "planned"'
+
+assert_json_expr "$STORY_ONE" '.branchName == "ralph/sprint-1/epic-001"'
+assert_json_expr "$STORY_ONE" '.tasks | length == 1'
+assert_json_expr "$STORY_ONE" '.tasks[0].title == "Active task"'
+assert_json_expr "$STORY_ONE" '.tasks[0].scope == ["src/active.ts"]'
+assert_json_expr "$STORY_ONE" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-001.md"'
+assert_json_expr "$STORY_ONE" '(.tasks[0].checks | sort) == (["npm run typecheck", "npm test"] | sort)'
+
+assert_json_expr "$STORY_TWO" '.branchName == "ralph/sprint-1/epic-002"'
+assert_json_expr "$STORY_TWO" '.tasks | length == 1'
+assert_json_expr "$STORY_TWO" '.tasks[0].title == "Archived task"'
+assert_json_expr "$STORY_TWO" '.tasks[0].scope == ["src/archived.ts"]'
+assert_json_expr "$STORY_TWO" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-002.md"'
+assert_json_expr "$STORY_TWO" '.migration.tasks_recovered == true'
+assert_json_expr "$STORY_TWO" '(.tasks[0].checks | sort) == (["npm run lint", "npm test"] | sort)'
+
+assert_json_expr "$STORY_THREE" '.migration.source == "legacy-placeholder-guided-recovery"'
+assert_json_expr "$STORY_THREE" '.migration.tasks_recovered == true'
+assert_json_expr "$STORY_THREE" '.migration.recoveryMode == "guided-codex-fallback"'
+assert_json_expr "$STORY_THREE" '.migration.recoveryWarnings | length >= 2'
+assert_json_expr "$STORY_THREE" '.status == "planned"'
+assert_json_expr "$STORY_THREE" '.tasks | length == 1'
+assert_json_expr "$STORY_THREE" '.tasks[0].title == "Guided migration recovery task"'
+assert_json_expr "$STORY_THREE" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-003.md"'
+assert_json_expr "$STORY_THREE" '.spec.verification | any(. == "Legacy migration fallback recovery used guided generation; review task scope and acceptance checks before execution.")'
 assert_file_exists "$STORY_FOUR"
 assert_json_expr "$STORY_FOUR" '.migration.source == "legacy-prd-markdown"'
 assert_json_expr "$STORY_FOUR" '.migration.tasks_recovered == true'
@@ -463,12 +578,51 @@ assert_json_expr "$STORY_FOUR" '.tasks[2].depends_on == ["T-02"]'
 assert_json_expr "$STORY_FOUR" '(.tasks[0].checks | sort) == (["npm run typecheck", "npm test"] | sort)'
 assert_json_expr "$STORY_FOUR" '.tasks[1].checks == ["npm run lint"]'
 assert_json_expr "$STORY_FOUR" '.tasks[2].checks == ["npm test"]'
-assert_json_expr "$STORIES_FILE" '.stories[] | select(.id == "S-004") | .status == "planned"'
-if ! grep -q "Recovered migration placeholder for S-004 from legacy PRD markdown" "$WORK_DIR/generate-deterministic.log"; then
-  fail "expected deterministic markdown recovery log for S-004"
+assert_file_exists "$STORY_FIVE"
+assert_json_expr "$STORY_FIVE" '.migration.source == "legacy-prd-json-bridge"'
+assert_json_expr "$STORY_FIVE" '.migration.tasks_recovered == true'
+assert_json_expr "$STORY_FIVE" '.migration.recoveryMode == "guided-prd-json-bridge"'
+assert_json_expr "$STORY_FIVE" '.branchName == "ralph/sprint-1/epic-005"'
+assert_json_expr "$STORY_FIVE" '.spec.prdRef == "scripts/ralph/tasks/prds/prd-epic-005.md"'
+assert_json_expr "$STORY_FIVE" '.tasks | length == 3'
+assert_json_expr "$STORY_FIVE" '.tasks[0].title == "Bridge task one"'
+assert_json_expr "$STORY_FIVE" '.tasks[1].depends_on == ["T-01"]'
+assert_json_expr "$STORY_FIVE" '.tasks[2].depends_on == ["T-02"]'
+assert_json_expr "$STORY_FIVE" '(.tasks[0].checks | sort) == (["npm run typecheck", "npm test"] | sort)'
+assert_json_expr "$STORY_FIVE" '(.tasks[1].checks | sort) == (["npm run lint", "npm run typecheck"] | sort)'
+assert_json_expr "$STORY_FIVE" '(.tasks[2].checks | sort) == (["npm run typecheck", "npm test"] | sort)'
+assert_json_expr "$STORY_FIVE" '.spec.verification | any(. == "Legacy migration used a temporary prd.json bridge; review generated tasks and acceptance checks before execution.")'
+assert_file_exists "$STORY_SIX"
+assert_json_expr "$STORY_SIX" '.migration.source == "legacy-placeholder-guided-recovery"'
+assert_json_expr "$STORY_SIX" '.migration.tasks_recovered == true'
+assert_json_expr "$STORY_SIX" '.migration.recoveryMode == "guided-codex-fallback"'
+assert_json_expr "$STORY_SIX" '.branchName == "ralph/sprint-1/epic-006"'
+assert_json_expr "$STORY_SIX" '.spec.prdRef == "scripts/ralph/tasks/prds/missing-epic-006.md"'
+assert_json_expr "$STORY_SIX" '.tasks | length == 1'
+assert_json_expr "$STORY_SIX" '.tasks[0].title == "Backlog metadata recovery task"'
+assert_json_expr "$STORY_SIX" '.spec.verification | any(. == "Legacy migration fallback recovery used guided generation; review task scope and acceptance checks before execution.")'
+assert_json_expr "$STORY_SIX" '.migration.recoveryWarnings | any(test("markdown was unavailable"))'
+if ! grep -q "Primary source markdown unavailable" "$TEST_REPO/mock-codex-missing-markdown.prompt"; then
+  fail "expected missing-markdown guidance in S-006 recovery prompt"
 fi
-if grep -q "guided generation" "$WORK_DIR/generate-deterministic.log"; then
-  fail "did not expect guided fallback during deterministic markdown recovery"
+
+if grep -q 'S-004' "$TEST_REPO/mock-codex-auto-recovery.log"; then
+  fail "did not expect Codex to run during deterministic recovery for S-004"
+fi
+if ! grep -q "Auto-recovering 4 migrated placeholder stories" "$WORK_DIR/install-upgrade.log"; then
+  fail "expected install-time migration to auto-recover all placeholder stories"
+fi
+if ! grep -q "Recovered migration placeholder for S-003; story status reset to planned" "$WORK_DIR/install-upgrade.log"; then
+  fail "expected automatic guided recovery for S-003 during migration"
+fi
+if ! grep -q "Recovered migration placeholder for S-004 from legacy PRD markdown" "$WORK_DIR/install-upgrade.log"; then
+  fail "expected automatic deterministic recovery for S-004 during migration"
+fi
+if ! grep -q "Recovered migration placeholder for S-005 through temporary prd.json bridge" "$WORK_DIR/install-upgrade.log"; then
+  fail "expected automatic prd.json bridge recovery for S-005 during migration"
+fi
+if ! grep -q "Recovered migration placeholder for S-006; story status reset to planned" "$WORK_DIR/install-upgrade.log"; then
+  fail "expected automatic missing-markdown recovery for S-006 during migration"
 fi
 
 assert_file_exists "$RALPH_DIR/ralph-prd.sh"
@@ -481,4 +635,4 @@ if ! grep -q "Migrating legacy sprint: sprint-1" "$WORK_DIR/install-upgrade.log"
   fail "expected install --migrate-legacy to run migration automatically"
 fi
 
-log "PASS: legacy upgrade migration recovered distinct data and safe fallbacks"
+log "PASS: legacy upgrade migration auto-recovered every recovery path"
