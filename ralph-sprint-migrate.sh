@@ -99,30 +99,52 @@ log ""
 # Helpers
 # ---------------------------------------------------------------------------
 
+format_story_suffix() {
+  local suffix="$1"
+  if [[ "$suffix" =~ ^[0-9]+$ ]]; then
+    printf '%03d\n' "$((10#$suffix))"
+  else
+    printf '%s\n' "$suffix"
+  fi
+}
+
+format_task_suffix() {
+  local suffix="$1"
+  if [[ "$suffix" =~ ^[0-9]+$ ]]; then
+    printf '%02d\n' "$((10#$suffix))"
+  else
+    printf '%s\n' "$suffix"
+  fi
+}
+
 # Remap EPIC-XXX → S-XXX
 remap_id() {
   local raw="$1"
   # Already S-format
-  echo "$raw" | grep -q '^S-[0-9]' && { echo "$raw"; return; }
-  # EPIC-XXX → S-XXX
-  local num
-  num="$(echo "$raw" | sed 's/^EPIC-0*//')"
-  printf 'S-%03d' "$num"
+  echo "$raw" | grep -q '^S-' && { echo "$raw"; return; }
+  local suffix
+  suffix="${raw#EPIC-}"
+  printf 'S-%s\n' "$(format_story_suffix "$suffix")"
 }
 
 # Remap US-XXX → T-XX
 remap_task_id() {
   local raw="$1"
-  local num
-  num="$(echo "$raw" | sed 's/^US-0*//')"
-  printf 'T-%02d' "$num"
+  local suffix
+  suffix="${raw#US-}"
+  printf 'T-%s\n' "$(format_task_suffix "$suffix")"
 }
 
 epic_branch_suffix() {
   local epic_id="$1"
-  local num
-  num="$(echo "$epic_id" | sed 's/^EPIC-0*//')"
-  printf 'epic-%03d' "$num"
+  local suffix normalized
+  suffix="${epic_id#EPIC-}"
+  if [[ "$suffix" =~ ^[0-9]+$ ]]; then
+    printf 'epic-%03d\n' "$((10#$suffix))"
+  else
+    normalized="$(printf '%s' "$suffix" | tr '[:upper:]' '[:lower:]')"
+    printf 'epic-%s\n' "$normalized"
+  fi
 }
 
 # Infer machine-executable checks from acceptance criteria text
@@ -631,7 +653,7 @@ if [ "$DRY_RUN" -eq 0 ] && [ "${#RECOVERY_PENDING[@]}" -gt 0 ]; then
   log "Auto-recovering ${#RECOVERY_PENDING[@]} migrated placeholder stor$( [ "${#RECOVERY_PENDING[@]}" -eq 1 ] && printf 'y' || printf 'ies' )..."
   for story_id in "${RECOVERY_PENDING[@]}"; do
     log "  Recovering $story_id..."
-    if "$SCRIPT_DIR/ralph-story.sh" generate "$story_id" --force; then
+    if RALPH_STORIES_FILE="$STORIES_FILE" "$SCRIPT_DIR/ralph-story.sh" generate "$story_id" --force; then
       AUTO_RECOVERED=$((AUTO_RECOVERED + 1))
     else
       fail "Automatic recovery failed for $story_id. Resolve the preserved legacy source and rerun migration with --force."
