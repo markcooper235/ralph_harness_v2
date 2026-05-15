@@ -155,12 +155,12 @@ Prerequisites:
 - `ralph-task.sh` runs each task in its own fresh Codex session; acceptance `checks[]` are evaluated by shell
 - tasks retry up to `--max-retries` times on check failure
 - when all tasks pass, the story branch is merged to the sprint branch and deleted automatically
-- `ralph-fallow.sh` runs a code-quality gate (dead code, duplication, lint) after all tasks in a story pass
+- `ralph-fallow.sh` provides a scoped code-quality gate (dead code, duplication, lint) that can be run explicitly or during sprint closeout
 
 ### Verification
 
 - each task's `checks[]` are binary shell expressions (exit 0 = pass)
-- the fallow gate runs after all task checks pass
+- the fallow gate is available as an explicit quality pass and can be run during sprint closeout
 - `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to pass before merging the sprint
 - `ralph-verify.sh --targeted` runs typecheck, lint, and tests scoped to changed files
 - `ralph-verify.sh --full` runs the full suite with known baseline failures filtered out
@@ -237,7 +237,7 @@ See [README-local.md](README-local.md).
 ./ralph-fallow.sh [--story PATH] [--dry-run] [--no-autofix]
 
 # Sprint closeout
-./ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression]
+./ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix]
 
 # Migration from legacy epic/PRD format
 ./ralph-sprint-migrate.sh [--sprint NAME] [--dry-run] [--force]

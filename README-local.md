@@ -228,7 +228,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 - `--max-stories N` — safety ceiling on stories per run (default: 50)
 - `--max-retries N` — per-task Codex retry count (default: 2)
 - `--continue-on-failure` — continue to next story when a story fails (default: stop)
-- `--skip-fallow` — skip the fallow code-quality gate (debug only)
+- `--skip-fallow` — deprecated compatibility flag; no effect
 - `--dry-run` — print plan without executing
 
 ### Verification and quality
@@ -245,7 +245,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 ### Sprint closeout
 
 ```bash
-./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression]
+./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix]
 ```
 
 ### Recovery and migration

@@ -849,6 +849,10 @@ cmd_next_id() {
     while IFS= read -r dep; do
       [ -z "$dep" ] && continue
       dep_status="$(jq -r --arg d "$dep" '.stories[] | select(.id == $d) | .status' "$STORIES_FILE")"
+      # Sprint backlog files only contain sprint-local stories. Cross-sprint
+      # sequencing is enforced by sprint order, so missing deps here should not
+      # block the next story in the active sprint.
+      [ -z "$dep_status" ] && continue
       if [ "$dep_status" != "done" ]; then
         deps_ok=false
         break

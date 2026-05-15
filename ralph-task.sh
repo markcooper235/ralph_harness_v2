@@ -36,7 +36,7 @@ Options:
   --max-retries N     Retry count per task on check failure (default: 2)
   --dry-run           Print plan without executing Codex sessions
   --quiet             Suppress verbose output
-  --skip-fallow       Skip the fallow code-quality gate (bypass for debugging)
+  --skip-fallow       Deprecated compatibility flag; no effect
   -h, --help          Show help
 
 Environment:
@@ -552,18 +552,6 @@ if [ $STORY_FAILED -eq 0 ]; then
   done < <(jq -r '.tasks[].passes' "$STORY_FILE")
 
   if [ "$all_pass" = "true" ]; then
-    # Run fallow code-quality gate (skippable for debugging)
-    if [ "$SKIP_FALLOW" -eq 0 ] && [ -f "$SCRIPT_DIR/ralph-fallow.sh" ]; then
-      log ""
-      log "--- Fallow: code-quality gate ---"
-      local_fallow_args=(--story "$STORY_FILE")
-      [ "$DRY_RUN" -eq 1 ] && local_fallow_args+=(--dry-run)
-      [ "$QUIET" -eq 1 ]   && local_fallow_args+=(--quiet)
-      if ! "$SCRIPT_DIR/ralph-fallow.sh" "${local_fallow_args[@]}"; then
-        log "=== Story $STORY_ID: fallow gate failed — manual correction required ==="
-        exit 1
-      fi
-    fi
     _story_end_head="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
     if [ -n "$STORY_START_HEAD" ] && [ "$STORY_START_HEAD" != "$_story_end_head" ]; then
       _story_total_diff="$(git -C "$WORKSPACE_ROOT" diff --stat "${STORY_START_HEAD}..${_story_end_head}" 2>/dev/null | tail -1 | sed 's/^ *//')"

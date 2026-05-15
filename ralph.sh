@@ -34,7 +34,7 @@ Options:
   --continue-on-failure   Continue to next story when a story fails (default: stop)
   --max-stories N         Safety ceiling on stories executed (default: 50)
   --max-retries N         Per-task Codex retry count (default: 2)
-  --skip-fallow           Skip the fallow code-quality gate
+  --skip-fallow           Deprecated compatibility flag; no effect
   --dry-run               Print plan without executing
   -h, --help              Show this help
 

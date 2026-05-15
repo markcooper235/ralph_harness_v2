@@ -2,10 +2,12 @@
 # ralph-fallow.sh — Code-quality acceptance gate for stories.
 #
 # Uses the Fallow CLI (fallow.tools) to check dead code, duplicates, and code
-# health. Runs "fallow audit" (free tier) as the gate — it analyzes files
-# changed vs main, which matches a story's contribution exactly.
+# health. When the branch diff is fully inside the story scope, Ralph can use
+# "fallow audit" safely. Otherwise it falls back to exact-file analyzers so the
+# gate cannot broaden a story branch accidentally.
 #
-# Flow: audit → if issues: fallow fix --yes + Codex → re-audit → pass/fail
+# Broad auto-fix is disabled by default. Exact scoped auto-fix can be re-enabled
+# later once the workflow is tightened further.
 #
 # For non-JS/TS projects (no package.json / tsconfig.json) a lightweight
 # grep-based heuristic fallback is used instead.
@@ -32,9 +34,12 @@ usage() {
 Usage: ./ralph-fallow.sh [options]
 
 Code-quality acceptance gate (powered by fallow.tools). Runs "fallow audit"
-to check dead code, duplicates, and health for this story's changed files.
-If issues found, runs "fallow fix --yes" then Codex, then re-audits.
-The story cannot be marked done if issues remain after auto-fix.
+only when the branch diff is fully within the story scope. Otherwise it uses
+exact-file fallback analyzers to avoid broad cleanup drift.
+
+Broad auto-fix is disabled by default. Set the environment flags below to
+re-enable scoped fallback auto-fix or Codex auto-fix while this workflow is
+being revisited. The story cannot be marked done if issues remain.
 
 For non-JS/TS projects, a built-in grep-based heuristic is used.
 
@@ -48,6 +53,8 @@ Options:
 Environment:
   CODEX_BIN             Codex binary (default: codex)
   RALPH_CODEX_PROFILE   Profile flag passed to codex exec
+  RALPH_FALLOW_EXACT_AUTOFIX  Set to 1 to allow fallback exact-file auto-fix
+  RALPH_FALLOW_CODEX_AUTOFIX  Set to 1 to allow Codex follow-up auto-fix
 EOF
 }
 
@@ -108,13 +115,21 @@ STORY_DIR="$(dirname "$STORY_FILE")"
 STORY_ID="$(jq -r '.storyId' "$STORY_FILE")"
 STORY_TITLE="$(jq -r '.title' "$STORY_FILE")"
 REPORT_FILE="$STORY_DIR/.fallow-report.json"
+ALLOW_EXACT_AUTOFIX="${RALPH_FALLOW_EXACT_AUTOFIX:-0}"
+ALLOW_CODEX_AUTOFIX="${RALPH_FALLOW_CODEX_AUTOFIX:-0}"
 
 # ---------------------------------------------------------------------------
 # Scope resolution (for reporting and fallback only)
 # ---------------------------------------------------------------------------
 
 SCOPE_FILES=()
+SCOPE_PATTERNS=()
 _scope_seen=""
+_scope_pattern_seen=""
+BASE_REF=""
+CHANGED_FILES=()
+CHANGED_SCOPE_FILES=()
+OUT_OF_SCOPE_CHANGED_FILES=()
 
 _scope_add() {
   local f="$1"
@@ -124,20 +139,128 @@ _scope_add() {
   SCOPE_FILES+=("$f")
 }
 
+_scope_pattern_add() {
+  local pattern="$1"
+  [ -z "$pattern" ] && return
+  printf '%s\n' "$_scope_pattern_seen" | grep -qxF "$pattern" 2>/dev/null && return
+  _scope_pattern_seen="${_scope_pattern_seen}${pattern}"$'\n'
+  SCOPE_PATTERNS+=("$pattern")
+}
+
+_scope_entry_add() {
+  local entry="$1"
+  [ -z "$entry" ] && return
+
+  if [ -f "$WORKSPACE_ROOT/$entry" ]; then
+    _scope_add "$entry"
+    return
+  fi
+  if [ -f "$entry" ]; then
+    _scope_add "${entry#$WORKSPACE_ROOT/}"
+    return
+  fi
+
+  case "$entry" in
+    *"*"*|*"?"*|*"/**"*|src/*|libs/*|tests/*|scripts/*|data/*|docs/*|package.json|project.json|nx.json)
+      _scope_pattern_add "$entry"
+      ;;
+  esac
+}
+
+_scope_extract_patterns_from_text() {
+  local text="$1"
+  [ -n "$text" ] || return
+
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    _scope_entry_add "$token"
+  done < <(printf '%s\n' "$text" | grep -oE '`[^`]+`' | tr -d '`')
+
+  if printf '%s\n' "$text" | grep -qiE 'jest|browser tests|playwright|targeted .*tests'; then
+    _scope_pattern_add 'src/**/__tests__/**'
+    _scope_pattern_add 'src/**/*.test.*'
+    _scope_pattern_add 'tests/**'
+  fi
+}
+
 resolve_scope_files() {
   while IFS= read -r f; do
     [ -z "$f" ] && continue
-    [ -f "$WORKSPACE_ROOT/$f" ] && _scope_add "$f"
-    [ -f "$f" ]                 && _scope_add "${f#$WORKSPACE_ROOT/}"
+    _scope_entry_add "$f"
   done < <(jq -r '.tasks[].scope[]?' "$STORY_FILE" 2>/dev/null | sort -u)
 
   while IFS= read -r f; do
     [ -z "$f" ] && continue
-    [ -f "$WORKSPACE_ROOT/$f" ] && _scope_add "$f"
+    _scope_entry_add "$f"
   done < <(jq -r '(.spec.scope_paths // .spec.scopePaths // .scopePaths // [])[]?' "$STORY_FILE" 2>/dev/null | sort -u)
+
+  while IFS= read -r text; do
+    [ -z "$text" ] && continue
+    _scope_extract_patterns_from_text "$text"
+  done < <(jq -r '.spec.scope // empty, .tasks[].description // empty, .tasks[].scope[]?' "$STORY_FILE" 2>/dev/null)
 }
 
 resolve_scope_files
+
+# ---------------------------------------------------------------------------
+# Diff scope resolution
+# ---------------------------------------------------------------------------
+
+resolve_analysis_base_ref() {
+  if git rev-parse --verify '@{upstream}' >/dev/null 2>&1; then
+    BASE_REF='@{upstream}'
+    return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/main; then
+    BASE_REF='main'
+    return 0
+  fi
+  if git show-ref --verify --quiet refs/heads/master; then
+    BASE_REF='master'
+    return 0
+  fi
+  BASE_REF='HEAD~1'
+}
+
+resolve_changed_scope_files() {
+  resolve_analysis_base_ref
+
+  local changed=()
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    changed+=("$f")
+  done < <(cd "$WORKSPACE_ROOT" && git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || true)
+
+  CHANGED_FILES=()
+  CHANGED_SCOPE_FILES=()
+  OUT_OF_SCOPE_CHANGED_FILES=()
+
+  local f
+  for f in "${changed[@]}"; do
+    CHANGED_FILES+=("$f")
+    if printf '%s\n' "$_scope_seen" | grep -qxF "$f" 2>/dev/null; then
+      CHANGED_SCOPE_FILES+=("$f")
+      continue
+    fi
+
+    local pattern matched=0
+    for pattern in "${SCOPE_PATTERNS[@]}"; do
+      case "$f" in
+        $pattern)
+          CHANGED_SCOPE_FILES+=("$f")
+          matched=1
+          break
+          ;;
+      esac
+    done
+
+    if [ "$matched" -eq 0 ]; then
+      OUT_OF_SCOPE_CHANGED_FILES+=("$f")
+    fi
+  done
+}
+
+resolve_changed_scope_files
 
 # ---------------------------------------------------------------------------
 # Detect Fallow + project type
@@ -262,7 +385,7 @@ run_fallow_audit() {
   FALLOW_ISSUE_COUNT=0
   [ -n "$FALLOW_BIN" ] || return 1   # signal: use fallback
 
-  log "  [fallow audit] Analyzing story diff vs main..."
+  log "  [fallow audit] Analyzing branch diff vs $BASE_REF..."
   local json
   json="$(_fallow_run audit --format json)"
 
@@ -277,17 +400,6 @@ run_fallow_audit() {
   [ "$FALLOW_ISSUE_COUNT" -gt 0 ]
 }
 
-run_fallow_fix() {
-  [ -n "$FALLOW_BIN" ] || return 0
-  log "  [fallow fix] Auto-removing unused exports and dependencies..."
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log "  [DRY RUN] Would run: fallow fix --yes --dry-run"
-    return 0
-  fi
-  # shellcheck disable=SC2086
-  cd "$WORKSPACE_ROOT" && $FALLOW_BIN fix --yes 2>&1 || true
-}
-
 # ---------------------------------------------------------------------------
 # Language detection
 # ---------------------------------------------------------------------------
@@ -297,11 +409,11 @@ DETECTED_LANG=""
 
 detect_language() {
   DETECTED_LANG="unknown"
-  [ "${#SCOPE_FILES[@]}" -gt 0 ] || return 0
+  [ "${#CHANGED_SCOPE_FILES[@]}" -gt 0 ] || return 0
 
   local ts_count=0 js_count=0 py_count=0 go_count=0 rb_count=0 rs_count=0
 
-  for f in "${SCOPE_FILES[@]}"; do
+  for f in "${CHANGED_SCOPE_FILES[@]}"; do
     case "$f" in
       *.ts|*.tsx) ts_count=$((ts_count + 1)) ;;
       *.js|*.jsx|*.mjs|*.cjs) js_count=$((js_count + 1)) ;;
@@ -329,7 +441,7 @@ detect_language() {
 
 _scope_file_args() {
   local files=()
-  for f in "${SCOPE_FILES[@]}"; do
+  for f in "${CHANGED_SCOPE_FILES[@]}"; do
     [ -f "$WORKSPACE_ROOT/$f" ] && files+=("$WORKSPACE_ROOT/$f")
   done
   printf '%s\n' "${files[@]}"
@@ -416,7 +528,7 @@ run_python_fix() {
 run_go_analysis() {
   local issues=""
   local pkg_dirs=()
-  for f in "${SCOPE_FILES[@]}"; do
+  for f in "${CHANGED_SCOPE_FILES[@]}"; do
     [ -f "$WORKSPACE_ROOT/$f" ] || continue
     local d
     d="$(dirname "$WORKSPACE_ROOT/$f")"
@@ -521,7 +633,7 @@ run_rust_fix() {
 
 _grep_fallback() {
   local issues=()
-  for f in "${SCOPE_FILES[@]}"; do
+  for f in "${CHANGED_SCOPE_FILES[@]}"; do
     local fpath="$WORKSPACE_ROOT/$f"
     [ -f "$fpath" ] || continue
 
@@ -567,7 +679,7 @@ _grep_fallback() {
 
 run_fallback_analysis() {
   DEAD_CODE_ISSUES=""
-  [ "${#SCOPE_FILES[@]}" -gt 0 ] || return 0
+  [ "${#CHANGED_SCOPE_FILES[@]}" -gt 0 ] || return 0
   detect_language
   log "  [fallback] Detected language: $DETECTED_LANG"
   case "$DETECTED_LANG" in
@@ -617,7 +729,11 @@ build_report() {
   fi
 
   local files_json
-  files_json="$(printf '%s\n' "${SCOPE_FILES[@]:-}" | grep . | jq -R . | jq -s . 2>/dev/null || echo "[]")"
+  if [ "${#CHANGED_SCOPE_FILES[@]}" -gt 0 ]; then
+    files_json="$(printf '%s\n' "${CHANGED_SCOPE_FILES[@]}" | jq -R . | jq -s . 2>/dev/null || echo "[]")"
+  else
+    files_json="[]"
+  fi
 
   jq -n \
     --arg story_id   "$STORY_ID" \
@@ -655,18 +771,26 @@ run_analysis() {
   FALLOW_ISSUES=""
   DEAD_CODE_ISSUES=""
 
-  if run_fallow_audit; then
-    USING_FALLOW=1
-    return 0
-  elif [ -n "$FALLOW_BIN" ]; then
-    # fallow ran but found issues (returned 1)
+  if [ "${#CHANGED_SCOPE_FILES[@]}" -eq 0 ]; then
+    USING_FALLOW=0
+    DEAD_CODE_ISSUES="No in-scope changed files were detected for this story branch diff."
+    return 1
+  fi
+
+  if [ -n "$FALLOW_BIN" ] && [ "${#OUT_OF_SCOPE_CHANGED_FILES[@]}" -eq 0 ]; then
+    if run_fallow_audit; then
+      USING_FALLOW=1
+      return 0
+    fi
     USING_FALLOW=1
     return 1
-  else
-    # fallow unavailable → heuristics
-    USING_FALLOW=0
-    run_fallback_analysis
   fi
+
+  USING_FALLOW=0
+  if [ -n "$FALLOW_BIN" ] && [ "${#OUT_OF_SCOPE_CHANGED_FILES[@]}" -gt 0 ]; then
+    log "  [scope-guard] Skipping fallow audit because ${#OUT_OF_SCOPE_CHANGED_FILES[@]} changed file(s) fall outside story scope."
+  fi
+  run_fallback_analysis
 }
 
 # ---------------------------------------------------------------------------
@@ -678,10 +802,10 @@ run_codex_fix() {
   issue_summary="$(jq -r '.issues[] | "[\(.type)]\n\(.detail)"' "$REPORT_FILE")"
 
   local files_list=""
-  if [ "${#SCOPE_FILES[@]}" -gt 0 ]; then
-    files_list="$(printf '  %s\n' "${SCOPE_FILES[@]}")"
+  if [ "${#CHANGED_SCOPE_FILES[@]}" -gt 0 ]; then
+    files_list="$(printf '  %s\n' "${CHANGED_SCOPE_FILES[@]}")"
   else
-    files_list="  (all files changed in this story)"
+    files_list="  (no in-scope changed files detected)"
   fi
 
   local prompt
@@ -723,16 +847,19 @@ PROMPT
 # ---------------------------------------------------------------------------
 
 scope_label=""
-if [ "${#SCOPE_FILES[@]}" -gt 0 ]; then
-  scope_label="${#SCOPE_FILES[@]} story scope file(s)"
+if [ "${#CHANGED_SCOPE_FILES[@]}" -gt 0 ]; then
+  scope_label="${#CHANGED_SCOPE_FILES[@]} in-scope changed file(s) vs $BASE_REF"
 else
-  scope_label="git-changed files vs main"
+  scope_label="no in-scope changed files vs $BASE_REF"
 fi
 
 log ""
 log "=== ralph-fallow: $STORY_ID — $STORY_TITLE ==="
 log "Analysis scope: $scope_label"
-if [ -n "$FALLOW_BIN" ]; then
+if [ "${#OUT_OF_SCOPE_CHANGED_FILES[@]}" -gt 0 ]; then
+  log "Scope guard: ${#OUT_OF_SCOPE_CHANGED_FILES[@]} out-of-scope changed file(s) detected; using exact-file fallback analysis."
+fi
+if [ -n "$FALLOW_BIN" ] && [ "${#OUT_OF_SCOPE_CHANGED_FILES[@]}" -eq 0 ]; then
   log "Analyzer: fallow $(${FALLOW_BIN%% *} --version 2>/dev/null | head -1 || echo "(fallow.tools)")"
 else
   detect_language
@@ -777,10 +904,16 @@ if [ "$NO_AUTOFIX" -eq 1 ]; then
 fi
 
 # ── Phase 2: Auto-fix ─────────────────────────────────────────────────────
+if [ "$ALLOW_EXACT_AUTOFIX" -ne 1 ] && [ "$ALLOW_CODEX_AUTOFIX" -ne 1 ]; then
+  log ""
+  log "=== Fallow FAIL — $ISSUE_COUNT issue(s); broad auto-fix disabled by default ==="
+  log "Manual correction required before re-running ralph-task.sh."
+  exit 1
+fi
+
 log "Phase 2 — Auto-fix"
-[ "$USING_FALLOW" -eq 1 ] && run_fallow_fix
-[ "$USING_FALLOW" -eq 0 ] && run_lang_autofix
-run_codex_fix
+[ "$USING_FALLOW" -eq 0 ] && [ "$ALLOW_EXACT_AUTOFIX" -eq 1 ] && run_lang_autofix
+[ "$ALLOW_CODEX_AUTOFIX" -eq 1 ] && run_codex_fix
 
 # ── Phase 3: Re-validate ──────────────────────────────────────────────────
 log ""

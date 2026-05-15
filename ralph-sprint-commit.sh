@@ -17,24 +17,29 @@ TARGET_BRANCH=""
 DRY_RUN=false
 KEEP_SOURCE=false
 SKIP_REGRESSION=false
+RUN_FALLOW=false
+FALLOW_AUTOFIX=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression]
+Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix]
 
 Behavior:
   1. Validates active sprint exists and all stories are done/abandoned
-  2. Runs sprint regression gate (ralph-sprint-test.sh) if present
-  3. Ensures sprint branch exists (ralph/sprint/<active-sprint>)
-  4. Archives sprint-level artifacts to scripts/ralph/tasks/archive/sprints/
-  5. Merges sprint branch into its recorded parent branch (or explicit target)
-  6. Clears active Ralph sprint/prd state for next sprint/standalone run
+  2. Optionally runs fallow cleanup across completed stories
+  3. Runs sprint regression gate (ralph-sprint-test.sh) if present
+  4. Ensures sprint branch exists (ralph/sprint/<active-sprint>)
+  5. Archives sprint-level artifacts to scripts/ralph/tasks/archive/sprints/
+  6. Merges sprint branch into its recorded parent branch (or explicit target)
+  7. Clears active Ralph sprint/prd state for next sprint/standalone run
 
 Options:
   --target BRANCH      Explicit merge target branch
   --dry-run            Print plan only
   --keep               Keep sprint branch after successful merge
   --skip-regression    Skip the sprint regression gate (bypass for debugging)
+  --run-fallow         Run optional fallow cleanup/checks before regression
+  --fallow-autofix     Allow scoped fallow auto-fix during --run-fallow cleanup
   -h, --help           Show this help
 USAGE
 }
@@ -145,6 +150,14 @@ while [ $# -gt 0 ]; do
       SKIP_REGRESSION=true
       shift
       ;;
+    --run-fallow)
+      RUN_FALLOW=true
+      shift
+      ;;
+    --fallow-autofix)
+      FALLOW_AUTOFIX=true
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -189,6 +202,10 @@ fi
 
 validate_stories_done_or_abandoned "$STORIES_FILE"
 
+if [ "$FALLOW_AUTOFIX" = "true" ] && [ "$RUN_FALLOW" != "true" ]; then
+  fail "--fallow-autofix requires --run-fallow."
+fi
+
 if [ "$DRY_RUN" = "true" ]; then
   echo "Ralph sprint commit plan:"
   echo "  sprint:        $ACTIVE_SPRINT"
@@ -196,6 +213,8 @@ if [ "$DRY_RUN" = "true" ]; then
   echo "  target branch: $TARGET_BRANCH"
   echo "  stories file:  $STORIES_FILE"
   echo "  archive root:  $ARCHIVE_DIR"
+  echo "  run fallow:    $RUN_FALLOW"
+  echo "  fallow autofix:$FALLOW_AUTOFIX"
   if [ "$KEEP_SOURCE" = "true" ]; then
     echo "  delete source: no (--keep)"
   else
@@ -205,6 +224,48 @@ if [ "$DRY_RUN" = "true" ]; then
 fi
 
 ensure_clean_worktree
+
+run_optional_fallow_cleanup() {
+  [ "$RUN_FALLOW" = "true" ] || return 0
+  [ -f "$SCRIPT_DIR/ralph-fallow.sh" ] || fail "ralph-fallow.sh not found but --run-fallow was requested."
+
+  local story_paths=()
+  while IFS= read -r story_path; do
+    [ -n "$story_path" ] || continue
+    if [[ "$story_path" != /* ]]; then
+      story_path="$WORKSPACE_ROOT/$story_path"
+    fi
+    [ -f "$story_path" ] || fail "Missing story file for fallow cleanup: $story_path"
+    story_paths+=("$story_path")
+  done < <(jq -r '.stories[] | select(.status == "done") | .story_path // empty' "$STORIES_FILE")
+
+  [ "${#story_paths[@]}" -gt 0 ] || { echo "No completed stories to scan with fallow."; return 0; }
+
+  if [ "$(git branch --show-current)" != "$SPRINT_BRANCH" ]; then
+    git checkout "$SPRINT_BRANCH"
+  fi
+
+  echo "--- Optional fallow cleanup ---"
+  if [ "$FALLOW_AUTOFIX" = "true" ]; then
+    echo "Fallow auto-fix enabled for sprint closeout cleanup."
+  fi
+  local story_path
+  for story_path in "${story_paths[@]}"; do
+    echo "Running fallow for $(basename "$(dirname "$story_path")")"
+    local fallow_env=()
+    if [ "$FALLOW_AUTOFIX" = "true" ]; then
+      fallow_env+=(RALPH_FALLOW_EXACT_AUTOFIX=1)
+      fallow_env+=(RALPH_FALLOW_CODEX_AUTOFIX=1)
+    fi
+    if ! env "${fallow_env[@]}" "$SCRIPT_DIR/ralph-fallow.sh" --story "$story_path"; then
+      fail "Optional fallow cleanup failed for $story_path. Resolve issues or rerun sprint commit without --run-fallow."
+    fi
+  done
+  echo "Optional fallow cleanup: PASS"
+  ensure_clean_worktree
+}
+
+run_optional_fallow_cleanup
 
 # Pre-merge regression gate
 if [ "$SKIP_REGRESSION" = "true" ]; then

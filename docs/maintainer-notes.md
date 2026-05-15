@@ -80,13 +80,13 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 
 ## Fallow Gate Policy
 
-- `ralph-fallow.sh` runs automatically after all task checks pass, before the story branch is merged.
-- It uses `fallow audit` (fallow.tools) for JS/TS projects. For projects without `package.json`/`tsconfig.json`, it falls back to a built-in grep-based heuristic.
-- Gate flow: audit → if issues: `fallow fix --yes` + Codex session → re-audit → pass/fail.
+- `ralph-fallow.sh` is an explicit quality pass and can also be run during sprint closeout with `ralph-sprint-commit.sh --run-fallow`.
+- It uses `fallow audit` (fallow.tools) for JS/TS projects only when the branch diff stays within the story scope. Otherwise it falls back to exact-file analyzers to avoid broad cleanup drift.
+- Broad auto-fix is disabled by default. Set `RALPH_FALLOW_EXACT_AUTOFIX=1` and `RALPH_FALLOW_CODEX_AUTOFIX=1` only when you intentionally want scoped fallback and Codex follow-up auto-fix.
 - `--dry-run` reports issues without auto-fixing or failing the gate.
 - `--no-autofix` reports and fails without attempting auto-fix.
-- `--skip-fallow` in `ralph.sh` and `ralph-task.sh` bypasses the gate entirely (for debugging only).
-- The fallow gate operates on files changed vs `main`; it matches the story's contribution exactly.
+- `--skip-fallow` in `ralph.sh` and `ralph-task.sh` is retained only as a deprecated compatibility flag.
+- The fallow gate prefers branch-diff analysis only when every changed file is in-scope for the story; otherwise it reports against the exact in-scope file set.
 
 ---
 
