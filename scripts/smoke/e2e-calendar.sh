@@ -64,6 +64,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/assert.sh"
 # shellcheck source=./lib/token-parser.sh
 source "$SCRIPT_DIR/lib/token-parser.sh"
+# shellcheck source=./lib/benchmark.sh
+source "$SCRIPT_DIR/lib/benchmark.sh"
 
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/e2e-calendar.tsv"
@@ -84,6 +86,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+BENCH_MODE="default"
+[ "$GENERATED" -eq 1 ] && BENCH_MODE="generated"
+benchmark_init "calendar" "$BENCH_MODE" "$BENCH_FILE"
+
 WORK_DIR="$(mktemp -d /tmp/ralph-calendar-smoke.XXXXXX)"
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -95,6 +101,12 @@ ANGULAR_DIR="$WORK_DIR/angular-calendar"
 
 cleanup() {
   local code=$?
+  local status="pass"
+  [ "$code" -eq 0 ] || status="fail"
+  if [ "${BENCHMARK_TOKENS:-0}" -eq 0 ]; then
+    benchmark_set_notes "tokens-unavailable"
+  fi
+  benchmark_append_row "$status"
   if [ "$KEEP" -eq 1 ] || [ "$code" -ne 0 ]; then
     echo ""
     echo "[smoke] work dir retained for inspection: $WORK_DIR"
@@ -301,9 +313,7 @@ prepare_and_activate() {
   log "  Resetting $proj_label $sprint to 'planned' for lifecycle coverage..."
   (
     cd "$proj_dir"
-    _tmp="$(mktemp)"
-    jq '.status = "planned" | .stories |= [.[] | .status = "planned"]' "$sf" > "$_tmp" \
-      && mv "$_tmp" "$sf"
+    "$ralph_dir/ralph-sprint.sh" restage "$sprint"
     git add "$sf"
     git diff --cached --quiet \
       || git commit -m "chore(ralph): reset $sprint to planned for lifecycle test" --quiet
@@ -323,8 +333,6 @@ prepare_and_activate() {
     git diff --cached --quiet \
       || git commit -m "chore(ralph): prepare-all promote $proj_label $sprint" --quiet
   )
-
-  rm -f "$ralph_dir/.active-sprint"
 
   local ulog="$LOG_DIR/${proj_label}-${sprint}-use.log"
   log "  Activating $proj_label $sprint via 'ralph-sprint.sh use'..."
@@ -486,33 +494,21 @@ assert_file_exists "$NEXTJS_DIR/scripts/ralph/doctor.sh"
     --prompt-context "Create lib/types.ts with CalendarEvent, Todo, Category interfaces and a Priority type." \
     > "$LOG_DIR/nextjs-story-add-S-001.log" 2>&1
 
-  ./ralph-story.sh add --title "Calendar service" \
+  ./ralph-story.sh add --title "Calendar service" --depends-on S-001 \
     --goal "Implement a CalendarStore class with add/remove/query operations." \
     --prompt-context "Create lib/calendarService.ts importing CalendarEvent from types." \
     > "$LOG_DIR/nextjs-story-add-S-002.log" 2>&1
 
-  ./ralph-story.sh add --title "Todo service" \
+  ./ralph-story.sh add --title "Todo service" --depends-on S-001 \
     --goal "Implement a TodoStore class with CRUD and priority filtering." \
     --prompt-context "Create lib/todoService.ts importing Todo, Priority from types." \
     > "$LOG_DIR/nextjs-story-add-S-003.log" 2>&1
 
-  ./ralph-story.sh add --title "Barrel export and integration" \
+  ./ralph-story.sh add --title "Barrel export and integration" --depends-on S-001 --depends-on S-002 --depends-on S-003 \
     --goal "Wire all modules through lib/index.ts and add cross-module integration test." \
     --prompt-context "Update lib/index.ts to re-export calendarService, todoService, types. Add __tests__/integration.test.ts." \
     > "$LOG_DIR/nextjs-story-add-S-004.log" 2>&1
 
-  # Patch story-level depends_on into stories.json.
-  # ralph-story.sh add does not yet accept --depends-on (known framework gap).
-  _sf="sprints/sprint-1/stories.json"
-  _tmp="$(mktemp)"
-  jq '
-    .stories = [.stories[] |
-      if   .id == "S-002" then .depends_on = ["S-001"]
-      elif .id == "S-003" then .depends_on = ["S-001"]
-      elif .id == "S-004" then .depends_on = ["S-001", "S-002", "S-003"]
-      else . end
-    ]
-  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 )
 
 # ── NextJS doctor check ────────────────────────────────────────────────────────
@@ -528,7 +524,7 @@ if [ "$GENERATED" -eq 1 ]; then
 else
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-001"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-001/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-001 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -601,7 +597,7 @@ cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-001/story.json" <<'S
 STORYJSON
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-002"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-002/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-002 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -672,7 +668,7 @@ cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-002/story.json" <<'S
 STORYJSON
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-003"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-003/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-003 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -743,7 +739,7 @@ cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-003/story.json" <<'S
 STORYJSON
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-004"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-1/stories/S-004/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-004 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -919,33 +915,21 @@ assert_file_exists "$ANGULAR_DIR/scripts/ralph/doctor.sh"
     --prompt-context "Create src/app/models.ts with class CalendarEvent, class Todo, class Category." \
     > "$LOG_DIR/angular-story-add-S-001.log" 2>&1
 
-  ./ralph-story.sh add --title "CalendarService class" \
+  ./ralph-story.sh add --title "CalendarService class" --depends-on S-001 \
     --goal "Implement CalendarService as a class with Map-backed event storage." \
     --prompt-context "Create src/app/services/calendar.service.ts with class CalendarService." \
     > "$LOG_DIR/angular-story-add-S-002.log" 2>&1
 
-  ./ralph-story.sh add --title "TodoService class" \
+  ./ralph-story.sh add --title "TodoService class" --depends-on S-001 \
     --goal "Implement TodoService as a class with Map-backed todo storage." \
     --prompt-context "Create src/app/services/todo.service.ts with class TodoService." \
     > "$LOG_DIR/angular-story-add-S-003.log" 2>&1
 
-  ./ralph-story.sh add --title "AppModule wiring and integration" \
+  ./ralph-story.sh add --title "AppModule wiring and integration" --depends-on S-001 --depends-on S-002 --depends-on S-003 \
     --goal "Create AppModule class that wires CalendarService and TodoService together." \
     --prompt-context "Create src/app/app.module.ts with class AppModule having a static create() factory." \
     > "$LOG_DIR/angular-story-add-S-004.log" 2>&1
 
-  # Patch story-level depends_on into stories.json.
-  # ralph-story.sh add does not yet accept --depends-on (known framework gap).
-  _sf="sprints/sprint-1/stories.json"
-  _tmp="$(mktemp)"
-  jq '
-    .stories = [.stories[] |
-      if   .id == "S-002" then .depends_on = ["S-001"]
-      elif .id == "S-003" then .depends_on = ["S-001"]
-      elif .id == "S-004" then .depends_on = ["S-001", "S-002", "S-003"]
-      else . end
-    ]
-  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 )
 
 # ── Angular doctor check ───────────────────────────────────────────────────────
@@ -959,7 +943,7 @@ if [ "$GENERATED" -eq 1 ]; then
 else
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-001"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-001/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-001 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -1032,7 +1016,7 @@ cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-001/story.json" <<'
 STORYJSON
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-002"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-002/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-002 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -1103,7 +1087,7 @@ cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-002/story.json" <<'
 STORYJSON
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-003"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-003/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-003 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -1174,7 +1158,7 @@ cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-003/story.json" <<'
 STORYJSON
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-004"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-004/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-004 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -1412,37 +1396,27 @@ commit_baseline "$NEXTJS_DIR" "chore(smoke): nextjs-calendar sprint-2 infra"
     --prompt-context "Create components/CalendarView.tsx with 'use client', CalendarEvent[] events prop, onRemove callback, and data-testid attributes." \
     > "$LOG_DIR/nextjs-story-add-S2-001.log" 2>&1
 
-  ./ralph-story.sh add --title "TodoList component" \
+  ./ralph-story.sh add --title "TodoList component" --depends-on S-001 \
     --goal "Build a React client component that renders todo items with complete and delete actions." \
     --prompt-context "Create components/TodoList.tsx with 'use client', Todo[] todos prop, onComplete and onDelete callbacks." \
     > "$LOG_DIR/nextjs-story-add-S2-002.log" 2>&1
 
-  ./ralph-story.sh add --title "EventForm component" \
+  ./ralph-story.sh add --title "EventForm component" --depends-on S-001 \
     --goal "Build a controlled React form component for creating new calendar events." \
     --prompt-context "Create components/EventForm.tsx with 'use client', onAdd callback prop, title and date inputs with data-testid attributes." \
     > "$LOG_DIR/nextjs-story-add-S2-003.log" 2>&1
 
-  ./ralph-story.sh add --title "CalendarApp integration component" \
+  ./ralph-story.sh add --title "CalendarApp integration component" --depends-on S-001 --depends-on S-002 --depends-on S-003 \
     --goal "Wire all sub-components together with useState-managed CalendarStore and TodoStore." \
     --prompt-context "Create components/CalendarApp.tsx using useState, CalendarStore, TodoStore from lib. Update app/page.tsx to render CalendarApp." \
     > "$LOG_DIR/nextjs-story-add-S2-004.log" 2>&1
 
-  _sf="sprints/sprint-2/stories.json"
-  _tmp="$(mktemp)"
-  jq '
-    .stories = [.stories[] |
-      if   .id == "S-002" then .depends_on = ["S-001"]
-      elif .id == "S-003" then .depends_on = ["S-001"]
-      elif .id == "S-004" then .depends_on = ["S-001", "S-002", "S-003"]
-      else . end
-    ]
-  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 )
 
 # ── NextJS sprint-2 story.json definitions ─────────────────────────────────────
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-001"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-001/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-001 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -1514,7 +1488,7 @@ cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-001/story.json" <<'S
 STORYJSON
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-002"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-002/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-002 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -1586,7 +1560,7 @@ cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-002/story.json" <<'S
 STORYJSON
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-003"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-003/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-003 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -1658,7 +1632,7 @@ cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-003/story.json" <<'S
 STORYJSON
 
 mkdir -p "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-004"
-cat > "$NEXTJS_DIR/scripts/ralph/sprints/sprint-2/stories/S-004/story.json" <<'STORYJSON'
+(cd "$NEXTJS_DIR/scripts/ralph" && ./ralph-story.sh import-story S-004 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "nextjs-calendar",
@@ -1778,37 +1752,27 @@ mkdir -p "$ANGULAR_DIR/src/app/components/event-form"
     --prompt-context "Create src/app/components/calendar/calendar.component.ts standalone with Input events, Output removeEvent EventEmitter." \
     > "$LOG_DIR/angular-story-add-S2-001.log" 2>&1
 
-  ./ralph-story.sh add --title "TodoListComponent standalone" \
+  ./ralph-story.sh add --title "TodoListComponent standalone" --depends-on S-001 \
     --goal "Build a standalone Angular component rendering todo items with complete and delete outputs." \
     --prompt-context "Create src/app/components/todo-list/todo-list.component.ts standalone with Input todos, Output completeItem and deleteItem EventEmitters." \
     > "$LOG_DIR/angular-story-add-S2-002.log" 2>&1
 
-  ./ralph-story.sh add --title "EventFormComponent standalone" \
+  ./ralph-story.sh add --title "EventFormComponent standalone" --depends-on S-001 \
     --goal "Build a standalone Angular form component for adding new calendar events." \
     --prompt-context "Create src/app/components/event-form/event-form.component.ts standalone with eventTitle/eventDate properties, onSubmit() emitting addEvent EventEmitter." \
     > "$LOG_DIR/angular-story-add-S2-003.log" 2>&1
 
-  ./ralph-story.sh add --title "AppComponent orchestration with signals" \
+  ./ralph-story.sh add --title "AppComponent orchestration with signals" --depends-on S-001 --depends-on S-002 --depends-on S-003 \
     --goal "Update the main AppComponent to use Angular signals and orchestrate all sub-components." \
     --prompt-context "Update src/app/app.component.ts (or app.ts) to import CalendarComponent, TodoListComponent, EventFormComponent. Use signal<CalendarEvent[]> and signal<Todo[]> for reactive state." \
     > "$LOG_DIR/angular-story-add-S2-004.log" 2>&1
 
-  _sf="sprints/sprint-2/stories.json"
-  _tmp="$(mktemp)"
-  jq '
-    .stories = [.stories[] |
-      if   .id == "S-002" then .depends_on = ["S-001"]
-      elif .id == "S-003" then .depends_on = ["S-001"]
-      elif .id == "S-004" then .depends_on = ["S-001", "S-002", "S-003"]
-      else . end
-    ]
-  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
 )
 
 # ── Angular sprint-2 story.json definitions ────────────────────────────────────
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-001"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-001/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-001 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -1881,7 +1845,7 @@ cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-001/story.json" <<'
 STORYJSON
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-002"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-002/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-002 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -1954,7 +1918,7 @@ cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-002/story.json" <<'
 STORYJSON
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-003"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-003/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-003 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -2027,7 +1991,7 @@ cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-003/story.json" <<'
 STORYJSON
 
 mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-004"
-cat > "$ANGULAR_DIR/scripts/ralph/sprints/sprint-2/stories/S-004/story.json" <<'STORYJSON'
+(cd "$ANGULAR_DIR/scripts/ralph" && ./ralph-story.sh import-story S-004 -) <<'STORYJSON'
 {
   "version": 1,
   "project": "angular-calendar",
@@ -2397,19 +2361,8 @@ if [ "$total_tokens_all" -eq 0 ]; then
 else
   echo "  ALL: tokens=$total_tokens_all stories_completed=$total_stories_all"
 fi
-
-mkdir -p "$BENCH_DIR"
-mode_label="default"
-[ "$GENERATED" -eq 1 ] && mode_label="generated"
-status_label="pass"
-[ "$overall_exit" -eq 0 ] || status_label="fail"
-printf '%s\t%s\t%s\t%s\t%s\n' \
-  "$(date -Iseconds)" \
-  "$status_label" \
-  "$mode_label" \
-  "$total_tokens_all" \
-  "$total_stories_all" \
-  >>"$BENCH_FILE"
+benchmark_set_tokens "$total_tokens_all"
+benchmark_set_stories "$total_stories_all"
 
 # ── Generation mode note ───────────────────────────────────────────────────────
 

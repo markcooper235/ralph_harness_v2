@@ -20,8 +20,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=./assert.sh
 source "$SCRIPT_DIR/assert.sh"
+# shellcheck source=./lib/benchmark.sh
+source "$SCRIPT_DIR/lib/benchmark.sh"
 
 KEEP=0
+BENCH_FILE="$SCRIPT_DIR/.benchmarks/e2e-upgrade.tsv"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +39,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+benchmark_init "upgrade" "migration" "$BENCH_FILE"
 
 log()  { echo "[upgrade-smoke] $*"; }
 fail() { echo "[upgrade-smoke] FAIL: $*" >&2; exit 1; }
@@ -58,6 +63,9 @@ MAIN_REF="$(resolve_legacy_ref || true)"
 
 cleanup() {
   local code=$?
+  local status="pass"
+  [ "$code" -eq 0 ] || status="fail"
+  benchmark_append_row "$status"
   if [ "$KEEP" -eq 1 ] || [ "$code" -ne 0 ]; then
     echo "[upgrade-smoke] work dir retained: $WORK_DIR"
     return
@@ -635,4 +643,7 @@ if ! grep -q "Migrating legacy sprint: sprint-1" "$WORK_DIR/install-upgrade.log"
   fail "expected install --migrate-legacy to run migration automatically"
 fi
 
+benchmark_set_tokens 0
+benchmark_set_stories 0
+benchmark_set_notes "migration-validation"
 log "PASS: legacy upgrade migration auto-recovered every recovery path"

@@ -19,6 +19,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/assert.sh"
 # shellcheck source=./lib/token-parser.sh
 source "$SCRIPT_DIR/lib/token-parser.sh"
+# shellcheck source=./lib/benchmark.sh
+source "$SCRIPT_DIR/lib/benchmark.sh"
 
 CI_MODE=0
 KEEP_REPO=0
@@ -91,6 +93,10 @@ case "$APP_MODE" in
     ;;
 esac
 
+BENCH_MODE="$APP_MODE"
+[ "$WITH_LOOP" -eq 1 ] && BENCH_MODE="${APP_MODE}-loop"
+benchmark_init "sanity" "$BENCH_MODE" "$BENCH_FILE"
+
 WORK_DIR="$(mktemp -d /tmp/ralph-smoke-XXXXXX)"
 TMP_HOME="$WORK_DIR/home"
 TEST_REPO="$WORK_DIR/project"
@@ -98,6 +104,12 @@ mkdir -p "$TMP_HOME" "$TEST_REPO"
 
 cleanup() {
   local exit_code=$?
+  local status="pass"
+  [ "$exit_code" -eq 0 ] || status="fail"
+  if [ "${BENCHMARK_TOKENS:-0}" -eq 0 ]; then
+    benchmark_set_notes "tokens-unavailable"
+  fi
+  benchmark_append_row "$status"
 
   if [ "$KEEP_REPO" -eq 1 ]; then
     echo "Smoke temp repo retained: $TEST_REPO"
@@ -118,18 +130,6 @@ extract_story_complete_count_from_log() {
   local log_file="$1"
   [ -f "$log_file" ] || { echo 0; return 0; }
   awk '/=== Story .* COMPLETE ===/ { count += 1 } END { print count + 0 }' "$log_file"
-}
-
-append_benchmark_row() {
-  local status="$1"
-  mkdir -p "$BENCH_DIR"
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$(date -Iseconds)" \
-    "$status" \
-    "$APP_MODE" \
-    "$sprint_tokens" \
-    "$sprint_stories_completed" \
-    >>"$BENCH_FILE"
 }
 
 run_with_retries_logged() {
@@ -618,8 +618,7 @@ if [ "$WITH_LOOP" -eq 1 ]; then
       --prompt-context "$sprint_s003_context" \
       > "$WORK_DIR/story-add-S-003.log" 2>&1
 
-    mkdir -p "sprints/sprint-1/stories/S-001"
-    cat > "sprints/sprint-1/stories/S-001/story.json" <<STORYJSON
+    ./ralph-story.sh import-story S-001 - <<STORYJSON
 {
   "version": 1,
   "project": "smoke",
@@ -689,8 +688,7 @@ if [ "$WITH_LOOP" -eq 1 ]; then
 }
 STORYJSON
 
-    mkdir -p "sprints/sprint-1/stories/S-002"
-    cat > "sprints/sprint-1/stories/S-002/story.json" <<STORYJSON
+    ./ralph-story.sh import-story S-002 - <<STORYJSON
 {
   "version": 1,
   "project": "smoke",
@@ -760,9 +758,8 @@ STORYJSON
 }
 STORYJSON
 
-    mkdir -p "sprints/sprint-1/stories/S-003"
     if [ "$APP_MODE" = "ui" ]; then
-      cat > "sprints/sprint-1/stories/S-003/story.json" <<STORYJSON
+      ./ralph-story.sh import-story S-003 - <<STORYJSON
 {
   "version": 1,
   "project": "smoke",
@@ -833,7 +830,7 @@ STORYJSON
 }
 STORYJSON
     else
-      cat > "sprints/sprint-1/stories/S-003/story.json" <<STORYJSON
+      ./ralph-story.sh import-story S-003 - <<STORYJSON
 {
   "version": 1,
   "project": "smoke",
@@ -912,14 +909,10 @@ npm run build && npm run lint && npm test
 SPRSH
     chmod +x "ralph-sprint-test.sh"
 
-    ./ralph-story.sh start-next > "$WORK_DIR/story-start-S-001.log" 2>&1
+    ./ralph-story.sh health > "$WORK_DIR/story-health.log" 2>&1
     commit_framework_baseline "$SPRINT_REPO" "chore(smoke): pre-loop planning state (sprint)"
     sprint_loop_start_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
-    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop-S-001.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" ./ralph-task.sh
-    ./ralph-story.sh start-next > "$WORK_DIR/story-start-S-002.log" 2>&1
-    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop-S-002.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" ./ralph-task.sh
-    ./ralph-story.sh start-next > "$WORK_DIR/story-start-S-003.log" 2>&1
-    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop-S-003.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" ./ralph-task.sh
+    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" ./ralph.sh --max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure
     sprint_loop_end_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
 
     jq -e '.passes == true and .status == "done"' "sprints/sprint-1/stories/S-001/story.json" >/dev/null
@@ -968,13 +961,11 @@ SPRSH
   assert_contains "$WORK_DIR/story-add-S-001.log" "Added story: S-001"
   assert_contains "$WORK_DIR/story-add-S-002.log" "Added story: S-002"
   assert_contains "$WORK_DIR/story-add-S-003.log" "Added story: S-003"
-  assert_contains "$WORK_DIR/story-start-S-001.log" "Started story: S-001"
-  assert_contains "$WORK_DIR/story-start-S-002.log" "Started story: S-002"
-  assert_contains "$WORK_DIR/story-start-S-003.log" "Started story: S-003"
-  assert_contains "$WORK_DIR/loop-S-001.log" "Story S-001 COMPLETE"
-  assert_contains "$WORK_DIR/loop-S-002.log" "Story S-002 COMPLETE"
-  assert_contains "$WORK_DIR/loop-S-003.log" "Story S-003 COMPLETE"
-  assert_not_contains "$WORK_DIR/loop-S-001.log" "node: bad option: --runInBand"
+  assert_contains "$WORK_DIR/story-health.log" "\\[S-001\\]"
+  assert_contains "$WORK_DIR/loop.log" "Story S-001 COMPLETE"
+  assert_contains "$WORK_DIR/loop.log" "Story S-002 COMPLETE"
+  assert_contains "$WORK_DIR/loop.log" "Story S-003 COMPLETE"
+  assert_not_contains "$WORK_DIR/loop.log" "node: bad option: --runInBand"
   if [ "$APP_MODE" = "ui" ]; then
     assert_contains "$WORK_DIR/runtime-sprint.log" "browser ok: $sprint_expected_msg"
   else
@@ -984,19 +975,16 @@ SPRSH
   assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint regression: PASS"
   assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Deleted source sprint branch:"
 
-  sprint_tokens="$(extract_tokens_from_log "$WORK_DIR/loop-S-001.log")"
-  sprint_tokens=$((sprint_tokens + $(extract_tokens_from_log "$WORK_DIR/loop-S-002.log")))
-  sprint_tokens=$((sprint_tokens + $(extract_tokens_from_log "$WORK_DIR/loop-S-003.log")))
-  sprint_stories_completed="$(extract_story_complete_count_from_log "$WORK_DIR/loop-S-001.log")"
-  sprint_stories_completed=$((sprint_stories_completed + $(extract_story_complete_count_from_log "$WORK_DIR/loop-S-002.log")))
-  sprint_stories_completed=$((sprint_stories_completed + $(extract_story_complete_count_from_log "$WORK_DIR/loop-S-003.log")))
+  sprint_tokens="$(extract_tokens_from_log "$WORK_DIR/loop.log")"
+  sprint_stories_completed="$(extract_story_complete_count_from_log "$WORK_DIR/loop.log")"
+  benchmark_set_tokens "$sprint_tokens"
+  benchmark_set_stories "$sprint_stories_completed"
 
   if [ "$sprint_tokens" -eq 0 ]; then
     echo "[smoke] token summary: unavailable (no 'tokens used' markers in codex output)"
   else
     echo "[smoke] token summary: app_mode=$APP_MODE sprint=$sprint_tokens stories_completed=$sprint_stories_completed"
   fi
-  append_benchmark_row "pass"
 fi
 
 

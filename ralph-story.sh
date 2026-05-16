@@ -170,7 +170,13 @@ normalize_story_container() {
   local tmp
   tmp="$(mktemp)"
   jq '
-    (.tasks // []) |= (
+    (.tasks // []) |= map(
+      .depends_on =
+        (if (.depends_on | type) == "array" then .depends_on
+         elif (.depends_on | type) == "string" then [ .depends_on ]
+         else [] end)
+    )
+    | (.tasks // []) |= (
       . as $all
       | reduce range(length) as $_ (
           { rem: $all, done: [] };
@@ -178,8 +184,7 @@ normalize_story_container() {
           | (
               .rem
               | map(select(
-                  (.depends_on // []) | length == 0
-                  or all(.[] as $d | $placed | any(. == $d))
+                  (.depends_on // []) | all(.[]; . as $d | $placed | index($d) != null)
                 ))
               | sort_by(
                   if   (.id    | test("final$"))

@@ -19,6 +19,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/assert.sh"
 # shellcheck source=./lib/token-parser.sh
 source "$SCRIPT_DIR/lib/token-parser.sh"
+# shellcheck source=./lib/benchmark.sh
+source "$SCRIPT_DIR/lib/benchmark.sh"
 
 KEEP_REPO=0
 WORK_DIR="$(mktemp -d /tmp/ralph-worst-ui-XXXXXX)"
@@ -32,6 +34,12 @@ CODEX_BIN_VALUE="codex"
 
 cleanup() {
   local exit_code=$?
+  local status="pass"
+  [ "$exit_code" -eq 0 ] || status="fail"
+  if [ "${BENCHMARK_TOKENS:-0}" -eq 0 ]; then
+    benchmark_set_notes "tokens-unavailable"
+  fi
+  benchmark_append_row "$status"
   if [ "$KEEP_REPO" -eq 1 ] || [ "$exit_code" -ne 0 ]; then
     echo "[worst-ui] retained temp repo: $TEST_REPO"
     return
@@ -66,22 +74,12 @@ EOF
 done
 
 mkdir -p "$TMP_HOME" "$TEST_REPO"
+benchmark_init "worst-case-ui" "ui" "$BENCH_FILE"
 
 extract_story_complete_count_from_log() {
   local log_file="$1"
   [ -f "$log_file" ] || { echo 0; return 0; }
   awk '/=== Story .* COMPLETE ===/ { count += 1 } END { print count + 0 }' "$log_file"
-}
-
-append_benchmark_row() {
-  local status="$1"
-  mkdir -p "$BENCH_DIR"
-  printf '%s\t%s\t%s\t%s\n' \
-    "$(date -Iseconds)" \
-    "$status" \
-    "$loop_tokens" \
-    "$stories_completed" \
-    >>"$BENCH_FILE"
 }
 
 commit_framework_baseline() {
@@ -435,11 +433,11 @@ expected_state="ready"
   ./ralph-story.sh add \
     --title "Add comprehensive Playwright UI test suite and verify" \
     --goal "Create a Playwright test suite in tests/ui.spec.mjs, build, and run full browser verification." \
+    --depends-on S-002 \
     --prompt-context "Create tests/ui.spec.mjs using Playwright chromium with a local HTTP server. Assert at least 6 things including #app text, #status text, data-state attr, #cta text, title attr, and that cta is a button. Then build and run browser:check." \
     > "$WORK_DIR/story-add-S-003.log" 2>&1
 
-  mkdir -p "sprints/sprint-1/stories/S-001"
-  cat > "sprints/sprint-1/stories/S-001/story.json" <<STORYJSON
+  ./ralph-story.sh import-story S-001 - <<STORYJSON
 {
   "version": 1,
   "project": "smoke",
@@ -513,8 +511,7 @@ expected_state="ready"
 }
 STORYJSON
 
-  mkdir -p "sprints/sprint-1/stories/S-002"
-  cat > "sprints/sprint-1/stories/S-002/story.json" <<STORYJSON
+  ./ralph-story.sh import-story S-002 - <<STORYJSON
 {
   "version": 1,
   "project": "smoke",
@@ -586,8 +583,7 @@ STORYJSON
 }
 STORYJSON
 
-  mkdir -p "sprints/sprint-1/stories/S-003"
-  cat > "sprints/sprint-1/stories/S-003/story.json" <<STORYJSON
+  ./ralph-story.sh import-story S-003 - <<STORYJSON
 {
   "version": 1,
   "project": "smoke",
@@ -670,15 +666,11 @@ npm run build && npm run lint && npm test && npm run -s browser:check -- '$expec
 SPRSH
   chmod +x "ralph-sprint-test.sh"
 
-  ./ralph-story.sh start-next > "$WORK_DIR/story-start-S-001.log" 2>&1
+  ./ralph-story.sh health > "$WORK_DIR/story-health.log" 2>&1
   ./ralph-sprint.sh status > "$WORK_DIR/status-sprint-preloop.log" 2>&1 || true
   commit_framework_baseline "$SPRINT_REPO" "chore(worst-ui): pre-loop planning state"
   sprint_loop_start_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
-  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop-S-001.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" ./ralph-task.sh
-  ./ralph-story.sh start-next > "$WORK_DIR/story-start-S-002.log" 2>&1
-  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop-S-002.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" ./ralph-task.sh
-  ./ralph-story.sh start-next > "$WORK_DIR/story-start-S-003.log" 2>&1
-  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop-S-003.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" ./ralph-task.sh
+  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" ./ralph.sh --max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure
   sprint_loop_end_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
 
   jq -e '.passes == true and .status == "done"' "sprints/sprint-1/stories/S-001/story.json" >/dev/null
@@ -711,12 +703,10 @@ assert_contains "$WORK_DIR/sprint-create-sprint.log" "Created sprint: sprint-1"
 assert_contains "$WORK_DIR/story-add-S-001.log" "Added story: S-001"
 assert_contains "$WORK_DIR/story-add-S-002.log" "Added story: S-002"
 assert_contains "$WORK_DIR/story-add-S-003.log" "Added story: S-003"
-assert_contains "$WORK_DIR/story-start-S-001.log" "Started story: S-001"
-assert_contains "$WORK_DIR/story-start-S-002.log" "Started story: S-002"
-assert_contains "$WORK_DIR/story-start-S-003.log" "Started story: S-003"
-assert_contains "$WORK_DIR/loop-S-001.log" "Story S-001 COMPLETE"
-assert_contains "$WORK_DIR/loop-S-002.log" "Story S-002 COMPLETE"
-assert_contains "$WORK_DIR/loop-S-003.log" "Story S-003 COMPLETE"
+assert_contains "$WORK_DIR/story-health.log" "\\[S-001\\]"
+assert_contains "$WORK_DIR/loop.log" "Story S-001 COMPLETE"
+assert_contains "$WORK_DIR/loop.log" "Story S-002 COMPLETE"
+assert_contains "$WORK_DIR/loop.log" "Story S-003 COMPLETE"
 assert_contains "$WORK_DIR/test-sprint.log" "test ok"
 assert_contains "$WORK_DIR/runtime-sprint.log" "browser ok: $expected_headline \| $expected_status \| $expected_cta \| $expected_state"
 assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint regression: PASS"
@@ -729,14 +719,11 @@ echo "[worst-ui] running ralph-verify --full post-commit"
 )
 assert_contains "$WORK_DIR/verify-full.log" "full verification passed"
 
-loop_tokens="$(extract_tokens_from_log "$WORK_DIR/loop-S-001.log")"
-loop_tokens=$((loop_tokens + $(extract_tokens_from_log "$WORK_DIR/loop-S-002.log")))
-loop_tokens=$((loop_tokens + $(extract_tokens_from_log "$WORK_DIR/loop-S-003.log")))
-stories_completed="$(extract_story_complete_count_from_log "$WORK_DIR/loop-S-001.log")"
-stories_completed=$((stories_completed + $(extract_story_complete_count_from_log "$WORK_DIR/loop-S-002.log")))
-stories_completed=$((stories_completed + $(extract_story_complete_count_from_log "$WORK_DIR/loop-S-003.log")))
+loop_tokens="$(extract_tokens_from_log "$WORK_DIR/loop.log")"
+stories_completed="$(extract_story_complete_count_from_log "$WORK_DIR/loop.log")"
+benchmark_set_tokens "$loop_tokens"
+benchmark_set_stories "$stories_completed"
 
 echo "[worst-ui] token summary: loop=$loop_tokens total=$loop_tokens"
 echo "[worst-ui] stories completed: $stories_completed"
-append_benchmark_row "pass"
 echo "[worst-ui] PASS: worst-case UI smoke completed"

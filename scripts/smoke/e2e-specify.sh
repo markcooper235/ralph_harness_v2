@@ -54,6 +54,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/assert.sh"
 # shellcheck source=./lib/token-parser.sh
 source "$SCRIPT_DIR/lib/token-parser.sh"
+# shellcheck source=./lib/benchmark.sh
+source "$SCRIPT_DIR/lib/benchmark.sh"
 
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/e2e-specify.tsv"
@@ -90,6 +92,12 @@ PROJ_DIR="$WORK_DIR/nextjs-phone-validator"
 
 cleanup() {
   local code=$?
+  local status="pass"
+  [ "$code" -eq 0 ] || status="fail"
+  if [ "${BENCHMARK_TOKENS:-0}" -eq 0 ]; then
+    benchmark_set_notes "tokens-unavailable"
+  fi
+  benchmark_append_row "$status"
   if [ "$KEEP" -eq 1 ] || [ "$code" -ne 0 ]; then
     echo ""
     echo "[smoke] work dir retained for inspection: $WORK_DIR"
@@ -100,6 +108,7 @@ cleanup() {
   rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
+benchmark_init "specify" "specify-pipeline" "$BENCH_FILE"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -496,28 +505,17 @@ log "=== Creating sprint and stories ==="
   ./ralph-story.sh add \
     --title "PhoneInput React component" \
     --goal "Build a controlled PhoneInput React component in components/PhoneInput.tsx that validates input in real time using PhoneValidatorService." \
+    --depends-on S-001 \
     --prompt-context "Create components/PhoneInput.tsx. Add 'use client' directive at the top. Props: value: string, onChange: (v: string) => void, onValidationChange?: (valid: boolean) => void. Render: an <input data-testid='phone-input'> for the phone number, a <span data-testid='validation-message'> showing 'Valid' or 'Invalid', and a <button data-testid='clear-button'> that calls onChange(''). Import PhoneValidatorService from '../lib/phone-validator'. Add @testing-library/react tests in __tests__/PhoneInput.test.tsx with @jest-environment jsdom." \
     > "$LOG_DIR/story-add-S-002.log" 2>&1
 
   ./ralph-story.sh add \
     --title "BatchValidator and app integration" \
     --goal "Implement a BatchValidator class in lib/batch-validator.ts and integrate the PhoneInput component into app/page.tsx." \
+    --depends-on S-001 \
+    --depends-on S-002 \
     --prompt-context "Create lib/batch-validator.ts. Export interface BatchResult { valid: string[]; invalid: string[]; summary: string }. Export class BatchValidator with method validateAll(phones: string[]): BatchResult — uses PhoneValidatorService.isValidFormat. Update app/page.tsx to import and render the PhoneInput component with useState for the phone value. Add integration tests in __tests__/batch-validator.test.ts." \
     > "$LOG_DIR/story-add-S-003.log" 2>&1
-
-  # Patch story-level depends_on into stories.json.
-  # ralph-story.sh add does not yet accept --depends-on (known framework gap).
-  _sf="sprints/sprint-1/stories.json"
-  _tmp="$(mktemp)"
-  jq '
-    .stories = [.stories[] |
-      if   .id == "S-002" then .depends_on = ["S-001"]
-      elif .id == "S-003" then .depends_on = ["S-001", "S-002"]
-      else . end
-    ]
-  ' "$_sf" > "$_tmp" && mv "$_tmp" "$_sf"
-
-  log "  stories.json patched with depends_on"
 ) || fail "Sprint and story setup failed"
 
 _cur_branch="$(git -C "$PROJ_DIR" rev-parse --abbrev-ref HEAD)"
@@ -551,12 +549,10 @@ for sid in S-001 S-002 S-003; do
   if [ -n "$REUSE_DIR" ] \
       && [ -f "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/.specify/spec.md" ] \
       && [ -f "$_sf" ]; then
-    # --reuse-dir: artifacts already exist — validate and normalize only
+    # --reuse-dir: artifacts already exist — validate only
     log "  [$sid] Reusing existing specify+generate artifacts"
     validate_specify_artifacts "$sid"
     log "  [$sid] specify PASS (reused)"
-    normalize_story_checks "$sid"
-    reorder_story_tasks "$sid"
     validate_story_json "$sid"
     log "  [$sid] generate PASS (reused)"
     continue
@@ -585,25 +581,12 @@ for sid in S-001 S-002 S-003; do
       || fail "generate $sid failed — see $glog"
   fi
 
-  # Normalize rg checks (rg primary, grep -E fallback) and reorder tasks
-  normalize_story_checks "$sid"
-  reorder_story_tasks "$sid"
-
   # STEP 9: validate story.json immediately
   validate_story_json "$sid"
   log "  [$sid] generate PASS"
 done
 
 log "  All stories: specify + generate complete"
-
-# Commit any normalize/reorder changes to story.json so the working tree is
-# clean before the lifecycle reset and ralph.sh's uncommitted-change check.
-(
-  cd "$PROJ_DIR/scripts/ralph"
-  git add sprints/sprint-1/stories/
-  git diff --cached --quiet \
-    || git commit -m "chore(ralph): normalize and reorder story.json checks" --quiet
-)
 
 # Reset sprint to "planned" now that specify+generate are done (both require
 # an active sprint to resolve stories.json). We keep .active-sprint in place
@@ -612,15 +595,12 @@ log "  All stories: specify + generate complete"
 # so that 'ralph-sprint.sh use' can complete the planned→ready→active path.
 (
   cd "$PROJ_DIR/scripts/ralph"
-  _tmp="$(mktemp)"
-  jq '.status = "planned"' sprints/sprint-1/stories.json > "$_tmp" \
-    && mv "$_tmp" sprints/sprint-1/stories.json
-  # .active-sprint stays — prepare-all needs it to resolve the sprint
+  ./ralph-sprint.sh restage sprint-1
   git add sprints/sprint-1/stories.json
   git diff --cached --quiet \
-    || git commit -m "chore(ralph): reset sprint to planned for lifecycle test" --quiet
+    || git commit -m "chore(ralph): restage sprint for lifecycle test" --quiet
 )
-log "  Sprint status reset to 'planned' for lifecycle coverage (.active-sprint retained for prepare-all)"
+log "  Sprint restaged to 'planned' for lifecycle coverage"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 10: prepare-all — validate stories and promote to ready
@@ -650,10 +630,6 @@ log "  prepare-all PASS"
 # ─────────────────────────────────────────────────────────────────────────────
 
 log "=== Activating sprint via 'ralph-sprint.sh use' (lifecycle test) ==="
-# Remove .active-sprint so 'ralph-sprint.sh use' can activate the sprint cleanly
-# (use requires: sprint status="ready" AND no currently active sprint).
-rm -f "$PROJ_DIR/scripts/ralph/.active-sprint"
-log "  .active-sprint removed — 'use' will re-create it"
 ulog="$LOG_DIR/sprint-use.log"
 if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-sprint.sh use sprint-1) > "$ulog" 2>&1; then
   cat "$ulog" >&2
@@ -845,6 +821,8 @@ stories_completed=0
 if [ -f "$sprint_log" ]; then
   stories_completed="$(awk '/=== Story .* COMPLETE ===/ { c += 1 } END { print c + 0 }' "$sprint_log")"
 fi
+benchmark_set_tokens "$total_tokens"
+benchmark_set_stories "$stories_completed"
 
 echo ""
 echo "── efficiency metrics ────────────────────────────────────────"
@@ -854,19 +832,6 @@ else
   echo "  tokens: specify=$specify_tokens generate=$generate_tokens sprint=$sprint_tokens total=$total_tokens"
 fi
 echo "  stories completed: $stories_completed"
-
-mkdir -p "$BENCH_DIR"
-status_label="pass"
-[ "$overall_exit" -eq 0 ] || status_label="fail"
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$(date -Iseconds)" \
-  "$status_label" \
-  "$specify_tokens" \
-  "$generate_tokens" \
-  "$sprint_tokens" \
-  "$total_tokens" \
-  "$stories_completed" \
-  >>"$BENCH_FILE"
 
 if [ "$overall_exit" -eq 0 ]; then
   log "PASS — SpecKit pipeline completed end-to-end successfully"
