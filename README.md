@@ -322,15 +322,15 @@ Each project runs the full lifecycle:
 
 ```
 install.sh → doctor.sh → ralph-sprint.sh create → ralph-story.sh add →
-story.json (hand-written or --generated) → ralph-story.sh health →
-ralph.sh → ralph-status.sh → ralph-sprint-commit.sh →
+story.json (framework-imported or --generated) → ralph-story.sh prepare-all →
+ralph-sprint.sh use → ralph.sh → ralph-status.sh → ralph-sprint-commit.sh →
 [sprint 2 setup] → ralph.sh → ralph-sprint-commit.sh → ralph-verify.sh
 ```
 
 Sprint 2 is skipped for a project if sprint 1 did not commit successfully.
 
 ```bash
-# Basic run (hand-written story.json files, uses real Codex)
+# Basic run (framework-imported story.json files, uses real Codex)
 bash scripts/smoke/e2e-calendar.sh
 
 # Keep work directory after run (always kept on failure)
@@ -339,7 +339,7 @@ bash scripts/smoke/e2e-calendar.sh --keep
 # Override per-task retry count
 bash scripts/smoke/e2e-calendar.sh --max-retries 3
 
-# Use ralph-story.sh generate for story.json instead of hand-written files
+# Use ralph-story.sh generate for story.json instead of framework-imported files
 # Exercises the full story generation pipeline; adds ~8 Codex sessions
 bash scripts/smoke/e2e-calendar.sh --generated
 ```

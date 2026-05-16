@@ -30,7 +30,7 @@ BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/worst-case-ui.tsv"
 LOOP_RETRY_MAX="${LOOP_RETRY_MAX:-2}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-8}"
-CODEX_BIN_VALUE="codex"
+CODEX_BIN_VALUE="${CODEX_BIN:-codex}"
 
 cleanup() {
   local exit_code=$?

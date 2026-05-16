@@ -11,7 +11,7 @@
 # Pipeline under test:
 #   install.sh → doctor.sh → ralph-sprint.sh create → ralph-story.sh add →
 #   [per story, dep order]: specify (--no-generate) → validate .specify/ →
-#     generate → normalize/reorder checks → validate story.json →
+#     generate → validate story.json →
 #   ralph-story.sh prepare-all (planned→ready) →
 #   ralph-sprint.sh use (ready→active, lifecycle coverage) →
 #   ralph.sh → ralph-sprint-commit.sh → ralph-verify.sh --full
@@ -59,6 +59,7 @@ source "$SCRIPT_DIR/lib/benchmark.sh"
 
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/e2e-specify.tsv"
+CODEX_BIN_VALUE="${CODEX_BIN:-codex}"
 
 KEEP=0
 MAX_RETRIES=2
@@ -169,7 +170,7 @@ ensure_specify() {
 doctor_check() {
   local dlog="$LOG_DIR/doctor.log"
   log "  Running doctor.sh..."
-  if (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex ./doctor.sh) > "$dlog" 2>&1; then
+  if (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$CODEX_BIN_VALUE" ./doctor.sh) > "$dlog" 2>&1; then
     log "  doctor.sh PASS"
   else
     cat "$dlog" >&2
@@ -535,8 +536,7 @@ fi  # end: fresh run vs --reuse-dir
 # as prior-story context. Running all specifies first (--no-generate) silently
 # drops that context because story.json is absent at specify time (Bug 5).
 #
-# Per-story flow: specify → validate artifacts → generate → normalize/reorder
-#                 checks → validate story.json
+# Per-story flow: specify → validate artifacts → generate → validate story.json
 # ─────────────────────────────────────────────────────────────────────────────
 
 log "=== SpecKit specify + generate per story (dependency order) ==="
@@ -573,10 +573,10 @@ for sid in S-001 S-002 S-003; do
   # STEP 8: generate story.json — makes this story's context available to the
   # next story's specify call (dep-context fix for Bug 5)
   log "  [$sid] Generating story.json..."
-  if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex \
+  if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$CODEX_BIN_VALUE" \
         ./ralph-story.sh generate "$sid") >> "$glog" 2>&1; then
     log "  [$sid] Retrying generate..."
-    (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN=codex \
+    (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$CODEX_BIN_VALUE" \
       ./ralph-story.sh generate "$sid" --force) >> "$glog" 2>&1 \
       || fail "generate $sid failed — see $glog"
   fi
@@ -588,11 +588,8 @@ done
 
 log "  All stories: specify + generate complete"
 
-# Reset sprint to "planned" now that specify+generate are done (both require
-# an active sprint to resolve stories.json). We keep .active-sprint in place
-# so prepare-all (which also calls specify-all/generate-all) can still resolve
-# stories.json. After prepare-all promotes to "ready" we remove .active-sprint
-# so that 'ralph-sprint.sh use' can complete the planned→ready→active path.
+# Restage sprint to "planned" now that specify+generate are done so
+# prepare-all and sprint activation exercise the full planned→ready→active path.
 (
   cd "$PROJ_DIR/scripts/ralph"
   ./ralph-sprint.sh restage sprint-1
@@ -655,7 +652,7 @@ sprint_log="$LOG_DIR/sprint-1.log"
 _run_sprint() {
   (
     cd "$PROJ_DIR/scripts/ralph"
-    timeout 2700 env CODEX_BIN=codex \
+    timeout 2700 env CODEX_BIN="$CODEX_BIN_VALUE" \
       ./ralph.sh --max-retries "$MAX_RETRIES" --continue-on-failure \
       2>&1
   ) | tee "$sprint_log"

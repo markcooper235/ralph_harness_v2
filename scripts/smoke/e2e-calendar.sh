@@ -13,8 +13,8 @@
 #
 # Full lifecycle under test:
 #   install.sh → doctor.sh → ralph-sprint.sh create → ralph-story.sh add →
-#   (story.json: hand-written default | Codex-generated --generated) →
-#   ralph-story.sh health → ralph.sh → ralph-status.sh →
+#   (story.json: framework-imported default | Codex-generated --generated) →
+#   ralph-story.sh prepare-all → ralph-sprint.sh use → ralph.sh → ralph-status.sh →
 #   ralph-sprint-commit.sh → [sprint 2 setup] → ralph.sh → ralph-sprint-commit.sh →
 #   ralph-verify.sh
 #
@@ -42,10 +42,6 @@
 #                   hand-written files — exercises the full story generation
 #                   pipeline (adds ~8 Codex sessions total)
 #
-# NOTE: story-level depends_on is patched into stories.json via jq after
-# ralph-story.sh add, because add does not yet accept --depends-on.
-# This is a known framework gap.
-
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:$PATH"
@@ -69,6 +65,7 @@ source "$SCRIPT_DIR/lib/benchmark.sh"
 
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/e2e-calendar.tsv"
+CODEX_BIN_VALUE="${CODEX_BIN:-codex}"
 
 KEEP=0
 MAX_RETRIES=2
@@ -146,7 +143,7 @@ doctor_check() {
   local proj_label="$2"
   local dlog="$LOG_DIR/${proj_label}-doctor.log"
   log "  Running doctor.sh..."
-  if (cd "$proj_dir/scripts/ralph" && CODEX_BIN=codex ./doctor.sh) > "$dlog" 2>&1; then
+  if (cd "$proj_dir/scripts/ralph" && CODEX_BIN="$CODEX_BIN_VALUE" ./doctor.sh) > "$dlog" 2>&1; then
     log "  doctor.sh PASS"
   elif grep -q "specify.*CLI not found\|specify.*not found" "$dlog" 2>/dev/null; then
     log "  doctor.sh WARN: specify CLI not available (expected — not used in smoke test)"
@@ -174,7 +171,7 @@ generate_stories() {
   for sid in "${sids[@]}"; do
     local glog="$LOG_DIR/${proj_label}-generate-${sid}.log"
     glogs+=("$glog")
-    ( cd "$ralph_dir" && CODEX_BIN=codex ./ralph-story.sh generate "$sid" ) \
+    ( cd "$ralph_dir" && CODEX_BIN="$CODEX_BIN_VALUE" ./ralph-story.sh generate "$sid" ) \
       > "$glog" 2>&1 &
     pids+=($!)
   done
@@ -360,7 +357,7 @@ run_sprint() {
   log "Running $sprint for $proj_label..."
   (
     cd "$proj_dir/scripts/ralph"
-    timeout 2700 env CODEX_BIN=codex \
+    timeout 2700 env CODEX_BIN="$CODEX_BIN_VALUE" \
       ./ralph.sh --max-retries "$MAX_RETRIES" --continue-on-failure \
       2>&1
   ) | tee "$log_file"
@@ -2371,7 +2368,7 @@ if [ "$GENERATED" -eq 1 ]; then
   echo "  Mode: --generated (sprint-1 story.json files produced by ralph-story.sh generate)"
 else
   echo ""
-  echo "  Mode: default (hand-written story.json task plans)"
+  echo "  Mode: default (framework-imported story.json task plans)"
 fi
 
 echo ""
