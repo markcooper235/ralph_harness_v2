@@ -20,10 +20,11 @@ Usage: ./scripts/ralph/ralph-sprint.sh <command> [args]
 
 Commands:
   list                              List available sprints
-  create <sprint-name>              Create sprint structure and stories.json scaffold
+  create <sprint-name> [--no-activate]  Create sprint structure and stories.json scaffold
   remove <sprint-name> [options]    Remove sprint (archive by default)
   use <sprint-name>                 Activate sprint (requires status=ready, previous=closed)
   mark-ready <sprint-name>          Mark sprint ready for activation (all stories must be ready)
+  restage <sprint-name>             Reset sprint + story statuses to planned for lifecycle reruns
   next [--activate]                 Show the next ready sprint, optionally activate it
   branch <sprint-name>              Ensure sprint branch exists (ralph/sprint/<sprint-name>)
   status                            Show active sprint + story readiness
@@ -420,17 +421,31 @@ readiness_status() {
 # ---------------------------------------------------------------------------
 
 cmd_create() {
-  local sprint
+  local sprint no_activate
 
-  [ $# -eq 1 ] || fail "Usage: create <sprint-name>"
+  [ $# -ge 1 ] || fail "Usage: create <sprint-name> [--no-activate]"
   sprint="$(normalize_sprint_name "$1")"
   [ -n "$sprint" ] || fail "Invalid sprint name."
+  shift || true
+  no_activate=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-activate) no_activate=1 ;;
+      *) fail "Unknown create option: $1" ;;
+    esac
+    shift
+  done
 
   ensure_sprint_structure "$sprint"
+  echo "Created sprint: $sprint"
+  if [ "$no_activate" -eq 1 ]; then
+    echo "Sprint remains planned."
+    return 0
+  fi
+
   set_sprint_status "$sprint" "active"
   ensure_sprint_branch_exists "$sprint"
   set_active_sprint "$sprint"
-  echo "Created sprint: $sprint"
   echo "Active sprint set to: $sprint"
   checkout_sprint_branch "$sprint"
   echo ""
@@ -473,6 +488,34 @@ cmd_mark_ready() {
   set_sprint_status "$sprint" "ready"
   echo "Sprint '$sprint' marked ready."
   echo "To activate: ./ralph-sprint.sh use $sprint"
+}
+
+cmd_restage() {
+  local sprint
+
+  [ $# -eq 1 ] || fail "Usage: restage <sprint-name>"
+  sprint="$(normalize_sprint_name "$1")"
+  [ -n "$sprint" ] || fail "Invalid sprint name."
+
+  local sf tmp
+  sf="$(sprint_stories_file "$sprint")"
+  [ -f "$sf" ] || fail "Sprint does not exist: $sprint"
+
+  tmp="$(mktemp)"
+  jq '
+    .status = "planned"
+    | .activeStoryId = null
+    | .stories |= map(
+        if (.status == "done" or .status == "abandoned" or .status == "blocked") then
+          .
+        else
+          .status = "planned" | .passes = false
+        end
+      )
+  ' "$sf" > "$tmp"
+  mv "$tmp" "$sf"
+
+  echo "Sprint '$sprint' restaged to planned."
 }
 
 # ---------------------------------------------------------------------------
@@ -612,6 +655,10 @@ main() {
     mark-ready)
       shift
       cmd_mark_ready "$@"
+      ;;
+    restage)
+      shift
+      cmd_restage "$@"
       ;;
     next)
       shift

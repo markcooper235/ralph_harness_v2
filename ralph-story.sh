@@ -75,6 +75,7 @@ Commands:
   generate-all [--force] [--jobs N] Generate story.json for all stories with SpecKit artifacts
   prepare-all [--force] [--jobs N]  specify-all + generate-all + health + promote to ready
   import-prd [PATH]          Import prd.json userStories into sprint backlog
+  import-story <ID> <PATH|-] Import a story.json via framework validation
   add [options]              Add a story non-interactively
 
 Eligibility for "next":
@@ -100,7 +101,7 @@ Add options:
   --priority N               Priority (default: next available)
   --effort N                 Effort: 1, 2, 3, or 5 (default: 3)
   --status STATUS            planned|ready (default: planned)
-  --depends-on IDS           Comma-separated dependency IDs
+  --depends-on IDS           Comma-separated dependency IDs (repeatable)
   --prompt-context TEXT      Planning context for story generation
   --goal TEXT                Story goal description
 EOF
@@ -130,6 +131,116 @@ resolve_repo_relative_path() {
   else
     printf '%s\n' "$raw_path"
   fi
+}
+
+story_exists_in_backlog() {
+  local story_id="$1"
+  jq -e --arg id "$story_id" '.stories[] | select(.id == $id)' "$STORIES_FILE" >/dev/null 2>&1
+}
+
+parse_depends_on_args() {
+  local story_id="${1:-}"
+  shift || true
+  local values=()
+  local raw dep
+  for raw in "$@"; do
+    [ -n "$raw" ] || continue
+    while IFS= read -r dep; do
+      dep="$(printf '%s' "$dep" | awk '{$1=$1;print}')"
+      [ -n "$dep" ] || continue
+      [ "$dep" != "$story_id" ] || fail "Story $story_id cannot depend on itself."
+      story_exists_in_backlog "$dep" || fail "Unknown dependency '$dep'. Add the story first."
+      values+=("$dep")
+    done < <(printf '%s\n' "$raw" | tr ',' '\n')
+  done
+
+  if [ "${#values[@]}" -eq 0 ]; then
+    printf '[]\n'
+    return 0
+  fi
+
+  printf '%s\n' "${values[@]}" \
+    | awk 'NF && !seen[$0]++' \
+    | jq -R . \
+    | jq -s .
+}
+
+normalize_story_container() {
+  local story_path="$1"
+  local tmp
+  tmp="$(mktemp)"
+  jq '
+    (.tasks // []) |= (
+      . as $all
+      | reduce range(length) as $_ (
+          { rem: $all, done: [] };
+          (.done | map(.id)) as $placed
+          | (
+              .rem
+              | map(select(
+                  (.depends_on // []) | length == 0
+                  or all(.[] as $d | $placed | any(. == $d))
+                ))
+              | sort_by(
+                  if   (.id    | test("final$"))
+                    or (.title | test("(?i)regression|final"))              then 99
+                  elif (.title | test("(?i)test|spec"))                     then 20
+                  elif (.title | test("(?i)integrat|home.*page|page.*app")) then 10
+                  elif (.title | test("(?i)implement|create|build|librar")) then  5
+                  elif (.title | test("(?i)confirm|depend|prerequisit"))    then  0
+                  else 10 end
+                )
+              | .[0]
+            ) as $next
+          | if $next then
+              {
+                rem: (.rem | map(select(.id != $next.id))),
+                done: (.done + [
+                  ($next | .checks |= map(
+                    if type == "string" then
+                      (if test("^rg ") then
+                         gsub("\\\\(?<c>[^ntrfaebsvdDwWsSpPhH0-9\\\\/\"])"; .c)
+                       else . end)
+                      | (if test("^rg \"[^\"]+\" [^ ]+$") then
+                           capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$")
+                           | "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+                         elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
+                           capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$")
+                           | "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+                         else . end)
+                    else . end
+                  ))
+                ])
+              }
+            else .
+            end
+        )
+      | .done
+    )
+  ' "$story_path" > "$tmp"
+  mv "$tmp" "$story_path"
+}
+
+validate_story_container_file() {
+  local story_path="$1"
+  local expected_story_id="$2"
+  local expected_sprint="$3"
+
+  jq -e '.' "$story_path" >/dev/null 2>&1 || fail "Invalid JSON: $story_path"
+  jq -e --arg id "$expected_story_id" '.storyId == $id' "$story_path" >/dev/null 2>&1 \
+    || fail "Imported story.json storyId must be $expected_story_id"
+  jq -e --arg sprint "$expected_sprint" '.sprint == $sprint' "$story_path" >/dev/null 2>&1 \
+    || fail "Imported story.json sprint must be $expected_sprint"
+  jq -e '.tasks | type == "array" and length > 0' "$story_path" >/dev/null 2>&1 \
+    || fail "Imported story.json must contain tasks[]"
+  jq -e 'all(.tasks[]; (.checks | type) == "array" and (.checks | length) > 0)' "$story_path" >/dev/null 2>&1 \
+    || fail "Imported story.json has task(s) without checks"
+
+  local bad_check=0 check
+  while IFS= read -r check; do
+    bash -n <<< "$check" 2>/dev/null || bad_check=$((bad_check + 1))
+  done < <(jq -r '.tasks[].checks[]' "$story_path")
+  [ "$bad_check" -eq 0 ] || fail "Imported story.json contains shell-invalid checks"
 }
 
 story_is_unrecovered_migration_placeholder() {
@@ -1243,7 +1354,7 @@ cmd_add() {
   local new_priority=""
   local new_effort=3
   local new_status="planned"
-  local new_depends=""
+  local -a new_depends=()
   local new_goal=""
   local new_prompt_context=""
 
@@ -1254,7 +1365,7 @@ cmd_add() {
       --priority)       new_priority="${2:-}"; shift 2 ;;
       --effort)         new_effort="${2:-3}"; shift 2 ;;
       --status)         new_status="${2:-planned}"; shift 2 ;;
-      --depends-on)     new_depends="${2:-}"; shift 2 ;;
+      --depends-on)     new_depends+=("${2:-}"); shift 2 ;;
       --goal)           new_goal="${2:-}"; shift 2 ;;
       --prompt-context) new_prompt_context="${2:-}"; shift 2 ;;
       *) fail "Unknown add option: $1" ;;
@@ -1280,10 +1391,8 @@ cmd_add() {
   fi
 
   # Build depends_on array
-  local deps_json="[]"
-  if [ -n "$new_depends" ]; then
-    deps_json="$(echo "$new_depends" | tr ',' '\n' | jq -R . | jq -s .)"
-  fi
+  local deps_json
+  deps_json="$(parse_depends_on_args "$new_id" "${new_depends[@]}")"
 
   # Determine active sprint for story_path
   local active_sprint
@@ -1296,6 +1405,7 @@ cmd_add() {
   jq \
     --arg id "$new_id" \
     --arg title "$new_title" \
+    --arg sprint "$active_sprint" \
     --argjson priority "$new_priority" \
     --argjson effort "$new_effort" \
     --arg status "$new_status" \
@@ -1310,6 +1420,7 @@ cmd_add() {
       "effort": $effort,
       "planningSource": "local",
       "status": $status,
+      "sprint": $sprint,
       "depends_on": $depends,
       "story_path": $path,
       "goal": $goal,
@@ -1319,6 +1430,54 @@ cmd_add() {
   mv "$tmp" "$STORIES_FILE"
 
   echo "Added story: $new_id — $new_title"
+}
+
+cmd_import_story() {
+  local story_id="${1:-}"
+  local source_path="${2:-}"
+  [ -n "$story_id" ] && [ -n "$source_path" ] || fail "Usage: ralph-story.sh import-story <ID> <PATH|-> [--force]"
+  shift 2 || true
+  local force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      *) fail "Unknown import-story option: $1" ;;
+    esac
+  done
+
+  resolve_stories_file
+  story_exists_in_backlog "$story_id" || fail "Story $story_id not found in $STORIES_FILE"
+
+  local story_meta raw_path story_path_abs sprint expected_path tmp_input
+  story_meta="$(jq -r --arg id "$story_id" '.stories[] | select(.id == $id)' "$STORIES_FILE")"
+  raw_path="$(printf '%s' "$story_meta" | jq -r '.story_path // empty')"
+  sprint="$(printf '%s' "$story_meta" | jq -r '.sprint // empty')"
+  [ -n "$sprint" ] || sprint="$(jq -r '.sprint // empty' "$STORIES_FILE")"
+  [ -n "$raw_path" ] || fail "story_path not set for $story_id"
+  [ -n "$sprint" ] || fail "sprint not set for $story_id"
+  story_path_abs="$(resolve_repo_relative_path "$raw_path")"
+
+  if [ -f "$story_path_abs" ] && [ "$force" -ne 1 ]; then
+    fail "story.json already exists: $story_path_abs (use --force to overwrite)"
+  fi
+
+  mkdir -p "$(dirname "$story_path_abs")"
+  if [ "$source_path" = "-" ]; then
+    tmp_input="$(mktemp)"
+    cat > "$tmp_input"
+    source_path="$tmp_input"
+  fi
+  [ -f "$source_path" ] || fail "Import source not found: $source_path"
+
+  cp "$source_path" "$story_path_abs"
+  normalize_story_container "$story_path_abs"
+  validate_story_container_file "$story_path_abs" "$story_id" "$sprint"
+
+  if [ -n "${tmp_input:-}" ] && [ -f "$tmp_input" ]; then
+    rm -f "$tmp_input"
+  fi
+
+  echo "Imported story container for $story_id: $raw_path"
 }
 
 # ---------------------------------------------------------------------------
@@ -1557,6 +1716,8 @@ GENPROMPT
   if [ ! -f "$story_path_abs" ]; then
     fail "story.json was not written to: $story_path_abs"
   fi
+  normalize_story_container "$story_path_abs"
+  validate_story_container_file "$story_path_abs" "$story_id" "$sprint"
   if ! jq -e '.tasks | length > 0' "$story_path_abs" >/dev/null 2>&1; then
     fail "Generated story.json has no tasks: $story_path_abs"
   fi
@@ -2152,6 +2313,7 @@ case "$CMD" in
   health-all)   cmd_health_all ;;
   prepare-all)  cmd_prepare_all "$@" ;;
   import-prd)   cmd_import_prd "$@" ;;
+  import-story) cmd_import_story "$@" ;;
   add)          cmd_add "$@" ;;
   -h|--help|"") usage; exit 0 ;;
   *) fail "Unknown command: $CMD. Use --help for usage." ;;
