@@ -4,6 +4,7 @@ benchmark_init() {
   BENCHMARK_SCENARIO="$1"
   BENCHMARK_MODE="$2"
   BENCHMARK_FILE="$3"
+  BENCHMARK_SCHEMA_VERSION=2
   BENCHMARK_PLANNING_TOKENS=0
   BENCHMARK_EXECUTION_TOKENS=0
   BENCHMARK_REMEDIATION_TOKENS=0
@@ -105,7 +106,8 @@ benchmark_append_row() {
   fi
 
   mkdir -p "$(dirname "$file")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${BENCHMARK_SCHEMA_VERSION:-2}" \
     "$(date -Iseconds)" \
     "${BENCHMARK_SCENARIO:-unknown}" \
     "${BENCHMARK_MODE:-default}" \

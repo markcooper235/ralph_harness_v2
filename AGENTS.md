@@ -8,7 +8,7 @@ Keep this file focused on the broad operating model. Deeper framework notes, edg
 
 ## Architecture: Story-Task Model
 
-Ralph's execution unit is the **task** — a narrow, binary-checkable piece of work inside a **story**. Stories are sprint-level containers; sprints are the deployment unit.
+Ralph's primary execution unit is the **story**. Each story contains ordered **tasks** — narrow, binary-checkable pieces of work that Codex completes inside the same story cycle. Stories are sprint-level containers; sprints are the deployment unit.
 
 ```
 roadmap → stories.json (per sprint)

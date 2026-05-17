@@ -158,7 +158,7 @@ Sprint 2 is skipped for a project if sprint 1 did not commit successfully.
 **Flags:**
 
 - `--keep` — retain work directory after run (always retained on failure)
-- `--max-retries N` — per-task retry count (default: 2)
+- `--max-retries N` — targeted remediation cycle count after the primary story run (default: 2)
 - `--generated` — use `ralph-story.sh generate` for story.json instead of hand-written files; exercises the full story generation pipeline and adds ~8 Codex sessions
 
 **Running:**

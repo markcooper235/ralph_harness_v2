@@ -2,7 +2,7 @@
 
 ![Ralph](ralph.webp)
 
-Ralph is a Codex-native autonomous loop that executes sprint stories as sequences of focused, task-level Codex sessions. Planning artifacts are durable and committed; execution state stays transient.
+Ralph is a Codex-native autonomous loop that executes sprint stories as focused story-level Codex cycles. Planning artifacts are durable and committed; execution state stays transient.
 
 This repo is the Ralph-for-Codex framework — **story-task architecture**:
 
@@ -11,7 +11,7 @@ This repo is the Ralph-for-Codex framework — **story-task architecture**:
 - SpecKit integration produces specifications and implementation plans before execution
 - each story runs in one primary Codex session, with shell verification after the cycle
 - acceptance checks are validated by shell, not AI
-- merged story branches are cleaned up automatically after each task passes
+- merged story branches are cleaned up automatically after each story passes
 
 ## Table of Contents
 
@@ -336,7 +336,7 @@ bash scripts/smoke/e2e-calendar.sh
 # Keep work directory after run (always kept on failure)
 bash scripts/smoke/e2e-calendar.sh --keep
 
-# Override per-task retry count
+# Override targeted remediation cycle count
 bash scripts/smoke/e2e-calendar.sh --max-retries 3
 
 # Use ralph-story.sh generate for story.json instead of framework-imported files

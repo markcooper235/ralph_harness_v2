@@ -1,6 +1,6 @@
 # Ralph
 
-Ralph is a Codex-native autonomous loop that executes sprint stories as sequences of focused, task-level Codex sessions.
+Ralph is a Codex-native autonomous loop that executes sprint stories as focused story-level Codex cycles.
 
 This document is the installed reference for a Ralph-enabled project. For framework development notes, see the Ralph source repo.
 

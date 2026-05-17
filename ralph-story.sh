@@ -1078,7 +1078,7 @@ cmd_start_next() {
     [ -n "$dep_raw" ] || continue
     [[ "$dep_raw" != /* ]] && dep_abs="$WORKSPACE_ROOT/$dep_raw" || dep_abs="$dep_raw"
     [ -f "$dep_abs" ] || continue
-    dep_note="$(jq -r 'if (.story_handoff // null) != null then (((.story_handoff.files_touched // []) | join(", ")) + " | " + ((.story_handoff.contracts_added // []) | join(", "))) else (.done_note // "") end' "$dep_abs" 2>/dev/null || true)"
+    dep_note="$(jq -r 'if (.story_handoff // null) != null then (((.story_handoff.files_touched // []) | join(", ")) + " | " + ((.story_handoff.contracts_added // []) | join(", "))) else "" end' "$dep_abs" 2>/dev/null || true)"
     if [ -z "$dep_note" ]; then
       echo "WARN: Dependency $dep_id has no story_handoff — downstream context for this story will be thin."
     fi
@@ -1573,7 +1573,7 @@ cmd_generate() {
         "Contracts added: " + ((.story_handoff.contracts_added // []) | join(", ")) + "\n" +
         "Residual risks: " + ((.story_handoff.residual_risks // []) | join("; "))
       else
-        (.done_note // "")
+        ""
       end
     ' "$dep_abs_path" 2>/dev/null || true)"
     [ -n "$dep_note" ] || continue
@@ -1945,7 +1945,7 @@ cmd_specify() {
         "Contracts added: " + ((.story_handoff.contracts_added // []) | join(", ")) + "\n" +
         "Residual risks: " + ((.story_handoff.residual_risks // []) | join("; "))
       else
-        (.done_note // "")
+        ""
       end
     ' "$dep_abs_path" 2>/dev/null || true)"
     dep_entry=""

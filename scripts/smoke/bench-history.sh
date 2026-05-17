@@ -34,28 +34,36 @@ USAGE
 
 print_pretty_row() {
   local row="$1"
-  IFS=$'\t' read -r ts scenario mode status c5 c6 c7 c8 c9 c10 c11 c12 c13 <<< "$row"
+  local nf
+  nf="$(printf '%s' "$row" | awk -F '\t' '{print NF}')"
 
-  if [ -n "${c13:-}" ] || [ "$(printf '%s' "$row" | awk -F '\t' '{print NF}')" -ge 12 ]; then
+  if [ "$nf" -ge 14 ]; then
+    local schema ts scenario mode status c6 c7 c8 c9 c10 c11 c12 c13 c14
+    IFS=$'\t' read -r schema ts scenario mode status c6 c7 c8 c9 c10 c11 c12 c13 c14 <<< "$row"
     cat <<EOF
+schema_version:      ${schema:-2}
 timestamp:           $ts
 scenario:            $scenario
 mode:                $mode
 status:              $status
-planning_tokens:     ${c5:-0}
-execution_tokens:    ${c6:-0}
-remediation_tokens:  ${c7:-0}
-total_tokens:        ${c8:-0}
-stories_completed:   ${c9:-0}
-story_cycles:        ${c10:-0}
-remediation_cycles:  ${c11:-0}
-retries:             ${c12:-0}
-notes:               ${c13:-}
+planning_tokens:     ${c6:-0}
+execution_tokens:    ${c7:-0}
+remediation_tokens:  ${c8:-0}
+total_tokens:        ${c9:-0}
+stories_completed:   ${c10:-0}
+story_cycles:        ${c11:-0}
+remediation_cycles:  ${c12:-0}
+retries:             ${c13:-0}
+notes:               ${c14:-}
 EOF
     return 0
   fi
 
-  cat <<EOF
+  if [ "$nf" -ge 7 ]; then
+    local ts scenario mode status c5 c6 c7
+    IFS=$'\t' read -r ts scenario mode status c5 c6 c7 <<< "$row"
+    cat <<EOF
+schema_version:      legacy-v1
 timestamp:           $ts
 scenario:            $scenario
 mode:                $mode
@@ -63,6 +71,19 @@ status:              $status
 total_tokens:        ${c5:-0}
 stories_completed:   ${c6:-0}
 notes:               ${c7:-}
+EOF
+    return 0
+  fi
+
+  local ts status mode c4 c5
+  IFS=$'\t' read -r ts status mode c4 c5 <<< "$row"
+  cat <<EOF
+schema_version:      legacy-v0
+timestamp:           $ts
+status:              $status
+mode:                ${mode:-}
+total_tokens:        ${c4:-0}
+stories_completed:   ${c5:-0}
 EOF
 }
 

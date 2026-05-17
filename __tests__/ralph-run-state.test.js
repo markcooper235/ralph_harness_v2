@@ -481,7 +481,7 @@ test('ralph-story-run completes a simple story in one primary Codex cycle and sy
             id: 'T-01',
             title: 'Update greeting text',
             context: 'Replace Hello World with Hello Ralph in app.txt.',
-            scope: ['app.txt'],
+            scope: ['app.txt', 'node_modules/example/docs.md'],
             acceptance: 'app.txt contains Hello Ralph.',
             checks: ["grep -q 'Hello Ralph' app.txt"],
             depends_on: [],
@@ -510,6 +510,11 @@ if [ "\${1:-}" = "exec" ] && [ "\${2:-}" = "--dangerously-bypass-approvals-and-s
 fi
 cat >/dev/null
 repo_root="$(git rev-parse --show-toplevel)"
+manifest_path="$repo_root/scripts/ralph/sprints/sprint-1/stories/S-001/.story-execution.json"
+if grep -q 'node_modules/example/docs.md' "$manifest_path"; then
+  echo "execution manifest leaked vendor scope" >&2
+  exit 1
+fi
 printf 'Hello Ralph\\n' > "$repo_root/app.txt"
 story_file="$MOCK_STORY_FILE"
 tmp="$(mktemp)"

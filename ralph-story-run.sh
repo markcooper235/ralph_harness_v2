@@ -164,6 +164,19 @@ resolve_repo_path() {
   [[ "$raw" == /* ]] && printf '%s\n' "$raw" || printf '%s/%s\n' "$WORKSPACE_ROOT" "$raw"
 }
 
+filtered_task_scope_json() {
+  local task_id="$1"
+  jq -c --arg id "$task_id" '
+    [
+      .tasks[]
+      | select(.id == $id)
+      | (.scope // [])[]
+      | select(type == "string")
+      | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor)/")) | not)
+    ]
+  ' "$STORY_FILE"
+}
+
 extract_check_file() {
   local check="$1"
   if [[ "$check" =~ test[[:space:]]+-[fed][[:space:]]+([^[:space:]]+) ]]; then
@@ -207,7 +220,7 @@ check_fp() {
     else
       fp+="ABSENT:$sf"
     fi
-  done < <(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .scope[]?' "$STORY_FILE")
+  done < <(filtered_task_scope_json "$task_id" | jq -r '.[]?')
   echo "${fp:-EMPTY}"
 }
 
@@ -233,8 +246,8 @@ capture_failing_fingerprints() {
   done
 }
 
-compact_dep_handoff() {
-  local lines=""
+dependency_handoff_json() {
+  local entries='[]'
   while IFS= read -r dep_id; do
     [ -z "$dep_id" ] && continue
     local stories_file dep_path
@@ -245,39 +258,62 @@ compact_dep_handoff() {
     dep_path="$(resolve_repo_path "$dep_path")"
     [ -f "$dep_path" ] || continue
 
-    local dep_title files contracts risks
+    local dep_title files_json contracts_json risks_json dep_entry
     dep_title="$(jq -r '.title // ""' "$dep_path")"
-    files="$(jq -r '(.story_handoff.files_touched // []) | join(", ")' "$dep_path" 2>/dev/null || true)"
-    contracts="$(jq -r '(.story_handoff.contracts_added // []) | join(", ")' "$dep_path" 2>/dev/null || true)"
-    risks="$(jq -r '(.story_handoff.residual_risks // []) | join("; ")' "$dep_path" 2>/dev/null || true)"
-    if [ -z "$files$contracts$risks" ]; then
-      risks="$(jq -r '.done_note // ""' "$dep_path" 2>/dev/null | head -n 2 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')"
-    fi
-    [ -n "$files" ] || files="none"
-    [ -n "$contracts" ] || contracts="none"
-    [ -n "$risks" ] || risks="none"
-    lines="${lines}- ${dep_id} (${dep_title}): files=${files}; contracts=${contracts}; risks=${risks}
-"
+    files_json="$(jq -c '.story_handoff.files_touched // []' "$dep_path" 2>/dev/null || echo '[]')"
+    contracts_json="$(jq -c '.story_handoff.contracts_added // []' "$dep_path" 2>/dev/null || echo '[]')"
+    risks_json="$(jq -c '.story_handoff.residual_risks // []' "$dep_path" 2>/dev/null || echo '[]')"
+    dep_entry="$(jq -nc \
+      --arg id "$dep_id" \
+      --arg title "$dep_title" \
+      --argjson files "$files_json" \
+      --argjson contracts "$contracts_json" \
+      --argjson risks "$risks_json" \
+      '{id: $id, title: $title, files_touched: $files, contracts_added: $contracts, residual_risks: $risks}')"
+    entries="$(jq -c --argjson entry "$dep_entry" '. + [$entry]' <<< "$entries")"
   done < <(jq -r '.depends_on[]?' "$STORY_FILE" 2>/dev/null)
 
-  printf '%s' "${lines:-none}"
+  printf '%s\n' "$entries"
 }
 
-pending_task_outline() {
-  local query
-  if [ -n "$TARGET_TASK_ID" ]; then
-    query='.tasks[] | select(.id == $target)'
-    jq -r --arg target "$TARGET_TASK_ID" "$query | select(.passes != true) | \"- \(.id): \(.title) [scope=\((.scope // []) | join(\", \"))]\"" "$STORY_FILE"
-  else
-    jq -r '.tasks[] | select(.passes != true) | "- \(.id): \(.title) [scope=\((.scope // []) | join(", "))]"' "$STORY_FILE"
-  fi
+write_execution_manifest() {
+  local manifest_path="$STORY_DIR/.story-execution.json"
+  local deps_json
+  deps_json="$(dependency_handoff_json)"
+  jq -c \
+    --arg target "$TARGET_TASK_ID" \
+    --argjson deps "$deps_json" '
+    {
+      storyId,
+      title,
+      goal: (.goal // .description // ""),
+      scope: (.spec.scope // ""),
+      preserved_invariants: (.spec.preserved_invariants // []),
+      dependency_handoff: $deps,
+      tasks: [
+        .tasks[]
+        | select(.passes != true)
+        | select($target == "" or .id == $target)
+        | {
+            id,
+            title,
+            scope: [
+              (.scope // [])[]
+              | select(type == "string")
+              | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor)/")) | not)
+            ],
+            depends_on: (.depends_on // []),
+            checks: (.checks // [])
+          }
+      ]
+    }
+  ' "$STORY_FILE" > "$manifest_path"
+  printf '%s\n' "$manifest_path"
 }
 
 build_story_prompt() {
-  local outline dep_handoff mode_line
-  outline="$(pending_task_outline)"
-  dep_handoff="$(compact_dep_handoff)"
-  [ -n "$outline" ] || outline="- no pending tasks"
+  local manifest_path mode_line
+  manifest_path="$(write_execution_manifest)"
   if [ -n "$TARGET_TASK_ID" ]; then
     mode_line="Only execute task $TARGET_TASK_ID and any required story.json updates for that task."
   else
@@ -285,19 +321,20 @@ build_story_prompt() {
   fi
 
   cat <<PROMPT
-Execute this story by reading and updating:
+Execute this story.
+
+Read this execution summary first:
+$manifest_path
+
+Update this source-of-truth file as you work:
 $STORY_FILE
 
 $mode_line
 
-Pending tasks:
-$outline
-
-Dependency handoff:
-$dep_handoff
-
 Rules:
-- Use story.json as the source of truth for context, scope, dependencies, and checks.
+- Use the execution summary for the minimal task list, checks, invariants, and dependency handoff.
+- Use story.json as the durable source of truth when you need fuller details and when writing status/handoff updates.
+- Ignore vendor and generated trees such as node_modules, .next, coverage, dist, build, and vendor unless a check explicitly requires them.
 - Stay inside each task's scope when editing.
 - Run each task's checks yourself before moving on.
 - Fix ordinary check failures in-session instead of stopping early.
@@ -336,7 +373,7 @@ ensure_task_handoff_fallback() {
 
   local handoff
   handoff="$(jq -nc \
-    --argjson changed "$(jq -c --arg id "$task_id" '.tasks[] | select(.id == $id) | (.scope // [])' "$STORY_FILE")" \
+    --argjson changed "$(filtered_task_scope_json "$task_id")" \
     --argjson checks "$(jq -c --arg id "$task_id" '.tasks[] | select(.id == $id) | (.checks // [])' "$STORY_FILE")" \
     '{changed_files: $changed, artifacts: [], checks_passed: $checks, remaining_risks: []}')"
   set_task_field "$task_id" "handoff" "$handoff"
@@ -348,7 +385,7 @@ set_task_handoff_failure() {
   local risk_text="$3"
   local handoff
   handoff="$(jq -nc \
-    --argjson changed "$(jq -c --arg id "$task_id" '.tasks[] | select(.id == $id) | (.scope // [])' "$STORY_FILE")" \
+    --argjson changed "$(filtered_task_scope_json "$task_id")" \
     --argjson checks "$checks_json" \
     --arg risk "$risk_text" \
     '{changed_files: $changed, artifacts: [], checks_passed: [], remaining_risks: [$risk], failing_checks: $checks}')"
@@ -360,13 +397,18 @@ finalize_story_handoff() {
   handoff="$(jq -c '
     {
       completed_tasks: [.tasks[] | select(.passes == true) | .id],
-      files_touched: ([.tasks[] | select(.passes == true) | (.handoff.changed_files // .scope // [])[]?] | unique),
+      files_touched: ([
+        .tasks[]
+        | select(.passes == true)
+        | (.handoff.changed_files // .scope // [])[]?
+        | select(type == "string")
+        | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor)/")) | not)
+      ] | unique),
       contracts_added: ([.tasks[] | select(.passes == true) | (.handoff.artifacts // [])[]?] | unique),
       residual_risks: ([.tasks[] | (.handoff.remaining_risks // [])[]?] | unique)
     }
   ' "$STORY_FILE")"
   set_story_field "story_handoff" "$handoff"
-  set_story_field "done_note" "$(jq -nc --arg summary "$(jq -r '.story_handoff.completed_tasks | join(", ")' "$STORY_FILE" 2>/dev/null || true)" '$summary')"
 }
 
 VERIFY_FAILED_TASK_ID=""
@@ -500,7 +542,12 @@ merge_story_branch() {
     git -C "$WORKSPACE_ROOT" branch -d "$story_branch" 2>/dev/null \
       || git -C "$WORKSPACE_ROOT" branch -D "$story_branch" 2>/dev/null \
       || true
-    rm -f "$STORY_DIR"/.story-run-*.log "$STORY_DIR"/.task-log-*.txt "$STORY_DIR"/.fallow-autofix.txt "$STORY_DIR"/.fallow-report.json
+    rm -f \
+      "$STORY_DIR"/.story-run-*.log \
+      "$STORY_DIR"/.story-execution.json \
+      "$STORY_DIR"/.task-log-*.txt \
+      "$STORY_DIR"/.fallow-autofix.txt \
+      "$STORY_DIR"/.fallow-report.json
     log "Merged and deleted story branch: $story_branch"
   else
     log "WARN: Merge conflict merging $story_branch → $merge_target. Resolve manually then delete $story_branch."
@@ -510,16 +557,19 @@ merge_story_branch() {
 build_remediation_prompt() {
   local task_id="$1"
   local checks_json="$2"
-  local task_scope
-  task_scope="$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | (.scope // []) | join(", ")' "$STORY_FILE")"
+  local task_scope checks_text
+  task_scope="$(filtered_task_scope_json "$task_id" | jq -r 'join(", ")')"
+  checks_text="$(jq -r '.[]' <<< "$checks_json" 2>/dev/null || printf '%s\n' "$checks_json")"
   cat <<PROMPT
-Repair the remaining failing story checks by reading and updating:
+Repair the remaining failing story checks.
+
+Read and update:
 $STORY_FILE
 
 Focus only on task $task_id.
 Scope: ${task_scope:-none}
 Still failing checks:
-$checks_json
+$checks_text
 
 Rules:
 - Make only the minimal code and story.json changes needed to satisfy the failing checks.
