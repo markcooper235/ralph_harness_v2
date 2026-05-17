@@ -17,13 +17,6 @@ LEGACY_TRANSIENT_FILES=(
   "$SCRIPT_DIR/.completion-state.json"
   "$SCRIPT_DIR/.active-prd"
 )
-LEGACY_COMMANDS=(
-  "$SCRIPT_DIR/ralph-prd.sh"
-  "$SCRIPT_DIR/ralph-prime.sh"
-  "$SCRIPT_DIR/ralph-epic.sh"
-  "$SCRIPT_DIR/ralph-commit.sh"
-  "$SCRIPT_DIR/ralph-archive.sh"
-)
 
 fail() {
   echo "ERROR: $1" >&2
@@ -141,18 +134,6 @@ if [ -n "$tracked_legacy" ]; then
   echo "WARN: legacy transient Ralph files are still tracked in git:"
   printf '%s' "$tracked_legacy" | sed 's/^/      /'
   echo "      Remove them from git tracking after migration if they are no longer needed."
-fi
-
-deprecated_found=0
-for legacy_cmd in "${LEGACY_COMMANDS[@]}"; do
-  if [ -f "$legacy_cmd" ]; then
-    if grep -q "This legacy Ralph command has been removed" "$legacy_cmd" 2>/dev/null; then
-      deprecated_found=1
-    fi
-  fi
-done
-if [ "$deprecated_found" -eq 1 ]; then
-  echo "OK: deprecated legacy command stubs are installed to catch old workflow calls"
 fi
 
 if [ -d "$LEGACY_ARCHIVE_DIR" ] && find "$LEGACY_ARCHIVE_DIR" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then

@@ -9,7 +9,7 @@
 #   4. temporary prd.json bridge recovery for valid markdown-only legacy PRDs
 #   5. guided recovery from preserved markdown when deterministic + bridge fail
 #   6. guided recovery from backlog metadata when preserved markdown is missing
-#   7. deprecated legacy commands become explicit upgrade stubs
+#   7. legacy command stubs are removed during upgrade
 #
 # Usage:
 #   ./scripts/smoke/e2e-upgrade.sh [--keep]
@@ -633,12 +633,9 @@ if ! grep -q "Recovered migration placeholder for S-006; story status reset to p
   fail "expected automatic missing-markdown recovery for S-006 during migration"
 fi
 
-assert_file_exists "$RALPH_DIR/ralph-prd.sh"
-assert_file_exists "$RALPH_DIR/ralph-prime.sh"
-assert_file_exists "$RALPH_DIR/ralph-epic.sh"
-if ! grep -q "This legacy Ralph command has been removed" "$RALPH_DIR/ralph-prd.sh"; then
-  fail "expected deprecated legacy command stub at scripts/ralph/ralph-prd.sh"
-fi
+assert_file_not_exists "$RALPH_DIR/ralph-prd.sh"
+assert_file_not_exists "$RALPH_DIR/ralph-prime.sh"
+assert_file_not_exists "$RALPH_DIR/ralph-epic.sh"
 if ! grep -q "Migrating legacy sprint: sprint-1" "$WORK_DIR/install-upgrade.log"; then
   fail "expected install --migrate-legacy to run migration automatically"
 fi

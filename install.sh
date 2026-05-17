@@ -137,22 +137,6 @@ copy_file_if_missing() {
   copy_file "$src" "$dst"
 }
 
-deprecated_legacy_stub() {
-  local path="$1"
-  local replacement="$2"
-  local note="$3"
-  cat > "$path" <<EOF
-#!/bin/bash
-echo "This legacy Ralph command has been removed in the story-task architecture." >&2
-echo "" >&2
-echo "Command: $(basename "$path")" >&2
-echo "Use instead: $replacement" >&2
-echo "$note" >&2
-exit 1
-EOF
-  chmod +x "$path"
-}
-
 collect_legacy_sprints() {
   [ -d "$DEST_DIR_REL/sprints" ] || return 0
   find "$DEST_DIR_REL/sprints" -mindepth 2 -maxdepth 2 -type f -name epics.json 2>/dev/null \
@@ -192,34 +176,14 @@ copy_file "$SOURCE_DIR/new-local-extension.sh.example" "$DEST_DIR_REL/new-local-
 copy_file "$SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-test-baseline-failures.txt"
 copy_file "$SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
 copy_file "$SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
-deprecated_legacy_stub \
+rm -f \
   "$DEST_DIR_REL/ralph-prd.sh" \
-  "./$DEST_DIR_REL/ralph-roadmap.sh or ./$DEST_DIR_REL/ralph-story.sh import-prd <path>" \
-  "Standalone PRD priming is no longer part of the active framework."
-deprecated_legacy_stub \
   "$DEST_DIR_REL/ralph-prime.sh" \
-  "./$DEST_DIR_REL/ralph-story.sh specify <story-id> or ./$DEST_DIR_REL/ralph-story.sh prepare-all" \
-  "PRD-to-runtime priming has been replaced by story generation and SpecKit artifacts."
-deprecated_legacy_stub \
   "$DEST_DIR_REL/ralph-epic.sh" \
-  "./$DEST_DIR_REL/ralph-story.sh add|list|set-status" \
-  "Epics were replaced by stories as the sprint planning unit."
-deprecated_legacy_stub \
   "$DEST_DIR_REL/ralph-commit.sh" \
-  "./$DEST_DIR_REL/ralph-sprint-commit.sh" \
-  "Sprint closeout is now handled at the sprint level after all stories complete."
-deprecated_legacy_stub \
   "$DEST_DIR_REL/ralph-archive.sh" \
-  "./$DEST_DIR_REL/ralph-sprint-commit.sh" \
-  "Archive and merge behavior is now part of sprint closeout."
-deprecated_legacy_stub \
   "$DEST_DIR_REL/ralph-spec-check.sh" \
-  "./$DEST_DIR_REL/ralph-story.sh specify <story-id>" \
-  "Spec validation now flows through SpecKit artifacts and story generation."
-deprecated_legacy_stub \
-  "$DEST_DIR_REL/ralph-spec-strengthen.sh" \
-  "./$DEST_DIR_REL/ralph-story.sh specify <story-id> --force" \
-  "Spec strengthening is no longer a standalone workflow command."
+  "$DEST_DIR_REL/ralph-spec-strengthen.sh"
 chmod +x \
   "$DEST_DIR_REL/ralph.sh" \
   "$DEST_DIR_REL/doctor.sh" \
