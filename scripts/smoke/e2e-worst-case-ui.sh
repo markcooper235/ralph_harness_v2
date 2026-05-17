@@ -36,7 +36,7 @@ cleanup() {
   local exit_code=$?
   local status="pass"
   [ "$exit_code" -eq 0 ] || status="fail"
-  if [ "${BENCHMARK_TOKENS:-0}" -eq 0 ]; then
+  if ! benchmark_any_tokens; then
     benchmark_set_notes "tokens-unavailable"
   fi
   benchmark_append_row "$status"
@@ -403,7 +403,7 @@ echo "[worst-ui] install framework"
 HOME="$TMP_HOME" "$REPO_ROOT/install.sh" --project "$TEST_REPO" > "$WORK_DIR/install-framework.log" 2>&1
 assert_file_exists "$TEST_REPO/scripts/ralph/doctor.sh"
 assert_file_exists "$TEST_REPO/scripts/ralph/ralph-story.sh"
-assert_file_exists "$TEST_REPO/scripts/ralph/ralph-task.sh"
+assert_file_exists "$TEST_REPO/scripts/ralph/ralph-story-run.sh"
 commit_framework_baseline "$TEST_REPO" "chore: install ralph framework baseline"
 
 SPRINT_REPO="$WORK_DIR/project-loop-sprint"
@@ -721,8 +721,11 @@ assert_contains "$WORK_DIR/verify-full.log" "full verification passed"
 
 loop_tokens="$(extract_tokens_from_log "$WORK_DIR/loop.log")"
 stories_completed="$(extract_story_complete_count_from_log "$WORK_DIR/loop.log")"
-benchmark_set_tokens "$loop_tokens"
+retry_count="$(awk '/Retrying\.\.\./{c++} END{print c+0}' "$WORK_DIR/loop.log" 2>/dev/null || echo 0)"
+benchmark_set_execution_tokens "$loop_tokens"
+benchmark_set_story_cycles "$stories_completed"
 benchmark_set_stories "$stories_completed"
+benchmark_set_retries "$retry_count"
 
 echo "[worst-ui] token summary: loop=$loop_tokens total=$loop_tokens"
 echo "[worst-ui] stories completed: $stories_completed"

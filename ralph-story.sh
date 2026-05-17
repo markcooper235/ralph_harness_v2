@@ -1070,7 +1070,7 @@ cmd_start_next() {
     fi
   fi
 
-  # Warn if any dependency has no done_note (downstream task context will be thin)
+  # Warn if any dependency has no compact story handoff (downstream context will be thin)
   while IFS= read -r dep_id; do
     [ -z "$dep_id" ] && continue
     local dep_raw dep_abs dep_note
@@ -1078,9 +1078,9 @@ cmd_start_next() {
     [ -n "$dep_raw" ] || continue
     [[ "$dep_raw" != /* ]] && dep_abs="$WORKSPACE_ROOT/$dep_raw" || dep_abs="$dep_raw"
     [ -f "$dep_abs" ] || continue
-    dep_note="$(jq -r '.done_note // ""' "$dep_abs" 2>/dev/null || true)"
+    dep_note="$(jq -r 'if (.story_handoff // null) != null then (((.story_handoff.files_touched // []) | join(", ")) + " | " + ((.story_handoff.contracts_added // []) | join(", "))) else (.done_note // "") end' "$dep_abs" 2>/dev/null || true)"
     if [ -z "$dep_note" ]; then
-      echo "WARN: Dependency $dep_id has no done_note — task context for this story will be thin."
+      echo "WARN: Dependency $dep_id has no story_handoff — downstream context for this story will be thin."
     fi
   done < <(jq -r --arg id "$next_id" '.stories[] | select(.id == $id) | .depends_on[]?' "$STORIES_FILE" 2>/dev/null || true)
 }
@@ -1557,7 +1557,7 @@ cmd_generate() {
   has_speckit=0
   [ -f "$specify_dir/spec.md" ] && [ -f "$specify_dir/tasks.md" ] && has_speckit=1
 
-  # Pull done_notes from dependent stories for context injection
+  # Pull compact dependency handoff from dependent stories for context injection
   local dep_context=""
   while IFS= read -r dep_id; do
     [ -z "$dep_id" ] && continue
@@ -1567,7 +1567,15 @@ cmd_generate() {
     [[ "$dep_raw_path" != /* ]] && dep_abs_path="$WORKSPACE_ROOT/$dep_raw_path" || dep_abs_path="$dep_raw_path"
     [ -f "$dep_abs_path" ] || continue
     dep_title="$(jq -r '.title // ""' "$dep_abs_path" 2>/dev/null || true)"
-    dep_note="$(jq -r '.done_note // ""' "$dep_abs_path" 2>/dev/null || true)"
+    dep_note="$(jq -r '
+      if (.story_handoff // null) != null then
+        "Files touched: " + ((.story_handoff.files_touched // []) | join(", ")) + "\n" +
+        "Contracts added: " + ((.story_handoff.contracts_added // []) | join(", ")) + "\n" +
+        "Residual risks: " + ((.story_handoff.residual_risks // []) | join("; "))
+      else
+        (.done_note // "")
+      end
+    ' "$dep_abs_path" 2>/dev/null || true)"
     [ -n "$dep_note" ] || continue
     dep_context="${dep_context}
 Prior story $dep_id ($dep_title):
@@ -1919,7 +1927,7 @@ cmd_specify() {
   priority="$(printf '%s' "$story_meta" | jq -r '.priority // 1')"
   depends_on_arr="$(printf '%s' "$story_meta" | jq -c '.depends_on // []')"
 
-  # Pull dependency context (spec fields + done_notes) for SpecKit input
+  # Pull dependency context (spec fields + compact story handoff) for SpecKit input
   local dep_context=""
   while IFS= read -r dep_id; do
     [ -z "$dep_id" ] && continue
@@ -1931,8 +1939,15 @@ cmd_specify() {
     dep_title="$(jq -r '.title // ""' "$dep_abs_path" 2>/dev/null || true)"
     dep_scope="$(jq -r '.spec.scope // ""' "$dep_abs_path" 2>/dev/null || true)"
     dep_invariants="$(jq -r '(.spec.preserved_invariants // []) | join("; ")' "$dep_abs_path" 2>/dev/null || true)"
-    dep_files="$(jq -r '([.tasks[].scope[]?] | unique | join(", "))' "$dep_abs_path" 2>/dev/null || true)"
-    dep_note="$(jq -r '.done_note // ""' "$dep_abs_path" 2>/dev/null || true)"
+    dep_files="$(jq -r 'if (.story_handoff // null) != null then ((.story_handoff.files_touched // []) | join(", ")) else ([.tasks[].scope[]?] | unique | join(", ")) end' "$dep_abs_path" 2>/dev/null || true)"
+    dep_note="$(jq -r '
+      if (.story_handoff // null) != null then
+        "Contracts added: " + ((.story_handoff.contracts_added // []) | join(", ")) + "\n" +
+        "Residual risks: " + ((.story_handoff.residual_risks // []) | join("; "))
+      else
+        (.done_note // "")
+      end
+    ' "$dep_abs_path" 2>/dev/null || true)"
     dep_entry=""
     if [ -n "$dep_scope" ]; then dep_entry="${dep_entry}  Scope: $dep_scope"$'\n'; fi
     if [ -n "$dep_files" ]; then dep_entry="${dep_entry}  Files changed: $dep_files"$'\n'; fi

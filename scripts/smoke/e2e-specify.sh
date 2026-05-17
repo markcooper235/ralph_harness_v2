@@ -28,7 +28,7 @@
 #
 # Flags:
 #   --keep            Keep work directory on success (always kept on failure)
-#   --max-retries N   Retry count per task (default: 2)
+#   --max-retries N   Targeted remediation cycles after the main story cycle (default: 2 in smoke)
 #   --reuse-dir DIR   Skip project setup and specify/generate; reuse an
 #                     existing work directory from a previous --keep run.
 #                     Story branches left mid-run are reset to "ready".
@@ -95,7 +95,7 @@ cleanup() {
   local code=$?
   local status="pass"
   [ "$code" -eq 0 ] || status="fail"
-  if [ "${BENCHMARK_TOKENS:-0}" -eq 0 ]; then
+  if ! benchmark_any_tokens; then
     benchmark_set_notes "tokens-unavailable"
   fi
   benchmark_append_row "$status"
@@ -814,12 +814,17 @@ done
 generate_tokens="$(extract_tokens_from_log "$LOG_DIR/generate-all.log")"
 sprint_tokens="$(extract_tokens_from_log "$sprint_log")"
 total_tokens=$((specify_tokens + generate_tokens + sprint_tokens))
+planning_tokens=$((specify_tokens + generate_tokens))
 stories_completed=0
 if [ -f "$sprint_log" ]; then
   stories_completed="$(awk '/=== Story .* COMPLETE ===/ { c += 1 } END { print c + 0 }' "$sprint_log")"
 fi
-benchmark_set_tokens "$total_tokens"
+retry_count="$(awk '/Retrying\.\.\./{c++} END{print c+0}' "$sprint_log" 2>/dev/null || echo 0)"
+benchmark_set_planning_tokens "$planning_tokens"
+benchmark_set_execution_tokens "$sprint_tokens"
+benchmark_set_story_cycles "$stories_completed"
 benchmark_set_stories "$stories_completed"
+benchmark_set_retries "$retry_count"
 
 echo ""
 echo "── efficiency metrics ────────────────────────────────────────"

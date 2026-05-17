@@ -70,11 +70,11 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 
 - `ralph.sh` only operates when on the sprint branch (`ralph/sprint/<sprint-name>`); it fails with a clear message when the working tree is dirty or the branch is wrong.
 - `ralph.sh` warns before the loop when stories have no `story.json`, prompting `prepare-all` first.
-- `ralph-task.sh` locks execution via `.workflow-lock`; the lock is shared with `ralph.sh` via `RALPH_LOCK_HELD`.
+- `ralph-story-run.sh` locks execution via `.workflow-lock`; the lock is shared with `ralph.sh` via `RALPH_LOCK_HELD`.
 - Each task's `checks[]` are evaluated by running each shell expression from the workspace root. All checks must exit 0 for the task to pass.
-- Task retry resets the Codex session and re-evaluates checks from scratch. `--max-retries` controls the ceiling.
-- Task `done_note` is written on success and passed as context to downstream dependent tasks and stories.
-- The story `done_note` summarizes all passing tasks and the total git diff stat. It is used as context when dependent stories are prepared via `ralph-story.sh specify`.
+- The primary story cycle is where ordinary correction should happen. `--max-retries` controls only targeted remediation cycles after the main story cycle exits.
+- Task `handoff` is written on success and passed as compact context to downstream dependent tasks and stories.
+- `story_handoff` summarizes completed tasks, touched files, added contracts, and residual risks. It is used as context when dependent stories are prepared via `ralph-story.sh specify`.
 
 ---
 
@@ -85,15 +85,15 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - Broad auto-fix is disabled by default. Set `RALPH_FALLOW_EXACT_AUTOFIX=1` and `RALPH_FALLOW_CODEX_AUTOFIX=1` only when you intentionally want scoped fallback and Codex follow-up auto-fix.
 - `--dry-run` reports issues without auto-fixing or failing the gate.
 - `--no-autofix` reports and fails without attempting auto-fix.
-- `--skip-fallow` in `ralph.sh` and `ralph-task.sh` is retained only as a deprecated compatibility flag.
+- `--skip-fallow` in `ralph.sh` and `ralph-story-run.sh` is retained only as a deprecated compatibility flag.
 - The fallow gate prefers branch-diff analysis only when every changed file is in-scope for the story; otherwise it reports against the exact in-scope file set.
 
 ---
 
 ## Completion And Branch Policy
 
-- `ralph-task.sh` marks a story `done` when all task `passes` fields are `true`.
-- On story completion, `ralph-task.sh` automatically merges the story branch into the sprint branch using `--no-ff` and deletes the story branch.
+- `ralph-story-run.sh` marks a story `done` when all task `passes` fields are `true`.
+- On story completion, `ralph-story-run.sh` automatically merges the story branch into the sprint branch using `--no-ff` and deletes the story branch.
 - If the merge has conflicts, the story branch is left intact for manual resolution.
 - Sprint closeout via `ralph-sprint-commit.sh` requires all stories to be `done` or `abandoned`; it will not proceed with `active`, `planned`, or `ready` stories remaining.
 - `ralph-sprint-commit.sh` archives sprint metadata to `tasks/archive/sprints/` before merging.
@@ -175,5 +175,5 @@ bash scripts/smoke/e2e-calendar.sh --generated
 - When the smoke harness runs under a TTY, explicitly redirect stdin from `/dev/null` for intentionally interactive wrappers when they are used in automation-only setup steps.
 - Smoke telemetry should report both token totals and loop iteration counts so efficiency regressions can be traced to planning cost or extra loop churn.
 - Smoke runs should persist a lightweight local benchmark history under `scripts/smoke/.benchmarks/` for before/after efficiency comparison.
-- Smoke retry handling should clear only provably stale workflow locks in disposable smoke repos; core Ralph lock semantics in `ralph.sh` and `ralph-task.sh` are not weakened.
+- Smoke retry handling should clear only provably stale workflow locks in disposable smoke repos; core Ralph lock semantics in `ralph.sh` and `ralph-story-run.sh` are not weakened.
 - Smoke assertions should be behavior-led when equivalent implementations are acceptable — avoid asserting exact source spelling unless the spelling itself is part of the requirement.

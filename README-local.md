@@ -40,7 +40,7 @@ This document is the installed reference for a Ralph-enabled project. For framew
 What happens during execution:
 
 - `ralph-story.sh prepare-all` runs SpecKit analysis for each story (`specify → plan → tasks`), generates `story.json` task containers, validates health, and promotes healthy stories to `ready`
-- `ralph.sh` picks up the next eligible story, runs each task in a fresh Codex session via `ralph-task.sh`, evaluates binary `checks[]`, retries on failure, and merges each story branch back to the sprint branch when done
+- `ralph.sh` picks up the next eligible story, runs it in one primary Codex cycle via `ralph-story-run.sh`, evaluates binary `checks[]`, uses targeted remediation only when needed, and merges each story branch back to the sprint branch when done
 - `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to pass, archives sprint artifacts, merges the sprint branch, and deletes it
 
 ---
@@ -220,13 +220,13 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 
 ```bash
 ./scripts/ralph/ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
-./scripts/ralph/ralph-task.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
+./scripts/ralph/ralph-story-run.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
 ./scripts/ralph/ralph-status.sh
 ```
 
 `ralph.sh` flags:
 - `--max-stories N` — safety ceiling on stories per run (default: 50)
-- `--max-retries N` — per-task Codex retry count (default: 2)
+- `--max-retries N` — targeted remediation cycles after the main story cycle (default: 1)
 - `--continue-on-failure` — continue to next story when a story fails (default: stop)
 - `--skip-fallow` — deprecated compatibility flag; no effect
 - `--dry-run` — print plan without executing

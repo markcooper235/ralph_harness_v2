@@ -9,7 +9,7 @@ This repo is the Ralph-for-Codex framework — **story-task architecture**:
 - stories replace epics as the sprint-level planning unit
 - each story is a self-contained task container (`story.json`) with binary acceptance checks
 - SpecKit integration produces specifications and implementation plans before execution
-- each task runs in its own fresh Codex session
+- each story runs in one primary Codex session, with shell verification after the cycle
 - acceptance checks are validated by shell, not AI
 - merged story branches are cleaned up automatically after each task passes
 
@@ -61,7 +61,7 @@ What happens:
 
 - `ralph-roadmap.sh` decomposes a vision into sprint backlogs (`stories.json`)
 - `ralph-story.sh prepare-all` runs SpecKit analysis and generates `story.json` task containers
-- `ralph.sh` picks up the next eligible story, runs each task via `ralph-task.sh`, validates binary checks, and merges the story branch back to the sprint branch
+- `ralph.sh` picks up the next eligible story, runs it via `ralph-story-run.sh`, validates binary checks, and merges the story branch back to the sprint branch
 - `ralph-sprint-commit.sh` runs the regression gate, archives sprint artifacts, and merges to `main`/`master`
 
 ### Multi-Sprint Workflow
@@ -151,9 +151,9 @@ Prerequisites:
 
 ### Execution
 
-- `ralph.sh` loops over eligible stories: `start-next → ralph-task.sh → repeat`
-- `ralph-task.sh` runs each task in its own fresh Codex session; acceptance `checks[]` are evaluated by shell
-- tasks retry up to `--max-retries` times on check failure
+- `ralph.sh` loops over eligible stories: `start-next → ralph-story-run.sh → repeat`
+- `ralph-story-run.sh` runs one primary Codex cycle per story; acceptance `checks[]` are evaluated by shell after the cycle
+- targeted remediation retries up to `--max-retries` times only when the primary cycle leaves correctable check failures
 - when all tasks pass, the story branch is merged to the sprint branch and deleted automatically
 - `ralph-fallow.sh` provides a scoped code-quality gate (dead code, duplication, lint) that can be run explicitly or during sprint closeout
 
@@ -227,7 +227,7 @@ See [README-local.md](README-local.md).
 
 # Loop / execution
 ./ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
-./ralph-task.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
+./ralph-story-run.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
 ./ralph-status.sh
 
 # Verification
@@ -361,8 +361,8 @@ Notes:
 | `ralph-roadmap.sh` | Create or refine the durable roadmap and seed sprint backlogs |
 | `ralph-sprint.sh` | Manage sprint containers and sprint readiness |
 | `ralph-story.sh` | Manage stories: specify, generate, health, start-next, and more |
-| `ralph-task.sh` | Execute all tasks in the active story (one Codex session per task) |
-| `ralph.sh` | Sprint execution loop: start-next → ralph-task.sh → repeat |
+| `ralph-story-run.sh` | Execute the active story in one primary Codex cycle with shell verification |
+| `ralph.sh` | Sprint execution loop: start-next → ralph-story-run.sh → repeat |
 | `ralph-status.sh` | Show current sprint, story, branch, and loop state |
 | `ralph-verify.sh` | Run typecheck + lint + tests (--targeted or --full) |
 | `ralph-fallow.sh` | Code-quality gate: dead code, duplication, lint |

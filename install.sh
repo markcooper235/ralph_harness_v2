@@ -158,7 +158,7 @@ copy_file "$SOURCE_DIR/ralph-sprint.sh" "$DEST_DIR_REL/ralph-sprint.sh"
 copy_file "$SOURCE_DIR/ralph-sprint-commit.sh" "$DEST_DIR_REL/ralph-sprint-commit.sh"
 copy_file "$SOURCE_DIR/ralph-sprint-migrate.sh" "$DEST_DIR_REL/ralph-sprint-migrate.sh"
 copy_file "$SOURCE_DIR/ralph-story.sh" "$DEST_DIR_REL/ralph-story.sh"
-copy_file "$SOURCE_DIR/ralph-task.sh" "$DEST_DIR_REL/ralph-task.sh"
+copy_file "$SOURCE_DIR/ralph-story-run.sh" "$DEST_DIR_REL/ralph-story-run.sh"
 copy_file "$SOURCE_DIR/ralph-fallow.sh" "$DEST_DIR_REL/ralph-fallow.sh"
 copy_file "$SOURCE_DIR/ralph-roadmap.sh" "$DEST_DIR_REL/ralph-roadmap.sh"
 copy_file "$SOURCE_DIR/ralph-status.sh" "$DEST_DIR_REL/ralph-status.sh"
@@ -177,6 +177,7 @@ copy_file "$SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-te
 copy_file "$SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
 copy_file "$SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
 rm -f \
+  "$DEST_DIR_REL/ralph-task.sh" \
   "$DEST_DIR_REL/ralph-prd.sh" \
   "$DEST_DIR_REL/ralph-prime.sh" \
   "$DEST_DIR_REL/ralph-epic.sh" \
@@ -191,7 +192,7 @@ chmod +x \
   "$DEST_DIR_REL/ralph-sprint-commit.sh" \
   "$DEST_DIR_REL/ralph-sprint-migrate.sh" \
   "$DEST_DIR_REL/ralph-story.sh" \
-  "$DEST_DIR_REL/ralph-task.sh" \
+  "$DEST_DIR_REL/ralph-story-run.sh" \
   "$DEST_DIR_REL/ralph-fallow.sh" \
   "$DEST_DIR_REL/ralph-roadmap.sh" \
   "$DEST_DIR_REL/ralph-status.sh" \

@@ -640,7 +640,10 @@ if ! grep -q "Migrating legacy sprint: sprint-1" "$WORK_DIR/install-upgrade.log"
   fail "expected install --migrate-legacy to run migration automatically"
 fi
 
-benchmark_set_tokens 0
+benchmark_set_execution_tokens 0
 benchmark_set_stories 0
+benchmark_set_story_cycles 0
+benchmark_set_remediation_cycles 0
+benchmark_set_retries 0
 benchmark_set_notes "migration-validation"
 log "PASS: legacy upgrade migration auto-recovered every recovery path"

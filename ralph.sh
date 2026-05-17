@@ -2,7 +2,7 @@
 # ralph.sh — Sprint execution loop for the story-task architecture.
 #
 # Runs all eligible stories in the active sprint sequentially:
-#   start-next → ralph-task.sh → repeat until no eligible stories remain.
+#   start-next → ralph-story-run.sh → repeat until no eligible stories remain.
 #
 # Usage: ./scripts/ralph/ralph.sh [options]
 
@@ -19,21 +19,21 @@ MAX_STORIES=50
 CONTINUE_ON_FAILURE=false
 DRY_RUN=false
 SKIP_FALLOW=false
-MAX_RETRIES=2
+MAX_RETRIES=1
 
 usage() {
   cat <<'EOF'
 Usage: ./scripts/ralph/ralph.sh [options]
 
 Runs all eligible stories in the active sprint:
-  start-next → ralph-task.sh → repeat until no eligible stories remain.
+  start-next → ralph-story-run.sh → repeat until no eligible stories remain.
 
 Does NOT run ralph-sprint-commit.sh — that merge step is intentionally manual.
 
 Options:
   --continue-on-failure   Continue to next story when a story fails (default: stop)
   --max-stories N         Safety ceiling on stories executed (default: 50)
-  --max-retries N         Per-task Codex retry count (default: 2)
+  --max-retries N         Max targeted remediation cycles after the main story cycle (default: 1)
   --skip-fallow           Deprecated compatibility flag; no effect
   --dry-run               Print plan without executing
   -h, --help              Show this help
@@ -67,7 +67,7 @@ require_cmd jq
 require_cmd "$CODEX_BIN"
 
 # ---------------------------------------------------------------------------
-# Workflow lock (shared with ralph-task.sh via RALPH_LOCK_HELD env var)
+# Workflow lock (shared with ralph-story-run.sh via RALPH_LOCK_HELD env var)
 # ---------------------------------------------------------------------------
 
 acquire_workflow_lock() {
@@ -167,7 +167,7 @@ while [ "$story_count" -lt "$MAX_STORIES" ]; do
   echo "════════════════════════════════════════════════════"
 
   if [ "$DRY_RUN" = "true" ]; then
-    echo "[DRY RUN] Would run: ralph-story.sh start-next && ralph-task.sh"
+    echo "[DRY RUN] Would run: ralph-story.sh start-next && ralph-story-run.sh"
     echo "[DRY RUN] Stopping after first story in dry-run mode."
     break
   fi
@@ -184,12 +184,11 @@ while [ "$story_count" -lt "$MAX_STORIES" ]; do
     break
   fi
 
-  # Build ralph-task.sh args
-  task_args=(--max-retries "$MAX_RETRIES")
-  [ "$SKIP_FALLOW" = "true" ] && task_args+=(--skip-fallow)
+  # Build ralph-story-run.sh args
+  story_run_args=(--max-retries "$MAX_RETRIES")
 
-  # Execute all tasks in the story
-  if "$SCRIPT_DIR/ralph-task.sh" "${task_args[@]}"; then
+  # Execute the story in a single primary Codex cycle
+  if "$SCRIPT_DIR/ralph-story-run.sh" "${story_run_args[@]}"; then
     echo ""
     echo "DONE: $next_id complete"
     done_count=$((done_count + 1))

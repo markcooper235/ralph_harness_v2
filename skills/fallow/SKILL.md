@@ -9,7 +9,7 @@ Run `ralph-fallow.sh` to audit and auto-fix code quality issues for a story's ch
 
 ## Non-Negotiables
 
-- Fallow runs automatically after all tasks pass in `ralph-task.sh`. Only invoke manually to debug or re-run.
+- Fallow runs automatically after all tasks pass in `ralph-story-run.sh`. Only invoke manually to debug or re-run.
 - Scope is limited to the story's `spec.scope` files — not the whole codebase.
 - Do not mark a story done if fallow exits non-zero.
 - Never skip fallow silently; use `--dry-run` to inspect issues without failing.
@@ -17,8 +17,8 @@ Run `ralph-fallow.sh` to audit and auto-fix code quality issues for a story's ch
 ## When Fallow Fires
 
 ### Automatic (normal flow)
-`ralph-task.sh` calls fallow after all story tasks pass, before marking the story done.
-If fallow fails, the story is blocked — `ralph-task.sh` exits 1.
+`ralph-story-run.sh` calls fallow after all story tasks pass, before marking the story done.
+If fallow fails, the story is blocked — `ralph-story-run.sh` exits 1.
 
 ### Manual (debug / re-run)
 ```bash
@@ -64,10 +64,10 @@ If no scope is declared, fallow falls back to files changed vs `main`.
 | `--no-autofix` | Report and fail immediately without attempting fixes |
 | `--quiet` | Suppress verbose output |
 
-## Skip in ralph-task.sh (debug only)
+## Skip in ralph-story-run.sh (debug only)
 
 ```bash
-./scripts/ralph/ralph-task.sh --skip-fallow
+./scripts/ralph/ralph-story-run.sh --skip-fallow
 ```
 
 ## Fallow CLI (fallow.tools)

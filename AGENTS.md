@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ralph is an autonomous Codex loop that executes sprint stories as sequences of focused, task-level Codex sessions. Each task in a story gets a fresh `codex exec` context; acceptance checks are validated by shell, not AI.
+Ralph is an autonomous Codex loop that executes sprint stories as focused story-level Codex cycles. Each story gets one primary `codex exec` context; acceptance checks are validated by shell, not AI.
 
 Keep this file focused on the broad operating model. Deeper framework notes, edge cases, and maintainer guidance live in [`docs/maintainer-notes.md`](docs/maintainer-notes.md).
 
@@ -14,7 +14,7 @@ Ralph's execution unit is the **task** — a narrow, binary-checkable piece of w
 roadmap → stories.json (per sprint)
        → .specify/{spec.md, plan.md, tasks.md} (per story)
        → story.json (task container with checks[])
-       → story branch execution (one Codex session per task)
+       → story branch execution (one primary Codex session per story)
        → merge to sprint branch
        → sprint commit → main
 ```
@@ -97,8 +97,8 @@ Importing an existing `prd.json`:
 - `ralph-roadmap.sh` — Plan or refine roadmap-driven sprint backlogs
 - `ralph-sprint.sh` — Manage sprint containers and sprint readiness
 - `ralph-story.sh` — Manage stories: specify, generate, health, start-next, add, import
-- `ralph-task.sh` — Execute all tasks in the active story (one Codex session per task)
-- `ralph.sh` — Sprint execution loop: start-next → ralph-task.sh → repeat
+- `ralph-story-run.sh` — Execute the active story in one primary Codex cycle with shell verification
+- `ralph.sh` — Sprint execution loop: start-next → ralph-story-run.sh → repeat
 - `ralph-status.sh` — Show sprint, story, branch, and loop state
 - `ralph-verify.sh` — Run typecheck + lint + tests (--targeted or --full)
 - `ralph-fallow.sh` — Code-quality gate (dead code, duplication, lint)
@@ -113,7 +113,7 @@ Importing an existing `prd.json`:
 
 ## Broad Rules
 
-- Each task runs in a fresh Codex session with minimal focused context.
+- Each story runs in one primary Codex session with minimal focused context.
 - Acceptance checks (`checks[]`) are binary shell expressions — exit 0 = pass, non-zero = fail.
 - Durable planning artifacts belong in git; transient execution state does not.
 - SpecKit artifacts (`.specify/`) are durable and should be committed.
@@ -142,9 +142,9 @@ Transient (untracked):
 
 ## Current Framework Behaviors
 
-- `ralph.sh` loops: `start-next → ralph-task.sh → repeat` until no eligible stories remain.
-- `ralph-task.sh` runs each task's Codex session, then evaluates `checks[]` via shell. Failed checks trigger retry up to `--max-retries`.
-- After all tasks pass, `ralph-task.sh` runs the fallow gate (skippable with `--skip-fallow`), then merges the story branch to the sprint branch and deletes it.
+- `ralph.sh` loops: `start-next → ralph-story-run.sh → repeat` until no eligible stories remain.
+- `ralph-story-run.sh` runs one primary Codex cycle per story, then evaluates `checks[]` via shell. Failed checks may trigger targeted remediation up to `--max-retries`.
+- After all tasks pass, `ralph-story-run.sh` writes compact handoff state, then merges the story branch to the sprint branch and deletes it.
 - `ralph-story.sh start-next` activates the next eligible story (status = ready or planned, all `depends_on` done).
 - Story health checks in `ralph-story.sh health` validate task count, check syntax, context completeness, dependency integrity, and duplicate detection.
 - `ralph-sprint.sh next` ignores sprints whose remaining stories are all `blocked`.

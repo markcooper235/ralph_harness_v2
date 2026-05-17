@@ -37,7 +37,7 @@
 #
 # Flags:
 #   --keep          Keep work directory on success (always kept on failure)
-#   --max-retries N Retry count per task (default: 2)
+#   --max-retries N Targeted remediation cycles after the main story cycle (default: 2 in smoke)
 #   --generated     Use ralph-story.sh generate for story.json instead of
 #                   hand-written files — exercises the full story generation
 #                   pipeline (adds ~8 Codex sessions total)
@@ -100,7 +100,7 @@ cleanup() {
   local code=$?
   local status="pass"
   [ "$code" -eq 0 ] || status="fail"
-  if [ "${BENCHMARK_TOKENS:-0}" -eq 0 ]; then
+  if ! benchmark_any_tokens; then
     benchmark_set_notes "tokens-unavailable"
   fi
   benchmark_append_row "$status"
@@ -156,7 +156,7 @@ doctor_check() {
 # ── generate_stories ───────────────────────────────────────────────────────────
 # Call ralph-story.sh generate for all 4 stories in parallel.
 # Codex generates story.json task plans from the story specs in stories.json.
-# All 4 run in parallel since no done_notes exist yet (dep context is empty).
+# All 4 run in parallel since no prior story handoff exists yet (dep context is empty).
 
 generate_stories() {
   local proj_dir="$1"
@@ -472,7 +472,7 @@ log "  installing ralph framework..."
 HOME="$WORK_DIR/home-nextjs" "$REPO_ROOT/install.sh" \
   --project "$NEXTJS_DIR" > "$LOG_DIR/install-nextjs.log" 2>&1
 assert_file_exists "$NEXTJS_DIR/scripts/ralph/ralph.sh"
-assert_file_exists "$NEXTJS_DIR/scripts/ralph/ralph-task.sh"
+assert_file_exists "$NEXTJS_DIR/scripts/ralph/ralph-story-run.sh"
 assert_file_exists "$NEXTJS_DIR/scripts/ralph/ralph-story.sh"
 assert_file_exists "$NEXTJS_DIR/scripts/ralph/ralph-sprint.sh"
 assert_file_exists "$NEXTJS_DIR/scripts/ralph/ralph-sprint-commit.sh"
@@ -895,7 +895,7 @@ log "  installing ralph framework..."
 HOME="$WORK_DIR/home-angular" "$REPO_ROOT/install.sh" \
   --project "$ANGULAR_DIR" > "$LOG_DIR/install-angular.log" 2>&1
 assert_file_exists "$ANGULAR_DIR/scripts/ralph/ralph.sh"
-assert_file_exists "$ANGULAR_DIR/scripts/ralph/ralph-task.sh"
+assert_file_exists "$ANGULAR_DIR/scripts/ralph/ralph-story-run.sh"
 assert_file_exists "$ANGULAR_DIR/scripts/ralph/ralph-sprint-commit.sh"
 assert_file_exists "$ANGULAR_DIR/scripts/ralph/doctor.sh"
 
@@ -2329,10 +2329,14 @@ echo ""
 echo "── efficiency metrics ────────────────────────────────────────"
 total_tokens_all=0
 total_stories_all=0
+total_planning_tokens=0
+total_execution_tokens=0
+total_retries_all=0
 for proj_label in nextjs angular; do
   proj_tokens=0
   proj_stories=0
   proj_generate_tokens=0
+  proj_retries=0
   for sid in S-001 S-002 S-003 S-004; do
     proj_generate_tokens=$((proj_generate_tokens + $(extract_tokens_from_log "$LOG_DIR/${proj_label}-generate-${sid}.log")))
   done
@@ -2341,8 +2345,10 @@ for proj_label in nextjs angular; do
     [ -f "$sprint_log" ] || continue
     sprint_tokens="$(extract_tokens_from_log "$sprint_log")"
     sprint_stories="$(awk '/=== Story .* COMPLETE ===/ { c += 1 } END { print c + 0 }' "$sprint_log")"
+    sprint_retries="$(awk '/Retrying\.\.\./{c++} END{print c+0}' "$sprint_log" 2>/dev/null || echo 0)"
     proj_tokens=$((proj_tokens + sprint_tokens))
     proj_stories=$((proj_stories + sprint_stories))
+    proj_retries=$((proj_retries + sprint_retries))
     echo "  $proj_label/$sprint: tokens=$sprint_tokens stories_completed=$sprint_stories"
   done
   if [ "$proj_generate_tokens" -gt 0 ]; then
@@ -2350,16 +2356,22 @@ for proj_label in nextjs angular; do
     proj_tokens=$((proj_tokens + proj_generate_tokens))
   fi
   echo "  $proj_label TOTAL: tokens=$proj_tokens stories_completed=$proj_stories"
+  total_planning_tokens=$((total_planning_tokens + proj_generate_tokens))
+  total_execution_tokens=$((total_execution_tokens + proj_tokens - proj_generate_tokens))
   total_tokens_all=$((total_tokens_all + proj_tokens))
   total_stories_all=$((total_stories_all + proj_stories))
+  total_retries_all=$((total_retries_all + proj_retries))
 done
 if [ "$total_tokens_all" -eq 0 ]; then
   echo "  ALL: tokens=unavailable (no 'tokens used' markers in codex output) stories_completed=$total_stories_all"
 else
   echo "  ALL: tokens=$total_tokens_all stories_completed=$total_stories_all"
 fi
-benchmark_set_tokens "$total_tokens_all"
+benchmark_set_planning_tokens "$total_planning_tokens"
+benchmark_set_execution_tokens "$total_execution_tokens"
+benchmark_set_story_cycles "$total_stories_all"
 benchmark_set_stories "$total_stories_all"
+benchmark_set_retries "$total_retries_all"
 
 # ── Generation mode note ───────────────────────────────────────────────────────
 

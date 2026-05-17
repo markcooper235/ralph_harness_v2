@@ -907,7 +907,7 @@ fi
 if [ "$ALLOW_EXACT_AUTOFIX" -ne 1 ] && [ "$ALLOW_CODEX_AUTOFIX" -ne 1 ]; then
   log ""
   log "=== Fallow FAIL — $ISSUE_COUNT issue(s); broad auto-fix disabled by default ==="
-  log "Manual correction required before re-running ralph-task.sh."
+  log "Manual correction required before re-running ralph-story-run.sh."
   exit 1
 fi
 
@@ -929,7 +929,7 @@ fi
 
 log ""
 log "=== Fallow FAIL — $ISSUE_COUNT issue(s) remain after auto-fix ==="
-log "Manual correction required before re-running ralph-task.sh."
+log "Manual correction required before re-running ralph-story-run.sh."
 log ""
 print_report
 log ""

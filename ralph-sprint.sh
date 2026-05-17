@@ -408,9 +408,9 @@ readiness_status() {
 
   echo ""
   if [ -n "$active_id" ]; then
-    echo "Next action: ./ralph-task.sh to continue active story $active_id"
+    echo "Next action: ./ralph-story-run.sh to continue active story $active_id"
   elif [ -n "$next_id" ]; then
-    echo "Next action: ./ralph-story.sh start-next && ./ralph-task.sh"
+    echo "Next action: ./ralph-story.sh start-next && ./ralph-story-run.sh"
   else
     echo "Next action: ./ralph-story.sh add --title '<title>' to plan new work"
   fi

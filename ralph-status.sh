@@ -171,9 +171,9 @@ next_action_line() {
   elif [ "$loop_state" = "running" ]; then
     printf 'Next action: Ralph is running; monitor the active story.\n'
   elif [ -n "$sprint_story_id" ] && [ "$story_status" = "active" ]; then
-    printf 'Next action: run ./scripts/ralph/ralph-task.sh to continue the active story.\n'
+    printf 'Next action: run ./scripts/ralph/ralph-story-run.sh to continue the active story.\n'
   else
-    printf 'Next action: run ./scripts/ralph/ralph-story.sh start-next && ./scripts/ralph/ralph-task.sh\n'
+    printf 'Next action: run ./scripts/ralph/ralph-story.sh start-next && ./scripts/ralph/ralph-story-run.sh\n'
   fi
 }
 
