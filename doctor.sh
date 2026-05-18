@@ -67,6 +67,9 @@ else
   echo "OK: .specify/ artifacts are not gitignored"
 fi
 
+echo "OK: Ralph uses story-local SpecKit artifacts under each story's .specify/ directory"
+echo "    Project-level 'specify init' is optional and not required for Ralph workflows."
+
 if specify_bin="$(find_specify_bin)"; then
   specify_source="$(describe_specify_bin "$specify_bin")"
   case "$specify_source" in
@@ -89,8 +92,8 @@ if specify_bin="$(find_specify_bin)"; then
   esac
 else
   fail "'specify' CLI not found — required for story specification.
-  Install: uvx --from git+https://github.com/github/spec-kit.git specify init <PROJECT>
-  Or:      npx specify init <PROJECT>
+  Install the CLI: uv tool install git+https://github.com/github/spec-kit.git
+  Or use:          npx --yes specify version
   Or:      bash install.sh --install-speckit"
 fi
 

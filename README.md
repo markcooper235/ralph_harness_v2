@@ -4,6 +4,8 @@
 
 Ralph is a Codex-native autonomous loop that executes sprint stories as focused story-level Codex cycles. Planning artifacts are durable and committed; execution state stays transient.
 
+Ralph uses story-local SpecKit artifacts under each story directory's `.specify/` folder. A repo-wide `specify init` step is optional and not required for normal Ralph workflows.
+
 This repo is the Ralph-for-Codex framework — **story-task architecture**:
 
 - stories replace epics as the sprint-level planning unit

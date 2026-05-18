@@ -1895,8 +1895,8 @@ cmd_specify() {
   # Detect specify binary — required, no fallback
   local specify_bin=""
   specify_bin="$(find_specify_bin)" || fail "'specify' CLI not found and 'npx specify' unavailable.
-  Install: uvx --from git+https://github.com/github/spec-kit.git specify init <PROJECT>
-  Or:      npx specify init <PROJECT>
+  Install the CLI: uv tool install git+https://github.com/github/spec-kit.git
+  Or use:          npx --yes specify version
   Or re-run: bash install.sh --install-speckit"
   echo "SpecKit: $specify_bin"
 

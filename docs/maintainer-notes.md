@@ -48,10 +48,11 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - SpecKit analysis runs three sequential phases via `ralph-story.sh specify <ID>`: specify → plan → tasks.
 - Output artifacts are written to `<story-dir>/.specify/{spec.md, plan.md, tasks.md}`.
 - `.specify/` artifacts are durable and should be committed alongside `story.json`.
+- Ralph's canonical model is story-local SpecKit state. Project-level `specify init` is optional interoperability sugar, not a framework requirement.
 - `ralph-story.sh generate <ID>` detects `.specify/` artifacts and uses the `story-specify` skill when present; it falls back to the `story-generate` skill when artifacts are absent.
 - `ralph-story.sh specify-all` and `generate-all` support `--jobs N` for parallel execution.
 - `ralph-story.sh prepare-all` = specify-all + generate-all + health + promote to ready. It is the recommended single-command story preparation path.
-- SpecKit requires the `specify` CLI to be installed. `doctor.sh` checks for it and fails if missing. Install via `--install-speckit` or `uvx --from git+https://github.com/github/spec-kit.git specify init <PROJECT>`.
+- SpecKit requires the `specify` CLI to be installed. `doctor.sh` checks for it and fails if missing. Install via `--install-speckit`, `uv tool install git+https://github.com/github/spec-kit.git`, or an `npx`-based fallback.
 - When `specify` is absent and cannot be found via `npx`, `ralph-story.sh specify` fails with a clear message — there is no silent fallback for SpecKit phases.
 
 ---
