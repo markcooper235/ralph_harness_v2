@@ -282,7 +282,7 @@ If no matching marker blocks are found, a non-empty `prompt.local.md` is appende
 ### Adding a new local capability
 
 1. Add or update a helper script under `scripts/ralph/`.
-   Use `scripts/ralph/new-local-extension.sh.example` as the starting point.
+   Keep it idempotent, concise, and safe to run repeatedly from prompts.
 2. Add usage instructions to `scripts/ralph/prompt.local.md`.
 3. Add a one-line note in `AGENTS.md` if policy or process changed.
 4. Run `./scripts/ralph/doctor.sh` and a small Ralph story sanity check.
