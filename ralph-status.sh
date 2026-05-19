@@ -113,15 +113,39 @@ active_sprint_story_id() {
   jq -r '.activeStoryId // empty' "$stories_file"
 }
 
+story_file_status() {
+  local stories_file="$1"
+  local story_id="$2"
+  local raw_path story_path_abs
+
+  [ -n "$story_id" ] || return 0
+  raw_path="$(jq -r --arg id "$story_id" '.stories[] | select(.id == $id) | .story_path // ""' "$stories_file" 2>/dev/null || true)"
+  [ -n "$raw_path" ] || return 0
+  [[ "$raw_path" != /* ]] && story_path_abs="$WORKSPACE_ROOT/$raw_path" || story_path_abs="$raw_path"
+  [ -f "$story_path_abs" ] || return 0
+
+  jq -r '.status // empty' "$story_path_abs" 2>/dev/null || true
+}
+
 active_sprint_story_line() {
   local stories_file="$1"
   local story_id="$2"
   [ -n "$story_id" ] || return 0
+  local backlog_status file_status
+  backlog_status="$(jq -r --arg id "$story_id" '.stories[] | select(.id == $id) | (.status // "planned")' "$stories_file" 2>/dev/null || true)"
+  file_status="$(story_file_status "$stories_file" "$story_id")"
+
   jq -r --arg id "$story_id" '
     .stories[]
     | select(.id == $id)
-    | "Active story: \(.id) (P\(.priority // 0) E\(.effort // 0)) - \(.title)\nStory status: \(.status // "planned")"
+    | "Active story: \(.id) (P\(.priority // 0) E\(.effort // 0)) - \(.title)"
   ' "$stories_file"
+
+  if [ -n "$file_status" ] && [ "$file_status" != "$backlog_status" ]; then
+    printf 'Story status: backlog=%s, story.json=%s\n' "$backlog_status" "$file_status"
+  else
+    printf 'Story status: %s\n' "${file_status:-$backlog_status}"
+  fi
 }
 
 next_sprint_story_line() {
@@ -150,7 +174,7 @@ next_action_line() {
   local sprint_story_id="$1"
   local stories_file="$2"
   local loop_state="$3"
-  local all_done story_status
+  local all_done story_status story_file_state
 
   all_done=false
   if [ -f "$stories_file" ]; then
@@ -162,12 +186,17 @@ next_action_line() {
   story_status=""
   if [ -n "$sprint_story_id" ] && [ -f "$stories_file" ]; then
     story_status="$(jq -r --arg id "$sprint_story_id" '.stories[] | select(.id == $id) | (.status // "")' "$stories_file" 2>/dev/null || true)"
+    story_file_state="$(story_file_status "$stories_file" "$sprint_story_id")"
   fi
 
   if [ "$all_done" = true ] && [ "$loop_state" = "running" ]; then
     printf 'Next action: wait for Ralph to finish closeout.\n'
   elif [ "$all_done" = true ]; then
     printf 'Next action: run ./scripts/ralph/ralph-sprint-commit.sh to close out the completed sprint.\n'
+  elif [ -n "$sprint_story_id" ] && [ "$story_status" = "active" ] && [ "$story_file_state" = "done" ] && [ "$loop_state" = "running" ]; then
+    printf 'Next action: wait for Ralph to reconcile story closeout.\n'
+  elif [ -n "$sprint_story_id" ] && [ "$story_status" = "active" ] && [ "$story_file_state" = "done" ]; then
+    printf 'Next action: run ./scripts/ralph/ralph-story-run.sh to reconcile completed story closeout.\n'
   elif [ "$loop_state" = "running" ]; then
     printf 'Next action: Ralph is running; monitor the active story.\n'
   elif [ -n "$sprint_story_id" ] && [ "$story_status" = "active" ]; then

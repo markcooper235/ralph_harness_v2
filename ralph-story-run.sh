@@ -90,6 +90,14 @@ resolve_story_file() {
 resolve_story_file
 STORY_DIR="$(dirname "$STORY_FILE")"
 
+story_is_complete() {
+  jq -e '
+    (.status // "") == "done"
+    and (.passes // false) == true
+    and ((.tasks // []) | all(.passes == true))
+  ' "$STORY_FILE" >/dev/null 2>&1
+}
+
 task_status() {
   local task_id="$1"
   jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .status // "pending"' "$STORY_FILE"
@@ -513,6 +521,18 @@ sync_story_metadata_to_backlog() {
   mv "$stmp" "$meta_file"
 }
 
+reconcile_completed_story_if_needed() {
+  if ! story_is_complete; then
+    return 1
+  fi
+
+  log "Story already marked complete in story.json; reconciling backlog and branch state."
+  sync_story_metadata_to_backlog
+  merge_story_branch
+  log "=== Story $STORY_ID COMPLETE ==="
+  exit 0
+}
+
 merge_story_branch() {
   local story_branch story_title sprint sprint_branch merge_target meta_stories_file
   story_branch="$(jq -r '.branchName // ""' "$STORY_FILE" 2>/dev/null || true)"
@@ -524,6 +544,11 @@ merge_story_branch() {
   merge_target="$(git -C "$WORKSPACE_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$story_branch" 2>/dev/null | head -n1)"
   [ -n "$merge_target" ] || merge_target="$sprint_branch"
   meta_stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
+
+  if ! git -C "$WORKSPACE_ROOT" show-ref --verify --quiet "refs/heads/$story_branch" 2>/dev/null; then
+    log "Story branch already absent: $story_branch"
+    return 0
+  fi
 
   if ! git -C "$WORKSPACE_ROOT" show-ref --verify --quiet "refs/heads/$merge_target" 2>/dev/null; then
     return 0
@@ -588,6 +613,8 @@ log ""
 log "=== ralph-story-run: $STORY_ID — $STORY_TITLE ==="
 log "Story file: $STORY_FILE"
 log ""
+
+reconcile_completed_story_if_needed
 
 if [ -n "$TARGET_TASK_ID" ]; then
   jq -e --arg id "$TARGET_TASK_ID" '.tasks[] | select(.id == $id)' "$STORY_FILE" >/dev/null \
