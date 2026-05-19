@@ -208,10 +208,10 @@ normalize_story_container() {
                        else . end)
                       | (if test("^rg \"[^\"]+\" [^ ]+$") then
                            capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$")
-                           | "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+                           | "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null || grep -Fq \"\(.pat)\" \(.file)"
                          elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
                            capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$")
-                           | "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+                           | "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null || grep -Fq \"\(.pat)\" \(.file)"
                          else . end)
                     else . end
                   ))
@@ -1891,6 +1891,10 @@ cmd_specify() {
   [[ "$raw_path" != /* ]] && story_path_abs="$WORKSPACE_ROOT/$raw_path" || story_path_abs="$raw_path"
   story_dir="$(dirname "$story_path_abs")"
   specify_dir="$story_dir/.specify"
+  local repo_briefing_abs repo_briefing_rel
+  repo_briefing_abs="$(ensure_repo_briefing "$WORKSPACE_ROOT")"
+  repo_briefing_rel="${repo_briefing_abs#$WORKSPACE_ROOT/}"
+  local story_focus_text story_focus_hints=""
 
   # Detect specify binary — required, no fallback
   local specify_bin=""
@@ -1926,6 +1930,8 @@ cmd_specify() {
   [ -n "$sprint" ] || sprint="$(get_active_sprint 2>/dev/null || echo "sprint-1")"
   priority="$(printf '%s' "$story_meta" | jq -r '.priority // 1')"
   depends_on_arr="$(printf '%s' "$story_meta" | jq -c '.depends_on // []')"
+  story_focus_text="$(printf '%s\n%s\n%s\n' "$title" "$goal" "$prompt_context")"
+  story_focus_hints="$(collect_story_focus_hints "$WORKSPACE_ROOT" "$story_focus_text" || true)"
 
   # Pull dependency context (spec fields + compact story handoff) for SpecKit input
   local dep_context=""
@@ -1992,10 +1998,19 @@ $prompt_context
 - Priority: $priority
 - Effort (story points): $effort
 - Depends on: $depends_on_arr
+
+## Default Project Briefing
+- Start with: $repo_briefing_rel
+- Only inspect additional files that are directly relevant to this story.
+- Avoid broad repo rediscovery unless the briefing is missing essential detail.
 SPECIN
 
   if [ -n "$dep_context" ]; then
     printf '\n## Prior Story Results\n%s\n' "$dep_context" >> "$specify_dir/input.md"
+  fi
+
+  if [ -n "$story_focus_hints" ]; then
+    printf '\n## Likely Implementation Files\n%s\n' "$story_focus_hints" >> "$specify_dir/input.md"
   fi
 
   local word_count
@@ -2009,6 +2024,14 @@ SPECIN
 Run the SpecKit specification workflow for this story. No human approval gates — proceed automatically through all three phases in sequence.
 
 Feature input file: $specify_dir/input.md
+Repo briefing file: $repo_briefing_rel
+
+Context discipline:
+- Read the repo briefing first and treat it as the default source of project setup, tooling, and layout context.
+- Do not broadly reread README, package.json, scaffold files, or unrelated directories unless the story explicitly needs them or the repo briefing is insufficient.
+- Use the "Likely Implementation Files" section in input.md as the first place to inspect implementation/test paths when it is present.
+- If you inspect more files, keep that inspection tightly scoped to the likely implementation area, nearest tests, and directly relevant config.
+- Preserve quality by being concrete about scope, invariants, file decisions, and verification, but avoid unnecessary narrative or repeated repo summary.
 
 Phase 1 — Specify:
 Use the SpecKit specify skill to analyse the feature input and produce a structured specification.

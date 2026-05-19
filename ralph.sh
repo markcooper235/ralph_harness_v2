@@ -14,6 +14,9 @@ CODEX_BIN="${CODEX_BIN:-codex}"
 LOCK_DIR="$SCRIPT_DIR/.workflow-lock"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
+RUNTIME_ROOT="$SCRIPT_DIR/runtime"
+SPRINT_RUNS_DIR="$RUNTIME_ROOT/sprint-runs"
+RUNTIME_RETENTION=3
 
 MAX_STORIES=50
 CONTINUE_ON_FAILURE=false
@@ -119,6 +122,72 @@ fi
 
 acquire_workflow_lock
 
+prune_runtime_runs() {
+  local runs_dir="$1"
+  local keep_count="${2:-3}"
+  [ -d "$runs_dir" ] || return 0
+
+  local run_paths=()
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    run_paths+=("$path")
+  done < <(find "$runs_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+
+  local total="${#run_paths[@]}"
+  [ "$total" -gt "$keep_count" ] || return 0
+
+  local prune_count=$((total - keep_count))
+  local i
+  for ((i = 0; i < prune_count; i++)); do
+    rm -rf "${run_paths[$i]}"
+  done
+}
+
+write_sprint_run_manifest() {
+  local phase="$1"
+  local manifest_path="$SPRINT_RUN_DIR/sprint-run.json"
+  jq -n \
+    --arg sprint "$ACTIVE_SPRINT" \
+    --arg sprint_branch "$SPRINT_BRANCH" \
+    --arg stories_file "$STORIES_FILE" \
+    --arg started_at "$SPRINT_RUN_STARTED_AT" \
+    --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg phase "$phase" \
+    --arg log_file "$SPRINT_LOG_FILE" \
+    --arg run_dir "$SPRINT_RUN_DIR" \
+    --argjson story_count "${story_count:-0}" \
+    --argjson done_count "${done_count:-0}" \
+    --argjson failed_count "${failed_count:-0}" \
+    --arg remaining "${remaining:-unknown}" \
+    '{
+      sprint: $sprint,
+      sprint_branch: $sprint_branch,
+      stories_file: $stories_file,
+      started_at: $started_at,
+      updated_at: $updated_at,
+      phase: $phase,
+      log_file: $log_file,
+      run_dir: $run_dir,
+      story_count: $story_count,
+      done_count: $done_count,
+      failed_count: $failed_count,
+      remaining_stories: $remaining
+    }' > "$manifest_path"
+}
+
+SPRINT_RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+SPRINT_RUN_ID="$(date -u +%Y-%m-%dT%H-%M-%SZ)-$ACTIVE_SPRINT"
+SPRINT_RUN_DIR="$SPRINT_RUNS_DIR/$SPRINT_RUN_ID"
+SPRINT_LOG_FILE="$SPRINT_RUN_DIR/sprint.log"
+mkdir -p "$SPRINT_RUN_DIR/stories"
+prune_runtime_runs "$SPRINT_RUNS_DIR" "$RUNTIME_RETENTION"
+export RALPH_SPRINT_RUN_DIR="$SPRINT_RUN_DIR"
+export RALPH_SPRINT_LOG_FILE="$SPRINT_LOG_FILE"
+
+if [ "$DRY_RUN" != "true" ]; then
+  exec > >(tee -a "$SPRINT_LOG_FILE") 2>&1
+fi
+
 # ---------------------------------------------------------------------------
 # Pre-flight: warn about stories with no story.json
 # ---------------------------------------------------------------------------
@@ -144,10 +213,13 @@ fi
 story_count=0
 done_count=0
 failed_count=0
+remaining="unknown"
+write_sprint_run_manifest "started"
 
 echo ""
 echo "Ralph sprint loop: $ACTIVE_SPRINT"
 echo "Stories file:      $STORIES_FILE"
+echo "Runtime journal:   $SPRINT_RUN_DIR"
 echo ""
 
 while [ "$story_count" -lt "$MAX_STORIES" ]; do
@@ -233,5 +305,7 @@ else
     echo "To reset a stuck story: ./scripts/ralph/ralph-story.sh set-status <ID> planned"
   fi
 fi
+
+write_sprint_run_manifest "completed"
 
 [ "$failed_count" -eq 0 ] || exit 1

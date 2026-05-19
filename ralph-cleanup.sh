@@ -33,7 +33,7 @@ if [ "$FORCE" -ne 1 ]; then
     echo "Refusing non-interactive destructive cleanup without --force." >&2
     exit 1
   fi
-  read -r -p "Cleanup will reset scripts/ralph/prd.json, clear active Ralph markers, and delete local artifacts. Continue? [y/N]: " reply
+  read -r -p "Cleanup will reset scripts/ralph/prd.json and clear active Ralph markers. Runtime journals under scripts/ralph/runtime are preserved. Continue? [y/N]: " reply
   case "${reply,,}" in
     y|yes)
       ;;
@@ -58,4 +58,4 @@ rm -f \
   "$SCRIPT_DIR/.iteration-handoff-iter-"*.json
 rm -rf "$PLAYWRIGHT_CLI_DIR"
 
-echo "Ralph cleanup complete (no archive created, prd.json reset, active markers cleared, .playwright-cli cleared)."
+echo "Ralph cleanup complete (no archive created, prd.json reset, active markers cleared, runtime journals preserved, .playwright-cli cleared)."

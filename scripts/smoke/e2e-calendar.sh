@@ -121,6 +121,19 @@ trap cleanup EXIT
 log()  { echo "[smoke] $*"; }
 fail() { echo "[smoke] FAIL: $*" >&2; exit 1; }
 
+resolve_latest_runtime_sprint_log() {
+  local proj_dir="$1"
+  local runs_dir="$proj_dir/scripts/ralph/runtime/sprint-runs"
+  [ -d "$runs_dir" ] || return 1
+
+  local manifest_path log_path
+  manifest_path="$(find "$runs_dir" -type f -name sprint-run.json | sort | tail -n1)"
+  [ -n "$manifest_path" ] || return 1
+  log_path="$(jq -r '.log_file // empty' "$manifest_path" 2>/dev/null || true)"
+  [ -n "$log_path" ] && [ -f "$log_path" ] || return 1
+  printf '%s\n' "$log_path"
+}
+
 # Commit any staged or unstaged changes (used for framework baseline commits)
 commit_baseline() {
   local repo="$1"
@@ -352,16 +365,25 @@ run_sprint() {
   local proj_dir="$1"
   local proj_label="$2"
   local sprint="${3:-sprint-1}"
-  local log_file="$LOG_DIR/${proj_label}-${sprint}.log"
+  local harness_log="$LOG_DIR/${proj_label}-${sprint}-harness.log"
+  local runtime_path_file="$LOG_DIR/${proj_label}-${sprint}.runtime-path"
 
   log "Running $sprint for $proj_label..."
-  (
+  local exit_code=0
+  if (
     cd "$proj_dir/scripts/ralph"
     timeout 2700 env CODEX_BIN="$CODEX_BIN_VALUE" \
       ./ralph.sh --max-retries "$MAX_RETRIES" --continue-on-failure \
-      2>&1
-  ) | tee "$log_file"
-  return "${PIPESTATUS[0]}"
+      > "$harness_log" 2>&1
+  ); then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+  if runtime_log="$(resolve_latest_runtime_sprint_log "$proj_dir" 2>/dev/null)"; then
+    printf '%s\n' "$runtime_log" > "$runtime_path_file"
+  fi
+  return "$exit_code"
 }
 
 # ── Report helpers ─────────────────────────────────────────────────────────────
@@ -2174,7 +2196,12 @@ report_sprint() {
   local skipped="${6:-0}"
 
   local sprint_log="$LOG_DIR/${proj_label}-${sprint}.log"
+  local runtime_path_file="$LOG_DIR/${proj_label}-${sprint}.runtime-path"
   local stories_file="$proj_dir/scripts/ralph/sprints/$sprint/stories.json"
+
+  if [ -f "$runtime_path_file" ]; then
+    sprint_log="$(cat "$runtime_path_file")"
+  fi
 
   echo ""
   echo "── $proj_label-calendar / $sprint ─────────────────────────────────"
@@ -2315,6 +2342,8 @@ echo "── Behavioral observations ──────────────�
 for proj_label in nextjs angular; do
   for sprint in sprint-1 sprint-2; do
     sprint_log="$LOG_DIR/${proj_label}-${sprint}.log"
+    runtime_path_file="$LOG_DIR/${proj_label}-${sprint}.runtime-path"
+    [ -f "$runtime_path_file" ] && sprint_log="$(cat "$runtime_path_file")"
     [ -f "$sprint_log" ] || continue
     retries="$(awk '/Retrying\.\.\./{c++} END{print c+0}' "$sprint_log" 2>/dev/null || echo 0)"
     structural="$(grep -c "STRUCTURAL FAILURE" "$sprint_log" 2>/dev/null; true)"
@@ -2342,6 +2371,8 @@ for proj_label in nextjs angular; do
   done
   for sprint in sprint-1 sprint-2; do
     sprint_log="$LOG_DIR/${proj_label}-${sprint}.log"
+    runtime_path_file="$LOG_DIR/${proj_label}-${sprint}.runtime-path"
+    [ -f "$runtime_path_file" ] && sprint_log="$(cat "$runtime_path_file")"
     [ -f "$sprint_log" ] || continue
     sprint_tokens="$(extract_tokens_from_log "$sprint_log")"
     sprint_stories="$(awk '/=== Story .* COMPLETE ===/ { c += 1 } END { print c + 0 }' "$sprint_log")"

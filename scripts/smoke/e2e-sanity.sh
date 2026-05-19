@@ -132,6 +132,19 @@ extract_story_complete_count_from_log() {
   awk '/=== Story .* COMPLETE ===/ { count += 1 } END { print count + 0 }' "$log_file"
 }
 
+resolve_latest_runtime_sprint_log() {
+  local repo_root="$1"
+  local runs_dir="$repo_root/scripts/ralph/runtime/sprint-runs"
+  [ -d "$runs_dir" ] || return 1
+
+  local manifest_path log_path
+  manifest_path="$(find "$runs_dir" -type f -name sprint-run.json | sort | tail -n1)"
+  [ -n "$manifest_path" ] || return 1
+  log_path="$(jq -r '.log_file // empty' "$manifest_path" 2>/dev/null || true)"
+  [ -n "$log_path" ] && [ -f "$log_path" ] || return 1
+  printf '%s\n' "$log_path"
+}
+
 run_with_retries_logged() {
   local retries="$1"
   local log_file="$2"
@@ -146,7 +159,7 @@ run_with_retries_logged() {
       echo "[smoke] cmd: $*"
     } >>"$log_file"
 
-    if "$@" >>"$log_file" 2>&1; then
+    if "$@" >/dev/null 2>&1; then
       return 0
     fi
 
@@ -962,10 +975,11 @@ SPRSH
   assert_contains "$WORK_DIR/story-add-S-002.log" "Added story: S-002"
   assert_contains "$WORK_DIR/story-add-S-003.log" "Added story: S-003"
   assert_contains "$WORK_DIR/story-health.log" "\\[S-001\\]"
-  assert_contains "$WORK_DIR/loop.log" "Story S-001 COMPLETE"
-  assert_contains "$WORK_DIR/loop.log" "Story S-002 COMPLETE"
-  assert_contains "$WORK_DIR/loop.log" "Story S-003 COMPLETE"
-  assert_not_contains "$WORK_DIR/loop.log" "node: bad option: --runInBand"
+  runtime_loop_log="$(resolve_latest_runtime_sprint_log "$SPRINT_REPO")" || fail "Could not resolve Ralph runtime sprint log"
+  assert_contains "$runtime_loop_log" "Story S-001 COMPLETE"
+  assert_contains "$runtime_loop_log" "Story S-002 COMPLETE"
+  assert_contains "$runtime_loop_log" "Story S-003 COMPLETE"
+  assert_not_contains "$runtime_loop_log" "node: bad option: --runInBand"
   if [ "$APP_MODE" = "ui" ]; then
     assert_contains "$WORK_DIR/runtime-sprint.log" "browser ok: $sprint_expected_msg"
   else
@@ -975,8 +989,8 @@ SPRSH
   assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint regression: PASS"
   assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Deleted source sprint branch:"
 
-  sprint_tokens="$(extract_tokens_from_log "$WORK_DIR/loop.log")"
-  sprint_stories_completed="$(extract_story_complete_count_from_log "$WORK_DIR/loop.log")"
+  sprint_tokens="$(extract_tokens_from_log "$runtime_loop_log")"
+  sprint_stories_completed="$(extract_story_complete_count_from_log "$runtime_loop_log")"
   sprint_retries="$(awk '/retrying\.\.\./{c++} END{print c+0}' "$WORK_DIR/loop.log" 2>/dev/null || echo 0)"
   benchmark_set_execution_tokens "$sprint_tokens"
   benchmark_set_story_cycles "$sprint_stories_completed"

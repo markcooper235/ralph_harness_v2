@@ -18,6 +18,7 @@ TARGET_TASK_ID=""
 MAX_RETRIES=1
 DRY_RUN=0
 QUIET=0
+RUNTIME_RETENTION=3
 
 usage() {
   cat <<'EOF'
@@ -61,6 +62,27 @@ require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Missing required comman
 require_cmd jq
 require_cmd git
 
+prune_runtime_runs() {
+  local runs_dir="$1"
+  local keep_count="${2:-3}"
+  [ -d "$runs_dir" ] || return 0
+
+  local run_paths=()
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    run_paths+=("$path")
+  done < <(find "$runs_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+
+  local total="${#run_paths[@]}"
+  [ "$total" -gt "$keep_count" ] || return 0
+
+  local prune_count=$((total - keep_count))
+  local i
+  for ((i = 0; i < prune_count; i++)); do
+    rm -rf "${run_paths[$i]}"
+  done
+}
+
 resolve_story_file() {
   if [ -n "$STORY_FILE" ]; then
     [ -f "$STORY_FILE" ] || fail "Story file not found: $STORY_FILE"
@@ -89,6 +111,58 @@ resolve_story_file() {
 
 resolve_story_file
 STORY_DIR="$(dirname "$STORY_FILE")"
+RUNTIME_ROOT="$SCRIPT_DIR/runtime"
+STORY_RUNS_DIR="$RUNTIME_ROOT/story-runs"
+STORY_RUNTIME_DIR=""
+CHECK_RUNTIME_DIR=""
+STORY_LOG_DIR=""
+STORY_MANIFEST_PATH=""
+VERIFY_FAILED_BUNDLE_PATH=""
+VERIFY_FAILED_SUMMARY_PATH=""
+
+ensure_story_runtime_dir() {
+  local run_root="${RALPH_SPRINT_RUN_DIR:-}"
+  if [ -z "$run_root" ]; then
+    local story_run_id
+    story_run_id="$(date -u +%Y-%m-%dT%H-%M-%SZ)-${STORY_ID:-story-run}"
+    run_root="$STORY_RUNS_DIR/$story_run_id"
+    mkdir -p "$run_root"
+    prune_runtime_runs "$STORY_RUNS_DIR" "$RUNTIME_RETENTION"
+  fi
+
+  STORY_RUNTIME_DIR="$run_root/stories/$STORY_ID"
+  STORY_LOG_DIR="$STORY_RUNTIME_DIR"
+  CHECK_RUNTIME_DIR="$STORY_RUNTIME_DIR/checks"
+  STORY_MANIFEST_PATH="$STORY_RUNTIME_DIR/story-summary.json"
+  mkdir -p "$CHECK_RUNTIME_DIR"
+}
+
+write_story_runtime_manifest() {
+  local phase="$1"
+  jq -n \
+    --arg story_id "$STORY_ID" \
+    --arg title "$STORY_TITLE" \
+    --arg story_file "$STORY_FILE" \
+    --arg runtime_dir "$STORY_RUNTIME_DIR" \
+    --arg log_dir "$STORY_LOG_DIR" \
+    --arg phase "$phase" \
+    --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg failed_task_id "$VERIFY_FAILED_TASK_ID" \
+    --arg failure_bundle_path "$VERIFY_FAILED_BUNDLE_PATH" \
+    --arg failure_summary_path "$VERIFY_FAILED_SUMMARY_PATH" \
+    '{
+      story_id: $story_id,
+      title: $title,
+      story_file: $story_file,
+      runtime_dir: $runtime_dir,
+      log_dir: $log_dir,
+      phase: $phase,
+      updated_at: $updated_at,
+      failed_task_id: (if $failed_task_id == "" then null else $failed_task_id end),
+      failure_bundle_path: (if $failure_bundle_path == "" then null else $failure_bundle_path end),
+      failure_summary_path: (if $failure_summary_path == "" then null else $failure_summary_path end)
+    }' > "$STORY_MANIFEST_PATH"
+}
 
 story_is_complete() {
   jq -e '
@@ -285,7 +359,7 @@ dependency_handoff_json() {
 }
 
 write_execution_manifest() {
-  local manifest_path="$STORY_DIR/.story-execution.json"
+  local manifest_path="$STORY_RUNTIME_DIR/.story-execution.json"
   local deps_json
   deps_json="$(dependency_handoff_json)"
   jq -c \
@@ -359,7 +433,7 @@ PROMPT
 run_story_cycle() {
   local cycle_kind="$1"
   local prompt="$2"
-  local log_file="$STORY_DIR/.story-run-${cycle_kind}.log"
+  local log_file="$STORY_LOG_DIR/${cycle_kind}.log"
 
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[DRY RUN] Would run story cycle: $cycle_kind"
@@ -422,12 +496,16 @@ finalize_story_handoff() {
 VERIFY_FAILED_TASK_ID=""
 VERIFY_FAILED_CHECKS_JSON="[]"
 VERIFY_FAILED_STRUCTURAL=0
+VERIFY_FAILED_BUNDLE_PATH=""
+VERIFY_FAILED_SUMMARY_PATH=""
 
 verify_story() {
   local baseline_fp_file="$1"
   VERIFY_FAILED_TASK_ID=""
   VERIFY_FAILED_CHECKS_JSON="[]"
   VERIFY_FAILED_STRUCTURAL=0
+  VERIFY_FAILED_BUNDLE_PATH=""
+  VERIFY_FAILED_SUMMARY_PATH=""
 
   local failure_seen=0
   local task_id
@@ -448,29 +526,62 @@ verify_story() {
       continue
     fi
 
-    local fp_file fail_file
+    local fp_file fail_file bundle_file
     fp_file="$(mktemp)"
     fail_file="$(mktemp)"
+    bundle_file="$(mktemp)"
     : > "$fp_file"
     : > "$fail_file"
+    printf '[]' > "$bundle_file"
 
     local check_num=0 check failed=0
     while IFS= read -r check; do
       [ -z "$check" ] && continue
       check_num=$((check_num + 1))
-      if (cd "$WORKSPACE_ROOT" && eval "$check") >/dev/null 2>&1; then
+      local stdout_tmp stderr_tmp check_exit
+      stdout_tmp="$(mktemp)"
+      stderr_tmp="$(mktemp)"
+      if (cd "$WORKSPACE_ROOT" && eval "$check") >"$stdout_tmp" 2>"$stderr_tmp"; then
         :
       else
         failed=1
+        check_exit=$?
         echo "${task_id}|${check_num}|$(check_fp "$check" "$task_id")" >> "$fp_file"
         printf '%s\n' "$check" >> "$fail_file"
+        local stdout_path stderr_path bundle_entry
+        stdout_path="$CHECK_RUNTIME_DIR/${task_id}-check-${check_num}.stdout.txt"
+        stderr_path="$CHECK_RUNTIME_DIR/${task_id}-check-${check_num}.stderr.txt"
+        cp "$stdout_tmp" "$stdout_path"
+        cp "$stderr_tmp" "$stderr_path"
+        bundle_entry="$(jq -n \
+          --arg task_id "$task_id" \
+          --argjson check_index "$check_num" \
+          --arg check "$check" \
+          --argjson exit_code "$check_exit" \
+          --arg stdout_path "$stdout_path" \
+          --arg stderr_path "$stderr_path" \
+          --arg stdout_tail "$(tail -n 20 "$stdout_tmp" 2>/dev/null)" \
+          --arg stderr_tail "$(tail -n 20 "$stderr_tmp" 2>/dev/null)" \
+          '{
+            task_id: $task_id,
+            check_index: $check_index,
+            check: $check,
+            exit_code: $exit_code,
+            stdout_path: $stdout_path,
+            stderr_path: $stderr_path,
+            stdout_tail: $stdout_tail,
+            stderr_tail: $stderr_tail
+          }')"
+        jq --argjson entry "$bundle_entry" '. + [$entry]' "$bundle_file" > "${bundle_file}.next"
+        mv "${bundle_file}.next" "$bundle_file"
       fi
+      rm -f "$stdout_tmp" "$stderr_tmp"
     done < <(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | .checks[]?' "$STORY_FILE")
 
     if [ "$failed" -eq 0 ]; then
       mark_task_done "$task_id"
       ensure_task_handoff_fallback "$task_id"
-      rm -f "$fp_file" "$fail_file"
+      rm -f "$fp_file" "$fail_file" "$bundle_file"
       continue
     fi
 
@@ -478,6 +589,13 @@ verify_story() {
     mark_task_failed "$task_id"
     VERIFY_FAILED_TASK_ID="$task_id"
     VERIFY_FAILED_CHECKS_JSON="$(jq -Rsc 'split("\n") | map(select(length > 0))' "$fail_file")"
+    VERIFY_FAILED_BUNDLE_PATH="$CHECK_RUNTIME_DIR/${task_id}-failing-checks.json"
+    VERIFY_FAILED_SUMMARY_PATH="$CHECK_RUNTIME_DIR/${task_id}-failing-checks-summary.txt"
+    cp "$bundle_file" "$VERIFY_FAILED_BUNDLE_PATH"
+    jq -r '
+      .[]
+      | "Check #\(.check_index): \(.check)\nExit code: \(.exit_code)\nSTDERR tail:\n\((.stderr_tail // "") | if . == "" then "(empty)" else . end)\nSTDOUT tail:\n\((.stdout_tail // "") | if . == "" then "(empty)" else . end)\n---"
+    ' "$VERIFY_FAILED_BUNDLE_PATH" > "$VERIFY_FAILED_SUMMARY_PATH"
     set_task_handoff_failure "$task_id" "$VERIFY_FAILED_CHECKS_JSON" "Shell checks still failing after story cycle."
 
     while IFS= read -r entry; do
@@ -488,7 +606,7 @@ verify_story() {
       fi
     done < "$fp_file"
 
-    rm -f "$fp_file" "$fail_file"
+    rm -f "$fp_file" "$fail_file" "$bundle_file"
     break
   done < <(if [ -n "$TARGET_TASK_ID" ]; then printf '%s\n' "$TARGET_TASK_ID"; else jq -r '.tasks[].id' "$STORY_FILE"; fi)
 
@@ -568,8 +686,6 @@ merge_story_branch() {
       || git -C "$WORKSPACE_ROOT" branch -D "$story_branch" 2>/dev/null \
       || true
     rm -f \
-      "$STORY_DIR"/.story-run-*.log \
-      "$STORY_DIR"/.story-execution.json \
       "$STORY_DIR"/.task-log-*.txt \
       "$STORY_DIR"/.fallow-autofix.txt \
       "$STORY_DIR"/.fallow-report.json
@@ -582,9 +698,12 @@ merge_story_branch() {
 build_remediation_prompt() {
   local task_id="$1"
   local checks_json="$2"
-  local task_scope checks_text
+  local failure_summary_path="$3"
+  local failure_bundle_path="$4"
+  local task_scope checks_text failure_summary
   task_scope="$(filtered_task_scope_json "$task_id" | jq -r 'join(", ")')"
   checks_text="$(jq -r '.[]' <<< "$checks_json" 2>/dev/null || printf '%s\n' "$checks_json")"
+  failure_summary="$(cat "$failure_summary_path" 2>/dev/null || echo "Failure summary unavailable.")"
   cat <<PROMPT
 Repair the remaining failing story checks.
 
@@ -595,6 +714,12 @@ Focus only on task $task_id.
 Scope: ${task_scope:-none}
 Still failing checks:
 $checks_text
+
+Failure bundle:
+$failure_bundle_path
+
+Compact error context:
+$failure_summary
 
 Rules:
 - Make only the minimal code and story.json changes needed to satisfy the failing checks.
@@ -608,13 +733,18 @@ acquire_lock
 
 STORY_ID="$(jq -r '.storyId' "$STORY_FILE")"
 STORY_TITLE="$(jq -r '.title' "$STORY_FILE")"
+ensure_story_runtime_dir
+write_story_runtime_manifest "started"
 
 log ""
 log "=== ralph-story-run: $STORY_ID — $STORY_TITLE ==="
 log "Story file: $STORY_FILE"
+log "Runtime journal: $STORY_RUNTIME_DIR"
 log ""
 
-reconcile_completed_story_if_needed
+if reconcile_completed_story_if_needed; then
+  :
+fi
 
 if [ -n "$TARGET_TASK_ID" ]; then
   jq -e --arg id "$TARGET_TASK_ID" '.tasks[] | select(.id == $id)' "$STORY_FILE" >/dev/null \
@@ -634,7 +764,7 @@ if ! verify_story "$baseline_fp_file"; then
       break
     fi
     remediation_count=$((remediation_count + 1))
-    remediation_prompt="$(build_remediation_prompt "$VERIFY_FAILED_TASK_ID" "$VERIFY_FAILED_CHECKS_JSON")"
+    remediation_prompt="$(build_remediation_prompt "$VERIFY_FAILED_TASK_ID" "$VERIFY_FAILED_CHECKS_JSON" "$VERIFY_FAILED_SUMMARY_PATH" "$VERIFY_FAILED_BUNDLE_PATH")"
     capture_failing_fingerprints "$baseline_fp_file"
     run_story_cycle "remediation-$remediation_count" "$remediation_prompt"
     verify_story "$baseline_fp_file" && break
@@ -643,6 +773,7 @@ fi
 rm -f "$baseline_fp_file"
 
 if [ -n "$VERIFY_FAILED_TASK_ID" ]; then
+  write_story_runtime_manifest "failed"
   log "=== Story $STORY_ID: some tasks incomplete or blocked ==="
   exit 1
 fi
@@ -650,6 +781,7 @@ fi
 finalize_story_handoff
 mark_story_done
 sync_story_metadata_to_backlog
+write_story_runtime_manifest "completed"
 merge_story_branch
 
 log "=== Story $STORY_ID COMPLETE ==="

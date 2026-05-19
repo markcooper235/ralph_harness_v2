@@ -116,6 +116,19 @@ benchmark_init "specify" "specify-pipeline" "$BENCH_FILE"
 log()  { echo "[smoke] $*"; }
 fail() { echo "[smoke] FAIL: $*" >&2; exit 1; }
 
+resolve_latest_runtime_sprint_log() {
+  local proj_dir="$1"
+  local runs_dir="$proj_dir/scripts/ralph/runtime/sprint-runs"
+  [ -d "$runs_dir" ] || return 1
+
+  local manifest_path log_path
+  manifest_path="$(find "$runs_dir" -type f -name sprint-run.json | sort | tail -n1)"
+  [ -n "$manifest_path" ] || return 1
+  log_path="$(jq -r '.log_file // empty' "$manifest_path" 2>/dev/null || true)"
+  [ -n "$log_path" ] && [ -f "$log_path" ] || return 1
+  printf '%s\n' "$log_path"
+}
+
 # ── ensure_specify ─────────────────────────────────────────────────────────────
 # Install the specify CLI if not already available.
 # Priority: uv → pip → npx (persistent wrapper)
@@ -617,6 +630,17 @@ if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-story.sh prepare-all) > "$palog" 2
 fi
 log "  prepare-all PASS"
 
+# Durable planning artifacts belong in git, and ralph.sh requires a clean tree.
+# Commit the generated .specify/ and story.json files before sprint activation.
+(
+  cd "$PROJ_DIR"
+  git add scripts/ralph/sprints/sprint-1/stories scripts/ralph/sprints/sprint-1/stories.json
+  if ! git diff --cached --quiet; then
+    git commit -m "chore(ralph): commit prepared sprint-1 artifacts" --quiet
+  fi
+)
+log "  Prepared sprint artifacts committed"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 10.5: Activate sprint via 'ralph-sprint.sh use' (Bug 2 lifecycle test)
 #
@@ -646,6 +670,7 @@ log "  Sprint lifecycle PASS: planned → ready → active"
 
 log "=== Running sprint ==="
 sprint_log="$LOG_DIR/sprint-1.log"
+sprint_harness_log="$LOG_DIR/sprint-1-harness.log"
 
 # Wrap in a function so PIPESTATUS is captured before set -e can fire on a
 # non-zero exit from ralph.sh (which exits 1 when any story is incomplete).
@@ -654,13 +679,15 @@ _run_sprint() {
     cd "$PROJ_DIR/scripts/ralph"
     timeout 2700 env CODEX_BIN="$CODEX_BIN_VALUE" \
       ./ralph.sh --max-retries "$MAX_RETRIES" --continue-on-failure \
-      2>&1
-  ) | tee "$sprint_log"
-  return "${PIPESTATUS[0]}"
+      > "$sprint_harness_log" 2>&1
+  )
 }
 
 SPRINT_EXIT=0
 _run_sprint || SPRINT_EXIT=$?
+if [ -z "${sprint_log:-}" ] || [ ! -f "$sprint_log" ]; then
+  sprint_log="$(resolve_latest_runtime_sprint_log "$PROJ_DIR")" || sprint_log=""
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 12: Sprint commit

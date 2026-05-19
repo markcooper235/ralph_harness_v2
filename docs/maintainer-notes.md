@@ -48,6 +48,8 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - SpecKit analysis runs three sequential phases via `ralph-story.sh specify <ID>`: specify → plan → tasks.
 - Output artifacts are written to `<story-dir>/.specify/{spec.md, plan.md, tasks.md}`.
 - `.specify/` artifacts are durable and should be committed alongside `story.json`.
+- `ralph-story.sh specify` also maintains a transient cached repo briefing under Ralph's script directory at `.cache/specify/repo-briefing.md` so stories reuse a compact project summary instead of repeatedly rediscovering repo setup.
+- `ralph-story.sh specify` should also prefer deterministic file-path hints derived from the story title, goal, and prompt context. Those hints belong in `input.md` as a first-pass map, not as expanded file contents.
 - Ralph's canonical model is story-local SpecKit state. Project-level `specify init` is optional interoperability sugar, not a framework requirement.
 - `ralph-story.sh generate <ID>` detects `.specify/` artifacts and uses the `story-specify` skill when present; it falls back to the `story-generate` skill when artifacts are absent.
 - `ralph-story.sh specify-all` and `generate-all` support `--jobs N` for parallel execution.
@@ -74,6 +76,10 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - `ralph-story-run.sh` locks execution via `.workflow-lock`; the lock is shared with `ralph.sh` via `RALPH_LOCK_HELD`.
 - Each task's `checks[]` are evaluated by running each shell expression from the workspace root. All checks must exit 0 for the task to pass.
 - The primary story cycle is where ordinary correction should happen. `--max-retries` controls only targeted remediation cycles after the main story cycle exits.
+- `ralph.sh` writes a sprint runtime journal under `scripts/ralph/runtime/sprint-runs/<timestamp>-<sprint>/`, including `sprint.log` and `sprint-run.json`.
+- `ralph-story-run.sh` writes story-cycle logs and failed-check bundles under that sprint runtime journal when available, or under `scripts/ralph/runtime/story-runs/` for standalone runs.
+- Runtime journals are for audit and debugging, not default prompt context. Only compact failed-check summaries should be injected into remediation prompts.
+- Runtime journal retention is capped at the most recent 3 run directories for both sprint runs and standalone story runs.
 - Task `handoff` is written on success and passed as compact context to downstream dependent tasks and stories.
 - `story_handoff` summarizes completed tasks, touched files, added contracts, and residual risks. It is used as context when dependent stories are prepared via `ralph-story.sh specify`.
 
@@ -110,6 +116,8 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - Empty local prompt files are ignored; non-matching legacy local content falls back to append mode.
 - Keep interactive wrappers minimal by default; provide CLI flags for non-interactive runs.
 - Keep `prompt.md` terse because every Ralph iteration pays for it.
+- Keep specify prep context terse too: default to the cached repo briefing plus story-local input, and only inspect additional files when they are directly relevant to the story.
+- Prefer path hints and repo briefing summaries over broad repo excerpts. The model should be pointed toward likely implementation files before it is invited to explore.
 
 ---
 
@@ -118,6 +126,7 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - Sprint-level archive is written to `tasks/archive/sprints/<sprint-name>/` by `ralph-sprint-commit.sh`.
 - `.active-prd` includes explicit `baseBranch`; scripts should use it before fallback target inference when it exists.
 - Transient per-story files (`.task-log-*.txt`, `.fallow-report.json`, `.fallow-autofix.txt`) are cleaned up automatically after a successful story merge.
+- Runtime journals under `scripts/ralph/runtime/` are intentionally preserved across successful runs and normal cleanup, but pruned to the most recent 3 run directories.
 
 ---
 

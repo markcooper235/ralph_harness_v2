@@ -155,7 +155,9 @@ Prerequisites:
 
 - `ralph.sh` loops over eligible stories: `start-next → ralph-story-run.sh → repeat`
 - `ralph-story-run.sh` runs one primary Codex cycle per story; acceptance `checks[]` are evaluated by shell after the cycle
+- sprint and story runtime journals are recorded under `scripts/ralph/runtime/`, kept out of model context by default, and pruned to the most recent 3 run directories
 - targeted remediation retries up to `--max-retries` times only when the primary cycle leaves correctable check failures
+- remediation prompts include compact failed-check summaries only when checks fail; full logs stay on disk
 - when all tasks pass, the story branch is merged to the sprint branch and deleted automatically
 - `ralph-fallow.sh` provides a scoped code-quality gate (dead code, duplication, lint) that can be run explicitly or during sprint closeout
 
@@ -267,9 +269,26 @@ scripts/ralph/
 │                   ├── spec.md
 │                   ├── plan.md
 │                   └── tasks.md
+├── .cache/
+│   └── specify/
+│       └── repo-briefing.md               # Cached project briefing for SpecKit prep (untracked in the framework repo)
 ├── roadmap.json                           # Structured roadmap data
 ├── roadmap.md                             # Rendered roadmap
 ├── roadmap-source.md                      # Durable roadmap input (committed)
+├── runtime/                               # Untracked sprint/story execution journals
+│   └── sprint-runs/
+│       └── <timestamp>-<sprint>/
+│           ├── sprint.log
+│           ├── sprint-run.json
+│           └── stories/
+│               └── S-001/
+│                   ├── primary.log
+│                   ├── remediation-1.log
+│                   ├── story-summary.json
+│                   └── checks/
+│                       ├── T-01-check-1.stderr.txt
+│                       ├── T-01-check-1.stdout.txt
+│                       └── T-01-failing-checks.json
 ├── tasks/
 │   └── archive/
 │       └── sprints/                       # Archived sprint metadata
@@ -294,6 +313,9 @@ scripts/ralph/
 - `scripts/ralph/prd.json` (when used via import-prd)
 - `scripts/ralph/progress.txt`
 - `scripts/ralph/.active-prd`
+- `scripts/ralph/.cache/` cached SpecKit preparation briefings in installed repos
+- `.cache/specify/` cached SpecKit preparation briefings in the framework repo
+- `scripts/ralph/runtime/` sprint and story journals (retained for the most recent 3 runs)
 - per-story `.task-log-*.txt`, `.fallow-report.json`, `.fallow-autofix.txt`
 
 Transient files must stay untracked. Ralph will fail or clean up when they drift into git.

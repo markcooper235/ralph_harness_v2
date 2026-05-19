@@ -4,6 +4,9 @@ scripts/ralph/.active-sprint
 # Ralph transient run artifacts (cleaned after successful story merge;
 # left in place on failure so the story branch can be inspected)
 scripts/ralph/.workflow-lock/
+.cache/specify/
+scripts/ralph/.cache/
+scripts/ralph/runtime/
 scripts/ralph/sprints/**/.task-log-*.txt
 scripts/ralph/sprints/**/.fallow-report.json
 scripts/ralph/sprints/**/.fallow-autofix.txt

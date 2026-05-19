@@ -82,6 +82,19 @@ extract_story_complete_count_from_log() {
   awk '/=== Story .* COMPLETE ===/ { count += 1 } END { print count + 0 }' "$log_file"
 }
 
+resolve_latest_runtime_sprint_log() {
+  local repo_root="$1"
+  local runs_dir="$repo_root/scripts/ralph/runtime/sprint-runs"
+  [ -d "$runs_dir" ] || return 1
+
+  local manifest_path log_path
+  manifest_path="$(find "$runs_dir" -type f -name sprint-run.json | sort | tail -n1)"
+  [ -n "$manifest_path" ] || return 1
+  log_path="$(jq -r '.log_file // empty' "$manifest_path" 2>/dev/null || true)"
+  [ -n "$log_path" ] && [ -f "$log_path" ] || return 1
+  printf '%s\n' "$log_path"
+}
+
 commit_framework_baseline() {
   local repo_root="$1"
   local commit_msg="$2"
@@ -105,7 +118,7 @@ run_with_retries_logged() {
   for attempt in $(seq 0 "$retries"); do
     echo "[worst-ui] attempt $((attempt + 1))/$((retries + 1))" >>"$log_file"
     echo "[worst-ui] cmd: $*" >>"$log_file"
-    if "$@" >>"$log_file" 2>&1; then
+    if "$@" >/dev/null 2>&1; then
       return 0
     fi
     if [ "$attempt" -ge "$retries" ]; then
@@ -698,15 +711,17 @@ SPRSH
   ./ralph-sprint-commit.sh > "$WORK_DIR/sprint-commit-sprint.log" 2>&1
 )
 
+runtime_loop_log="$(resolve_latest_runtime_sprint_log "$SPRINT_REPO")" || fail "Could not resolve Ralph runtime sprint log"
+
 assert_contains "$WORK_DIR/doctor-sprint.log" "OK: prerequisites present"
 assert_contains "$WORK_DIR/sprint-create-sprint.log" "Created sprint: sprint-1"
 assert_contains "$WORK_DIR/story-add-S-001.log" "Added story: S-001"
 assert_contains "$WORK_DIR/story-add-S-002.log" "Added story: S-002"
 assert_contains "$WORK_DIR/story-add-S-003.log" "Added story: S-003"
 assert_contains "$WORK_DIR/story-health.log" "\\[S-001\\]"
-assert_contains "$WORK_DIR/loop.log" "Story S-001 COMPLETE"
-assert_contains "$WORK_DIR/loop.log" "Story S-002 COMPLETE"
-assert_contains "$WORK_DIR/loop.log" "Story S-003 COMPLETE"
+assert_contains "$runtime_loop_log" "Story S-001 COMPLETE"
+assert_contains "$runtime_loop_log" "Story S-002 COMPLETE"
+assert_contains "$runtime_loop_log" "Story S-003 COMPLETE"
 assert_contains "$WORK_DIR/test-sprint.log" "test ok"
 assert_contains "$WORK_DIR/runtime-sprint.log" "browser ok: $expected_headline \| $expected_status \| $expected_cta \| $expected_state"
 assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint regression: PASS"
@@ -719,8 +734,8 @@ echo "[worst-ui] running ralph-verify --full post-commit"
 )
 assert_contains "$WORK_DIR/verify-full.log" "full verification passed"
 
-loop_tokens="$(extract_tokens_from_log "$WORK_DIR/loop.log")"
-stories_completed="$(extract_story_complete_count_from_log "$WORK_DIR/loop.log")"
+loop_tokens="$(extract_tokens_from_log "$runtime_loop_log")"
+stories_completed="$(extract_story_complete_count_from_log "$runtime_loop_log")"
 retry_count="$(awk '/Retrying\.\.\./{c++} END{print c+0}' "$WORK_DIR/loop.log" 2>/dev/null || echo 0)"
 benchmark_set_execution_tokens "$loop_tokens"
 benchmark_set_story_cycles "$stories_completed"
