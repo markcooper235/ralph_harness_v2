@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SOURCE_DIR/lib/codex-exec.sh"
 
 PROJECT_DIR="$(pwd)"
 DEST_DIR_REL="scripts/ralph"
@@ -20,6 +21,8 @@ INSTALL_PROMPTS=0
 INSTALL_SPECKIT=1
 MIGRATE_LEGACY=1
 SKIP_GIT_CHECK=0
+VERIFY_SETUP_MODE="auto"
+CODEX_BIN="${CODEX_BIN:-codex}"
 
 usage() {
   cat <<'EOF'
@@ -32,8 +35,10 @@ Options:
   --install-skills      Copy skills into ~/.codex/skills
   --install-prompts     Copy /command prompts to Global prompts directory
   --install-speckit     Ensure the repo-local SpecKit CLI (specify) is installed
+  --no-install-speckit  Skip SpecKit bootstrap during install
   --migrate-legacy      Migrate any legacy epics.json sprints to stories.json (default)
   --no-migrate-legacy   Skip automatic legacy sprint migration during install
+  --verify-setup MODE   Configure verify.local.sh: auto|detect-only|ai|skip (default: auto)
   --skip-git-check      Allow installing outside a git repo
   -h, --help            Show help
 
@@ -69,10 +74,14 @@ while [[ $# -gt 0 ]]; do
       INSTALL_PROMPTS=1; shift;;
     --install-speckit)
       INSTALL_SPECKIT=1; shift;;
+    --no-install-speckit)
+      INSTALL_SPECKIT=0; shift;;
     --migrate-legacy)
       MIGRATE_LEGACY=1; shift;;
     --no-migrate-legacy)
       MIGRATE_LEGACY=0; shift;;
+    --verify-setup)
+      VERIFY_SETUP_MODE="${2:-}"; shift 2;;
     --skip-git-check)
       SKIP_GIT_CHECK=1; shift;;
     -h|--help)
@@ -88,6 +97,11 @@ require_cmd grep
 require_cmd mkdir
 require_cmd cat
 require_cmd find
+
+case "$VERIFY_SETUP_MODE" in
+  auto|detect-only|ai|skip) ;;
+  *) fail "--verify-setup must be one of: auto, detect-only, ai, skip" ;;
+esac
 
 if [ -z "$PROJECT_DIR" ]; then
   fail "--project requires a directory"
@@ -175,6 +189,7 @@ copy_file "$SOURCE_DIR/README-local.md" "$DEST_DIR_REL/README-local.md"
 copy_file "$SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-test-baseline-failures.txt"
 copy_file "$SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
 copy_file "$SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
+copy_file "$SOURCE_DIR/verify.local.sh.example" "$DEST_DIR_REL/verify.local.sh.example"
 rm -f \
   "$DEST_DIR_REL/ralph-task.sh" \
   "$DEST_DIR_REL/ralph-prd.sh" \
@@ -199,6 +214,314 @@ chmod +x \
   "$DEST_DIR_REL/ralph-verify.sh" \
   "$DEST_DIR_REL/lib/editor-intake.sh" \
   "$DEST_DIR_REL/bin/specify"
+
+repo_has_files() {
+  local pattern="$1"
+  find . \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -path "./.next" -prune -o \
+    -path "./dist" -prune -o \
+    -path "./build" -prune -o \
+    -path "./coverage" -prune -o \
+    -path "./vendor" -prune -o \
+    -type f -name "$pattern" -print -quit 2>/dev/null | grep -q .
+}
+
+detect_repo_verification_profile() {
+  local node_score=0 python_score=0 go_score=0 rust_score=0 max_score=0 max_kind="" tie=0
+
+  [ -f package.json ] && node_score=$((node_score + 4))
+  [ -f tsconfig.json ] && node_score=$((node_score + 2))
+  repo_has_files "*.ts" && node_score=$((node_score + 1))
+  repo_has_files "*.tsx" && node_score=$((node_score + 1))
+  repo_has_files "*.js" && node_score=$((node_score + 1))
+
+  [ -f pyproject.toml ] && python_score=$((python_score + 4))
+  [ -f requirements.txt ] && python_score=$((python_score + 2))
+  [ -f setup.py ] && python_score=$((python_score + 2))
+  [ -f setup.cfg ] && python_score=$((python_score + 1))
+  repo_has_files "*.py" && python_score=$((python_score + 1))
+
+  [ -f go.mod ] && go_score=$((go_score + 4))
+  repo_has_files "*.go" && go_score=$((go_score + 1))
+
+  [ -f Cargo.toml ] && rust_score=$((rust_score + 4))
+  repo_has_files "*.rs" && rust_score=$((rust_score + 1))
+
+  for kind in node python go rust; do
+    local score=0
+    case "$kind" in
+      node) score="$node_score" ;;
+      python) score="$python_score" ;;
+      go) score="$go_score" ;;
+      rust) score="$rust_score" ;;
+    esac
+    if [ "$score" -gt "$max_score" ]; then
+      max_score="$score"
+      max_kind="$kind"
+      tie=0
+    elif [ "$score" -gt 0 ] && [ "$score" -eq "$max_score" ]; then
+      tie=1
+    fi
+  done
+
+  if [ "$max_score" -eq 0 ] || [ "$tie" -eq 1 ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$max_kind"
+}
+
+write_verify_local_profile() {
+  local profile="$1"
+  local target="$2"
+
+  case "$profile" in
+    node|python)
+      cat > "$target" <<EOF
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf '$profile\n'
+}
+
+ralph_verify_run_base_checks() {
+  default_run_base_checks
+}
+
+ralph_verify_discover_targeted_tests() {
+  default_discover_targeted_tests
+}
+
+ralph_verify_run_targeted_tests() {
+  default_run_targeted_tests "\$@"
+}
+
+ralph_verify_run_full_suite() {
+  default_run_full_suite
+}
+EOF
+      ;;
+    go)
+      cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf 'go\n'
+}
+
+ralph_verify_run_base_checks() {
+  if command -v golangci-lint >/dev/null 2>&1; then
+    echo "[ralph-verify] running golangci-lint"
+    golangci-lint run ./...
+    QUALITY_CHECKS_RAN=1
+  else
+    echo "[ralph-verify] skipping golangci-lint (tool not available)"
+  fi
+}
+
+ralph_verify_discover_targeted_tests() {
+  local changed_file packages=()
+
+  while IFS= read -r changed_file; do
+    [ -n "$changed_file" ] || continue
+    case "$changed_file" in
+      *.go)
+        packages+=("./$(dirname "$changed_file")")
+        ;;
+    esac
+  done < <(collect_changed_files)
+
+  if [ "${#packages[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  printf '%s\n' "${packages[@]}" | sed 's#/\.$#.#' | sort -u
+}
+
+ralph_verify_run_targeted_tests() {
+  if [ "$#" -eq 0 ]; then
+    ralph_verify_run_full_suite
+    return 0
+  fi
+
+  echo "[ralph-verify] running targeted tests:"
+  printf '%s\n' "$@" | sed 's/^/  - /'
+  go test "$@"
+}
+
+ralph_verify_run_full_suite() {
+  echo "[ralph-verify] running full test suite"
+  go test ./...
+}
+EOF
+      ;;
+    rust)
+      cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf 'rust\n'
+}
+
+ralph_verify_run_base_checks() {
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "[ralph-verify] skipping cargo base checks (cargo not available)"
+    return 0
+  fi
+
+  echo "[ralph-verify] running cargo fmt --check"
+  cargo fmt --check
+  QUALITY_CHECKS_RAN=1
+
+  echo "[ralph-verify] running cargo clippy"
+  cargo clippy --all-targets --all-features -- -D warnings
+  QUALITY_CHECKS_RAN=1
+}
+
+ralph_verify_discover_targeted_tests() {
+  return 0
+}
+
+ralph_verify_run_targeted_tests() {
+  echo "[ralph-verify] targeted Rust selection is not configured; falling back to full suite"
+  ralph_verify_run_full_suite
+}
+
+ralph_verify_run_full_suite() {
+  echo "[ralph-verify] running full test suite"
+  cargo test --all-features
+}
+EOF
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  chmod +x "$target"
+}
+
+render_verify_ai_prompt() {
+  local target="$1"
+  local top_level=""
+
+  top_level="$(find . \
+    -maxdepth 2 \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -path "./.next" -prune -o \
+    -path "./dist" -prune -o \
+    -path "./build" -prune -o \
+    -type f -print 2>/dev/null | sort | sed 's#^\./##' | head -n 120)"
+
+  cat <<EOF
+Create a Ralph verification adapter for this repository.
+
+Write ONLY the raw shell contents for:
+$target
+
+Requirements:
+- Output shell only. No markdown fences.
+- Define these functions:
+  - ralph_verify_adapter_name
+  - ralph_verify_run_base_checks
+  - ralph_verify_discover_targeted_tests
+  - ralph_verify_run_targeted_tests
+  - ralph_verify_run_full_suite
+- Use the repo's standard verification tools and existing scripts when possible.
+- Prefer stable project commands already implied by manifests and config files.
+- Use helpers already provided by scripts/ralph/ralph-verify.sh when helpful:
+  collect_changed_files, list_repo_test_files, default_run_base_checks,
+  default_discover_targeted_tests, default_run_targeted_tests, default_run_full_suite,
+  build_ignore_regex, npm_has_script, select_node_test_script, run_selected_node_test_script,
+  detect_python_bin, python_has_module, run_python_module_or_cmd.
+- Keep targeted verification conservative. If precise targeting is unclear, fall back to the full suite.
+
+Repository file sample:
+$top_level
+EOF
+}
+
+strip_markdown_fences() {
+  local source_file="$1"
+  local target_file="$2"
+
+  if head -n 1 "$source_file" | grep -q '^```'; then
+    sed '/^```/d' "$source_file" > "$target_file"
+  else
+    cp "$source_file" "$target_file"
+  fi
+}
+
+generate_verify_local_with_ai() {
+  local target="$1"
+  local raw_tmp cleaned_tmp prompt
+
+  command -v "$CODEX_BIN" >/dev/null 2>&1 || return 1
+  raw_tmp="$(mktemp)"
+  cleaned_tmp="$(mktemp)"
+  prompt="$(render_verify_ai_prompt "$target")"
+
+  if ! codex_exec_prompt "$prompt" "$PROJECT_DIR" > "$raw_tmp"; then
+    rm -f "$raw_tmp" "$cleaned_tmp"
+    return 1
+  fi
+
+  strip_markdown_fences "$raw_tmp" "$cleaned_tmp"
+  if ! grep -q 'ralph_verify_run_full_suite' "$cleaned_tmp"; then
+    rm -f "$raw_tmp" "$cleaned_tmp"
+    return 1
+  fi
+
+  mv "$cleaned_tmp" "$target"
+  chmod +x "$target"
+  rm -f "$raw_tmp"
+  return 0
+}
+
+configure_verify_local() {
+  local target="$PROJECT_DIR/$DEST_DIR_REL/verify.local.sh"
+  local profile=""
+
+  if [ "$VERIFY_SETUP_MODE" = "skip" ]; then
+    if [ ! -f "$target" ]; then
+      copy_file "$SOURCE_DIR/verify.local.sh.example" "$target"
+      chmod +x "$target"
+      echo "Installed generic verify.local.sh example (verify setup skipped)."
+    fi
+    return 0
+  fi
+
+  if [ -f "$target" ] && [ "$FORCE" -ne 1 ]; then
+    echo "Keeping existing verify.local.sh"
+    return 0
+  fi
+
+  if [ "$VERIFY_SETUP_MODE" = "ai" ]; then
+    if generate_verify_local_with_ai "$target"; then
+      echo "Configured verify.local.sh via AI-assisted repo inspection."
+      return 0
+    fi
+    fail "AI verification setup failed. Ensure CODEX_BIN is available or use --verify-setup detect-only."
+  fi
+
+  if profile="$(detect_repo_verification_profile)"; then
+    write_verify_local_profile "$profile" "$target"
+    echo "Configured verify.local.sh for detected repo profile: $profile"
+    return 0
+  fi
+
+  if [ "$VERIFY_SETUP_MODE" = "auto" ] && generate_verify_local_with_ai "$target"; then
+    echo "Configured verify.local.sh via AI-assisted repo inspection."
+    return 0
+  fi
+
+  copy_file "$SOURCE_DIR/verify.local.sh.example" "$target"
+  chmod +x "$target"
+  echo "Installed generic verify.local.sh example (repo profile unknown)."
+}
 
 ensure_repo_local_speckit() {
   local repo_specify="$PROJECT_DIR/$DEST_DIR_REL/bin/specify"
@@ -327,6 +650,8 @@ fi
 if [ "$INSTALL_SPECKIT" -eq 1 ]; then
   ensure_repo_local_speckit
 fi
+
+configure_verify_local
 
 legacy_sprints=()
 while IFS= read -r sprint_name; do

@@ -180,6 +180,63 @@ writeFileSync(".regression-ran.txt", "ok\\n");
   assert.match(result.stdout, /skipping typecheck/)
   assert.match(result.stdout, /skipping lint/)
   assert.match(result.stdout, /relying on test:regression for required verification/)
-  assert.match(result.stdout, /targeted selection unavailable via npm run test:regression/)
+  assert.match(result.stdout, /no targeted test files inferred from changed files; falling back to full test suite/)
   assert.equal(fs.readFileSync(path.join(repoDir, '.regression-ran.txt'), 'utf8').trim(), 'ok')
+})
+
+test('ralph-verify sources verify.local.sh when a repo defines a custom adapter', () => {
+  const repoDir = initTempRepo()
+
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/verify.local.sh'),
+    `#!/usr/bin/env bash
+ralph_verify_adapter_name() {
+  printf 'custom\\n'
+}
+
+ralph_verify_run_base_checks() {
+  echo "[ralph-verify] running custom base checks"
+  printf 'base\\n' > .custom-base.txt
+  QUALITY_CHECKS_RAN=1
+}
+
+ralph_verify_discover_targeted_tests() {
+  printf 'tests/custom.test.txt\\n'
+}
+
+ralph_verify_run_targeted_tests() {
+  echo "[ralph-verify] running custom targeted tests:"
+  printf '%s\\n' "$@" | sed 's/^/  - /'
+  printf '%s\\n' "$@" > .custom-targeted.txt
+}
+
+ralph_verify_run_full_suite() {
+  echo "[ralph-verify] running custom full suite"
+  printf 'full\\n' > .custom-full.txt
+}
+`
+  )
+  fs.chmodSync(path.join(repoDir, 'scripts/ralph/verify.local.sh'), 0o755)
+
+  const targeted = spawnSync('./scripts/ralph/ralph-verify.sh', ['--targeted'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  })
+
+  assert.equal(targeted.status, 0)
+  assert.match(targeted.stdout, /\[ralph-verify\] running custom base checks/)
+  assert.match(targeted.stdout, /\[ralph-verify\] running custom targeted tests:/)
+  assert.equal(fs.readFileSync(path.join(repoDir, '.custom-base.txt'), 'utf8').trim(), 'base')
+  assert.equal(fs.readFileSync(path.join(repoDir, '.custom-targeted.txt'), 'utf8').trim(), 'tests/custom.test.txt')
+
+  const full = spawnSync('./scripts/ralph/ralph-verify.sh', ['--full'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  })
+
+  assert.equal(full.status, 0)
+  assert.match(full.stdout, /\[ralph-verify\] running custom full suite/)
+  assert.equal(fs.readFileSync(path.join(repoDir, '.custom-full.txt'), 'utf8').trim(), 'full')
 })

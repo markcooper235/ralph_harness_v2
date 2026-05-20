@@ -432,6 +432,119 @@ exec "${path.join(fakeGlobalPath, 'specify')}" "$@"
   assert.match(output, /runtime fallback/)
 })
 
+test('install auto-configures verify.local.sh for a detected Node/TypeScript repo', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-install-node-'))
+
+  writeFile(
+    path.join(repoDir, 'package.json'),
+    JSON.stringify({
+      name: 'node-target',
+      private: true,
+      scripts: {
+        lint: 'eslint .',
+        test: 'jest',
+        typecheck: 'tsc --noEmit',
+      },
+    }, null, 2) + '\n'
+  )
+  writeFile(path.join(repoDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {} }, null, 2) + '\n')
+  writeFile(path.join(repoDir, 'src/index.ts'), 'export const ok = true\n')
+
+  run('bash', [
+    path.join(REPO_ROOT, 'install.sh'),
+    '--project', repoDir,
+    '--skip-git-check',
+    '--no-install-speckit',
+    '--verify-setup', 'detect-only',
+  ])
+
+  const verifyLocal = fs.readFileSync(path.join(repoDir, 'scripts/ralph/verify.local.sh'), 'utf8')
+  assert.match(verifyLocal, /printf 'node\\n'/)
+  assert.match(verifyLocal, /default_run_base_checks/)
+  assert.match(verifyLocal, /default_run_targeted_tests/)
+})
+
+test('install auto-configures verify.local.sh for a detected Python repo', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-install-python-'))
+
+  writeFile(
+    path.join(repoDir, 'pyproject.toml'),
+    '[project]\nname = "python-target"\nversion = "0.1.0"\n'
+  )
+  writeFile(path.join(repoDir, 'app.py'), 'print("ok")\n')
+  writeFile(path.join(repoDir, 'tests/test_app.py'), 'def test_ok():\n    assert True\n')
+
+  run('bash', [
+    path.join(REPO_ROOT, 'install.sh'),
+    '--project', repoDir,
+    '--skip-git-check',
+    '--no-install-speckit',
+    '--verify-setup', 'detect-only',
+  ])
+
+  const verifyLocal = fs.readFileSync(path.join(repoDir, 'scripts/ralph/verify.local.sh'), 'utf8')
+  assert.match(verifyLocal, /printf 'python\\n'/)
+  assert.match(verifyLocal, /default_run_base_checks/)
+  assert.match(verifyLocal, /default_run_full_suite/)
+})
+
+test('install uses Codex fallback to configure verify.local.sh when repo type is unknown', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-install-ai-'))
+  const promptLog = path.join(repoDir, 'mock-codex-verify-setup.log')
+  const mockCodexPath = path.join(repoDir, 'mock-codex-verify-setup.sh')
+
+  writeFile(path.join(repoDir, 'README.md'), '# Unknown target\n')
+  writeExecutable(
+    mockCodexPath,
+    `#!/bin/bash
+set -euo pipefail
+if [ "\${1:-}" = "--yolo" ] && [ "\${2:-}" = "exec" ] && [ "\${3:-}" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+prompt="$(cat)"
+printf '%s' "$prompt" > "${promptLog}"
+cat <<'EOF'
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf 'custom\\n'
+}
+
+ralph_verify_run_base_checks() {
+  echo "[ralph-verify] running custom base checks"
+}
+
+ralph_verify_discover_targeted_tests() {
+  return 0
+}
+
+ralph_verify_run_targeted_tests() {
+  ralph_verify_run_full_suite
+}
+
+ralph_verify_run_full_suite() {
+  echo "[ralph-verify] running custom full suite"
+}
+EOF
+`
+  )
+
+  run('bash', [
+    path.join(REPO_ROOT, 'install.sh'),
+    '--project', repoDir,
+    '--skip-git-check',
+    '--no-install-speckit',
+    '--verify-setup', 'auto',
+  ], {
+    env: { CODEX_BIN: mockCodexPath },
+  })
+
+  const verifyLocal = fs.readFileSync(path.join(repoDir, 'scripts/ralph/verify.local.sh'), 'utf8')
+  assert.match(verifyLocal, /printf 'custom\\n'/)
+  assert.match(fs.readFileSync(promptLog, 'utf8'), /Create a Ralph verification adapter for this repository/)
+})
+
 test('specify helper joins sanitized path lists with readable separators', () => {
   const repoDir = initTempRepo()
   const output = run(
