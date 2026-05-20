@@ -19,6 +19,7 @@ MAX_RETRIES=1
 DRY_RUN=0
 QUIET=0
 RUNTIME_RETENTION=3
+CODEX_TIMED_OUT=0
 
 usage() {
   cat <<'EOF'
@@ -39,6 +40,7 @@ Options:
 Environment:
   CODEX_BIN           Codex binary path (default: codex)
   RALPH_CODEX_PROFILE Profile flag passed to codex exec
+  RALPH_CODEX_TIMEOUT_SEC  Optional per-cycle timeout in seconds (default: disabled)
 EOF
 }
 
@@ -429,6 +431,7 @@ Rules:
 - Keep residual risk lists empty unless something truly remains unresolved.
 - Commit code and story.json changes as needed.
 - Do not update stories.json.
+- When the story is complete, stop immediately and return a short completion note.
 PROMPT
 }
 
@@ -436,6 +439,9 @@ run_story_cycle() {
   local cycle_kind="$1"
   local prompt="$2"
   local log_file="$STORY_LOG_DIR/${cycle_kind}.log"
+  local cycle_exit=0
+
+  CODEX_TIMED_OUT=0
 
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[DRY RUN] Would run story cycle: $cycle_kind"
@@ -446,7 +452,14 @@ run_story_cycle() {
   fi
 
   log "Running Codex story cycle: $cycle_kind"
-  codex_exec_prompt "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file"
+  codex_exec_prompt "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file" || cycle_exit=$?
+  if [ "$cycle_exit" -eq 124 ] || [ "$cycle_exit" -eq 143 ]; then
+    CODEX_TIMED_OUT=1
+    log "WARN: Codex story cycle timed out for $cycle_kind."
+  elif [ "$cycle_exit" -ne 0 ]; then
+    log "WARN: Codex story cycle exited non-zero for $cycle_kind (exit $cycle_exit)."
+  fi
+  return "$cycle_exit"
 }
 
 ensure_task_handoff_fallback() {
@@ -648,11 +661,24 @@ reconcile_completed_story_if_needed() {
     return 1
   fi
 
+  finalize_story_handoff
   log "Story already marked complete in story.json; reconciling backlog and branch state."
   sync_story_metadata_to_backlog
+  write_story_runtime_manifest "completed"
   merge_story_branch
   log "=== Story $STORY_ID COMPLETE ==="
   exit 0
+}
+
+reconcile_after_cycle_failure_if_possible() {
+  local cycle_kind="$1"
+
+  if story_is_complete; then
+    log "Story file is already complete after Codex $cycle_kind; reconciling closeout."
+    reconcile_completed_story_if_needed
+  fi
+
+  return 1
 }
 
 merge_story_branch() {
@@ -759,7 +785,9 @@ baseline_fp_file="$(mktemp)"
 capture_failing_fingerprints "$baseline_fp_file"
 
 primary_prompt="$(build_story_prompt)"
-run_story_cycle "primary" "$primary_prompt"
+if ! run_story_cycle "primary" "$primary_prompt"; then
+  reconcile_after_cycle_failure_if_possible "cycle failure" || true
+fi
 
 remediation_count=0
 if ! verify_story "$baseline_fp_file"; then
@@ -770,7 +798,9 @@ if ! verify_story "$baseline_fp_file"; then
     remediation_count=$((remediation_count + 1))
     remediation_prompt="$(build_remediation_prompt "$VERIFY_FAILED_TASK_ID" "$VERIFY_FAILED_CHECKS_JSON" "$VERIFY_FAILED_SUMMARY_PATH" "$VERIFY_FAILED_BUNDLE_PATH")"
     capture_failing_fingerprints "$baseline_fp_file"
-    run_story_cycle "remediation-$remediation_count" "$remediation_prompt"
+    if ! run_story_cycle "remediation-$remediation_count" "$remediation_prompt"; then
+      reconcile_after_cycle_failure_if_possible "remediation-$remediation_count failure" || true
+    fi
     verify_story "$baseline_fp_file" && break
   done
 fi

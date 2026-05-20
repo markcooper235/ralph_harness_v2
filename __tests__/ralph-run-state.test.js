@@ -583,6 +583,115 @@ git -C "$repo_root" commit -m "feat: story cycle update" >/dev/null 2>&1 || true
   assert.equal(backlog.stories[0].passes, true)
 })
 
+test('ralph-story-run reconciles successful work even when Codex exits non-zero after editing', () => {
+  const repoDir = initTempRepo()
+  const storyPath = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json')
+  const mockCodexPath = path.join(repoDir, 'mock-story-run-timeout-codex.sh')
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  writeFile(path.join(repoDir, 'app.txt'), 'Hello World\n')
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'),
+    storiesJson('sprint-1', {
+      status: 'active',
+      activeStoryId: 'S-001',
+      stories: [
+        {
+          id: 'S-001',
+          title: 'Update greeting after non-zero Codex exit',
+          priority: 1,
+          effort: 1,
+          status: 'active',
+          passes: false,
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+        },
+      ],
+    })
+  )
+  writeFile(
+    storyPath,
+    JSON.stringify(
+      {
+        version: 1,
+        project: 'tmp-ralph-test',
+        storyId: 'S-001',
+        title: 'Update greeting after non-zero Codex exit',
+        description: 'Change app.txt to say Hello Ralph even if Codex exits non-zero.',
+        branchName: '',
+        sprint: 'sprint-1',
+        priority: 1,
+        depends_on: [],
+        status: 'active',
+        spec: {
+          scope: 'app.txt',
+          preserved_invariants: ['Only app.txt should change'],
+        },
+        tasks: [
+          {
+            id: 'T-01',
+            title: 'Update greeting text',
+            context: 'Replace Hello World with Hello Ralph in app.txt.',
+            scope: ['app.txt'],
+            acceptance: 'app.txt contains Hello Ralph.',
+            checks: ["grep -q 'Hello Ralph' app.txt"],
+            depends_on: [],
+            status: 'pending',
+            passes: false,
+          },
+        ],
+        passes: false,
+      },
+      null,
+      2
+    )
+  )
+
+  writeExecutable(
+    mockCodexPath,
+    `#!/bin/bash
+set -euo pipefail
+if [ "\${1:-}" = "--yolo" ] && [ "\${2:-}" = "exec" ] && [ "\${3:-}" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+if [ "\${1:-}" = "exec" ] && [ "\${2:-}" = "--dangerously-bypass-approvals-and-sandbox" ] && [ "\${3:-}" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+cat >/dev/null
+repo_root="$(git rev-parse --show-toplevel)"
+printf 'Hello Ralph\\n' > "$repo_root/app.txt"
+exit 124
+`
+  )
+
+  const output = run('./scripts/ralph/ralph-story-run.sh', ['--story', storyPath], {
+    cwd: repoDir,
+    env: {
+      CODEX_BIN: mockCodexPath,
+      RALPH_CODEX_TIMEOUT_SEC: '1',
+    },
+  })
+
+  assert.match(output, /WARN: Codex story cycle timed out/)
+  assert.match(output, /Story S-001 COMPLETE/)
+
+  const storyData = JSON.parse(fs.readFileSync(storyPath, 'utf8'))
+  assert.equal(storyData.status, 'done')
+  assert.equal(storyData.passes, true)
+  assert.equal(storyData.tasks[0].status, 'done')
+  assert.equal(storyData.tasks[0].passes, true)
+  assert.deepEqual(storyData.story_handoff.files_touched, ['app.txt'])
+
+  const backlog = JSON.parse(
+    fs.readFileSync(path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'), 'utf8')
+  )
+  assert.equal(backlog.activeStoryId, null)
+  assert.equal(backlog.stories[0].status, 'done')
+  assert.equal(backlog.stories[0].passes, true)
+})
+
 test('ralph-story generate --force recovers a migration placeholder from PRD markdown and unblocks the story', () => {
   const repoDir = initTempRepo()
   const prdPath = 'scripts/ralph/tasks/prds/prd-epic-003.md'

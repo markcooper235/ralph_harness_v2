@@ -60,6 +60,8 @@ source "$SCRIPT_DIR/lib/benchmark.sh"
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/e2e-specify.tsv"
 CODEX_BIN_VALUE="${CODEX_BIN:-codex}"
+REAL_CODEX_BIN="$(command -v "$CODEX_BIN_VALUE" 2>/dev/null || true)"
+[ -n "$REAL_CODEX_BIN" ] || { echo "ERROR: codex binary not found: $CODEX_BIN_VALUE" >&2; exit 1; }
 
 KEEP=0
 MAX_RETRIES=2
@@ -88,6 +90,23 @@ LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 PROJ_DIR="$WORK_DIR/nextjs-phone-validator"
+SMOKE_BIN_DIR="$WORK_DIR/bin"
+SMOKE_CODEX_BIN="$SMOKE_BIN_DIR/codex"
+mkdir -p "$SMOKE_BIN_DIR"
+cat > "$SMOKE_CODEX_BIN" <<EOF
+#!/bin/sh
+if [ "\${1:-}" = "--yolo" ] && [ "\${2:-}" = "exec" ]; then
+  shift 2
+  exec "$REAL_CODEX_BIN" --yolo exec --disable plugins --ignore-rules "\$@"
+fi
+if [ "\${1:-}" = "exec" ]; then
+  shift
+  exec "$REAL_CODEX_BIN" exec --disable plugins --ignore-rules "\$@"
+fi
+exec "$REAL_CODEX_BIN" "\$@"
+EOF
+chmod +x "$SMOKE_CODEX_BIN"
+export PATH="$SMOKE_BIN_DIR:$PATH"
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 
@@ -183,7 +202,7 @@ ensure_specify() {
 doctor_check() {
   local dlog="$LOG_DIR/doctor.log"
   log "  Running doctor.sh..."
-  if (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$CODEX_BIN_VALUE" ./doctor.sh) > "$dlog" 2>&1; then
+  if (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$SMOKE_CODEX_BIN" ./doctor.sh) > "$dlog" 2>&1; then
     log "  doctor.sh PASS"
   else
     cat "$dlog" >&2
@@ -475,7 +494,7 @@ git commit -m "chore: init nextjs-phone-validator" >/dev/null
 # ─────────────────────────────────────────────────────────────────────────────
 
 log "  Installing Ralph..."
-HOME="$WORK_DIR/home-nextjs" "$REPO_ROOT/install.sh" \
+"$REPO_ROOT/install.sh" \
   --project "$PROJ_DIR" > "$LOG_DIR/install.log" 2>&1
 
 assert_file_exists "$PROJ_DIR/scripts/ralph/ralph.sh"
@@ -586,10 +605,10 @@ for sid in S-001 S-002 S-003; do
   # STEP 8: generate story.json — makes this story's context available to the
   # next story's specify call (dep-context fix for Bug 5)
   log "  [$sid] Generating story.json..."
-  if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$CODEX_BIN_VALUE" \
+  if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$SMOKE_CODEX_BIN" \
         ./ralph-story.sh generate "$sid") >> "$glog" 2>&1; then
     log "  [$sid] Retrying generate..."
-    (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$CODEX_BIN_VALUE" \
+    (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$SMOKE_CODEX_BIN" \
       ./ralph-story.sh generate "$sid" --force) >> "$glog" 2>&1 \
       || fail "generate $sid failed — see $glog"
   fi
@@ -677,7 +696,7 @@ sprint_harness_log="$LOG_DIR/sprint-1-harness.log"
 _run_sprint() {
   (
     cd "$PROJ_DIR/scripts/ralph"
-    timeout 2700 env CODEX_BIN="$CODEX_BIN_VALUE" \
+    timeout 2700 env CODEX_BIN="$SMOKE_CODEX_BIN" \
       ./ralph.sh --max-retries "$MAX_RETRIES" --continue-on-failure \
       > "$sprint_harness_log" 2>&1
   )
