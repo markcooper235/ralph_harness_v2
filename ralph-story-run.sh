@@ -254,7 +254,8 @@ filtered_task_scope_json() {
       | select(.id == $id)
       | (.scope // [])[]
       | select(type == "string")
-      | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor)/")) | not)
+      | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor|tmp|temp|output|playwright-report|test-results|\\.cache)/")) | not)
+      | select((test("(^|/)(docs|doc)/")) | not)
     ]
   ' "$STORY_FILE"
 }
@@ -484,7 +485,8 @@ finalize_story_handoff() {
         | select(.passes == true)
         | (.handoff.changed_files // .scope // [])[]?
         | select(type == "string")
-        | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor)/")) | not)
+        | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor|tmp|temp|output|playwright-report|test-results|\\.cache)/")) | not)
+        | select((test("(^|/)(docs|doc)/")) | not)
       ] | unique),
       contracts_added: ([.tasks[] | select(.passes == true) | (.handoff.artifacts // [])[]?] | unique),
       residual_risks: ([.tasks[] | (.handoff.remaining_risks // [])[]?] | unique)

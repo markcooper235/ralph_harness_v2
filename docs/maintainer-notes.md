@@ -50,6 +50,7 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - `.specify/` artifacts are durable and should be committed alongside `story.json`.
 - `ralph-story.sh specify` also maintains a transient cached repo briefing under Ralph's script directory at `.cache/specify/repo-briefing.md` so stories reuse a compact project summary instead of repeatedly rediscovering repo setup.
 - `ralph-story.sh specify` should also prefer deterministic file-path hints derived from the story title, goal, and prompt context. Those hints belong in `input.md` as a first-pass map, not as expanded file contents.
+- Dependency handoff and likely-file hints must exclude generated trees, runtime journals, package-manager/vendor paths, and framework documentation paths. Downstream specify context should mention source, test, and config files only.
 - Ralph's canonical model is story-local SpecKit state. Project-level `specify init` is optional interoperability sugar, not a framework requirement.
 - `ralph-story.sh generate <ID>` detects `.specify/` artifacts and uses the `story-specify` skill when present; it falls back to the `story-generate` skill when artifacts are absent.
 - `ralph-story.sh specify-all` and `generate-all` support `--jobs N` for parallel execution.

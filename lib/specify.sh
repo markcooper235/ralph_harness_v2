@@ -232,6 +232,46 @@ ensure_repo_briefing() {
   printf '%s\n' "$output_path"
 }
 
+specify_is_noise_path() {
+  local candidate="${1:-}"
+  [ -n "$candidate" ] || return 0
+
+  case "$candidate" in
+    node_modules/*|*/node_modules/*|.next/*|*/.next/*|coverage/*|*/coverage/*|dist/*|*/dist/*|build/*|*/build/*|vendor/*|*/vendor/*|tmp/*|*/tmp/*|temp/*|*/temp/*|output/*|*/output/*|playwright-report/*|*/playwright-report/*|test-results/*|*/test-results/*|scripts/ralph/runtime/*|*/scripts/ralph/runtime/*|.cache/*|*/.cache/*)
+      return 0
+      ;;
+  esac
+
+  case "$candidate" in
+    *.log|*.tmp|*.temp|*.cache)
+      return 0
+      ;;
+  esac
+
+  case "$candidate" in
+    */docs/*|docs/*|*/doc/*|doc/*)
+      return 0
+      ;;
+  esac
+
+  case "$candidate" in
+    */dist-docs/*|dist-docs/*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+sanitize_specify_paths() {
+  local path
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    specify_is_noise_path "$path" && continue
+    printf '%s\n' "$path"
+  done | awk '!seen[$0]++'
+}
+
 specify_story_keywords() {
   local text="${1:-}"
   printf '%s\n' "$text" \
@@ -272,6 +312,7 @@ collect_story_focus_hints() {
             continue
             ;;
         esac
+        specify_is_noise_path "$literal" && continue
         candidates+=("$literal")
         ;;
     esac
@@ -310,7 +351,7 @@ collect_story_focus_hints() {
           ;;
       esac
       candidates+=("$candidate")
-    done < <(rg --files "$workspace_root" -g "*${keyword}*" 2>/dev/null | sed "s#^$workspace_root/##" | head -n 4)
+        done < <(rg --files "$workspace_root" -g "*${keyword}*" 2>/dev/null | sed "s#^$workspace_root/##" | head -n 4)
   done < <(specify_story_keywords "$story_text")
 
   if [ "${#candidates[@]}" -eq 0 ]; then
@@ -319,7 +360,7 @@ collect_story_focus_hints() {
 
   path_hints="$(
     printf '%s\n' "${candidates[@]}" \
-      | awk '!seen[$0]++' \
+      | sanitize_specify_paths \
       | head -n 8 \
       | while IFS= read -r candidate; do
           [ -n "$candidate" ] || continue

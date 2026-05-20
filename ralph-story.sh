@@ -23,6 +23,17 @@ fail() { echo "ERROR: $1" >&2; exit 1; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"; }
 require_cmd jq
 
+sanitize_dep_file_list() {
+  local value="${1:-}"
+  [ -n "$value" ] || return 0
+  printf '%s\n' "$value" \
+    | tr ',' '\n' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+    | sed '/^$/d' \
+    | sanitize_specify_paths \
+    | paste -sd ', ' -
+}
+
 branch_parent_from_upstream() {
   local branch="$1"
   git -C "$WORKSPACE_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$branch" 2>/dev/null | head -n1
@@ -1946,6 +1957,7 @@ cmd_specify() {
     dep_scope="$(jq -r '.spec.scope // ""' "$dep_abs_path" 2>/dev/null || true)"
     dep_invariants="$(jq -r '(.spec.preserved_invariants // []) | join("; ")' "$dep_abs_path" 2>/dev/null || true)"
     dep_files="$(jq -r 'if (.story_handoff // null) != null then ((.story_handoff.files_touched // []) | join(", ")) else ([.tasks[].scope[]?] | unique | join(", ")) end' "$dep_abs_path" 2>/dev/null || true)"
+    dep_files="$(sanitize_dep_file_list "$dep_files")"
     dep_note="$(jq -r '
       if (.story_handoff // null) != null then
         "Contracts added: " + ((.story_handoff.contracts_added // []) | join(", ")) + "\n" +
