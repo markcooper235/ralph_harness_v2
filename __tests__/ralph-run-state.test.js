@@ -432,6 +432,20 @@ exec "${path.join(fakeGlobalPath, 'specify')}" "$@"
   assert.match(output, /runtime fallback/)
 })
 
+test('specify helper joins sanitized path lists with readable separators', () => {
+  const repoDir = initTempRepo()
+  const output = run(
+    'bash',
+    [
+      '-lc',
+      'SCRIPT_DIR="$PWD/scripts/ralph"; source "$SCRIPT_DIR/lib/specify.sh"; printf "%s\\n" "src/app.js" "docs/guide.md" "tests/app.test.js" "scripts/ralph/runtime/log.json" | sanitize_specify_paths | join_with_comma_space',
+    ],
+    { cwd: repoDir }
+  )
+
+  assert.equal(output.trim(), 'src/app.js, tests/app.test.js')
+})
+
 test('ralph-story-run completes a simple story in one primary Codex cycle and syncs backlog state', () => {
   const repoDir = initTempRepo()
   const storyPath = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json')
@@ -481,7 +495,7 @@ test('ralph-story-run completes a simple story in one primary Codex cycle and sy
             id: 'T-01',
             title: 'Update greeting text',
             context: 'Replace Hello World with Hello Ralph in app.txt.',
-            scope: ['app.txt', 'node_modules/example/docs.md'],
+            scope: ['app.txt', 'node_modules/example/docs.md', 'scripts/ralph/runtime/story-runs/run-1/log.json', 'dist-docs/index.html'],
             acceptance: 'app.txt contains Hello Ralph.',
             checks: ["grep -q 'Hello Ralph' app.txt"],
             depends_on: [],
@@ -515,11 +529,19 @@ if grep -q 'node_modules/example/docs.md' "$manifest_path"; then
   echo "execution manifest leaked vendor scope" >&2
   exit 1
 fi
+if grep -q 'scripts/ralph/runtime/story-runs/run-1/log.json' "$manifest_path"; then
+  echo "execution manifest leaked runtime scope" >&2
+  exit 1
+fi
+if grep -q 'dist-docs/index.html' "$manifest_path"; then
+  echo "execution manifest leaked generated docs scope" >&2
+  exit 1
+fi
 printf 'Hello Ralph\\n' > "$repo_root/app.txt"
 story_file="$MOCK_STORY_FILE"
 tmp="$(mktemp)"
 jq '.tasks[0].handoff = {
-  "changed_files": ["app.txt"],
+  "changed_files": ["app.txt", "scripts/ralph/runtime/story-runs/run-1/log.json", "dist-docs/index.html"],
   "artifacts": ["greeting"],
   "checks_passed": ["grep -q '\\''Hello Ralph'\\'' app.txt"],
   "remaining_risks": []
@@ -545,7 +567,11 @@ git -C "$repo_root" commit -m "feat: story cycle update" >/dev/null 2>&1 || true
   assert.equal(storyData.passes, true)
   assert.equal(storyData.tasks[0].status, 'done')
   assert.equal(storyData.tasks[0].passes, true)
-  assert.deepEqual(storyData.tasks[0].handoff.changed_files, ['app.txt'])
+  assert.deepEqual(storyData.tasks[0].handoff.changed_files, [
+    'app.txt',
+    'scripts/ralph/runtime/story-runs/run-1/log.json',
+    'dist-docs/index.html',
+  ])
   assert.deepEqual(storyData.story_handoff.completed_tasks, ['T-01'])
   assert.deepEqual(storyData.story_handoff.files_touched, ['app.txt'])
 

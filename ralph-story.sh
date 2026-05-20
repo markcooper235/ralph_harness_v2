@@ -31,7 +31,7 @@ sanitize_dep_file_list() {
     | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
     | sed '/^$/d' \
     | sanitize_specify_paths \
-    | paste -sd ', ' -
+    | join_with_comma_space
 }
 
 branch_parent_from_upstream() {

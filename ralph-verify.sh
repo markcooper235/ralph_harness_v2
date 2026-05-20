@@ -20,6 +20,11 @@ Modes:
 USAGE
 }
 
+fail() {
+  echo "ERROR: $1" >&2
+  exit 1
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --targeted) MODE="targeted"; shift ;;
@@ -31,11 +36,76 @@ done
 
 cd "$WORKSPACE_ROOT"
 
+npm_has_script() {
+  local script_name="$1"
+  node -e '
+    const fs = require("fs");
+    const scriptName = process.argv[1];
+    try {
+      const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+      const hasScript = !!(pkg.scripts && Object.prototype.hasOwnProperty.call(pkg.scripts, scriptName));
+      process.exit(hasScript ? 0 : 1);
+    } catch (error) {
+      process.exit(1);
+    }
+  ' "$script_name"
+}
+
+run_optional_script() {
+  local script_name="$1"
+  if npm_has_script "$script_name"; then
+    echo "[ralph-verify] running $script_name"
+    npm run "$script_name"
+    return 0
+  fi
+
+  echo "[ralph-verify] skipping $script_name (script not defined)"
+  return 1
+}
+
+QUALITY_CHECKS_RAN=0
+TEST_SCRIPT=""
+TEST_SCRIPT_SUPPORTS_TARGETING=0
+
 run_base_checks() {
-  echo "[ralph-verify] running typecheck"
-  npm run typecheck
-  echo "[ralph-verify] running lint"
-  npm run lint
+  run_optional_script typecheck && QUALITY_CHECKS_RAN=1
+  run_optional_script lint && QUALITY_CHECKS_RAN=1
+  return 0
+}
+
+select_test_script() {
+  if npm_has_script test; then
+    TEST_SCRIPT="test"
+    TEST_SCRIPT_SUPPORTS_TARGETING=1
+    return 0
+  fi
+
+  if npm_has_script test:verify-regression; then
+    TEST_SCRIPT="test:verify-regression"
+    TEST_SCRIPT_SUPPORTS_TARGETING=0
+    return 0
+  fi
+
+  if npm_has_script test:regression; then
+    TEST_SCRIPT="test:regression"
+    TEST_SCRIPT_SUPPORTS_TARGETING=0
+    return 0
+  fi
+
+  fail "No runnable verification script found. Define at least one of: test, test:verify-regression, or test:regression."
+}
+
+run_selected_test_script() {
+  if [ "$TEST_SCRIPT" = "test" ]; then
+    npm test "$@"
+    return 0
+  fi
+
+  if [ "$#" -gt 0 ]; then
+    echo "[ralph-verify] $TEST_SCRIPT does not support targeted test selection; running the repo-defined regression command instead"
+  fi
+
+  npm run "$TEST_SCRIPT"
 }
 
 collect_changed_files() {
@@ -140,12 +210,18 @@ run_targeted_tests() {
   local tests discover_status
   discover_status=0
   tests="$(discover_targeted_tests)" || discover_status=$?
+  if [ "$TEST_SCRIPT_SUPPORTS_TARGETING" -eq 0 ]; then
+    echo "[ralph-verify] targeted selection unavailable via npm run $TEST_SCRIPT; running repo-defined verification instead"
+    run_selected_test_script
+    return 0
+  fi
   if [ "$discover_status" -eq 2 ]; then
     run_full_suite
     return 0
   fi
   if [ -z "$tests" ]; then
-    echo "[ralph-verify] no targeted test files inferred from changed files; skipping targeted test run"
+    echo "[ralph-verify] no targeted test files inferred from changed files; falling back to full test suite"
+    run_full_suite
     return 0
   fi
 
@@ -153,22 +229,31 @@ run_targeted_tests() {
   printf '%s\n' "$tests" | sed 's/^/  - /'
   # shellcheck disable=SC2206
   local args=( $tests )
-  npm test -- --runInBand --runTestsByPath "${args[@]}"
+  run_selected_test_script -- --runInBand --runTestsByPath "${args[@]}"
 }
 
 run_full_suite() {
   local ignore_re
-  ignore_re="$(build_ignore_regex || true)"
   echo "[ralph-verify] running full test suite"
-  if [ -n "$ignore_re" ]; then
-    echo "[ralph-verify] applying known baseline ignore patterns from $IGNORE_FILE"
-    npm test -- --runInBand --testPathIgnorePatterns "$ignore_re"
-  else
-    npm test -- --runInBand
+  if [ "$TEST_SCRIPT" = "test" ]; then
+    ignore_re="$(build_ignore_regex || true)"
+    if [ -n "$ignore_re" ]; then
+      echo "[ralph-verify] applying known baseline ignore patterns from $IGNORE_FILE"
+      run_selected_test_script -- --runInBand --testPathIgnorePatterns "$ignore_re"
+    else
+      run_selected_test_script -- --runInBand
+    fi
+    return 0
   fi
+
+  run_selected_test_script
 }
 
 run_base_checks
+select_test_script
+if [ "$QUALITY_CHECKS_RAN" -eq 0 ]; then
+  echo "[ralph-verify] no typecheck/lint scripts defined; relying on $TEST_SCRIPT for required verification"
+fi
 case "$MODE" in
   targeted) run_targeted_tests ;;
   full) run_full_suite ;;

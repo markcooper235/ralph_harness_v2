@@ -127,3 +127,59 @@ test('ralph-verify targeted mode runs related test for a source-only change', ()
     'tests/hello.test.mjs'
   )
 })
+
+test('ralph-verify targeted mode falls back to repo regression script when lint and typecheck are absent', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-verify-regression-only-'))
+  const frameworkRoot = path.join(repoDir, 'scripts', 'ralph')
+  fs.mkdirSync(path.dirname(frameworkRoot), { recursive: true })
+  fs.cpSync(REPO_ROOT, frameworkRoot, {
+    recursive: true,
+    filter: (sourcePath) => !sourcePath.includes(`${path.sep}.git${path.sep}`) && !sourcePath.endsWith(`${path.sep}.git`),
+  })
+  chmodScripts(frameworkRoot)
+
+  writeFile(
+    path.join(repoDir, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'ralph-verify-regression-only',
+        private: true,
+        scripts: {
+          'test:regression': 'node scripts/run-regression.mjs',
+        },
+      },
+      null,
+      2
+    ) + '\n'
+  )
+
+  writeFile(
+    path.join(repoDir, 'scripts/run-regression.mjs'),
+    `import { writeFileSync } from "node:fs";
+writeFileSync(".regression-ran.txt", "ok\\n");
+`
+  )
+
+  writeFile(path.join(repoDir, 'README.md'), '# temp repo\n')
+
+  run('git', ['init', '-b', 'main'], { cwd: repoDir })
+  run('git', ['config', 'user.name', 'Ralph Test'], { cwd: repoDir })
+  run('git', ['config', 'user.email', 'ralph-test@example.com'], { cwd: repoDir })
+  run('git', ['add', '.'], { cwd: repoDir })
+  run('git', ['commit', '-m', 'init'], { cwd: repoDir })
+
+  writeFile(path.join(repoDir, 'README.md'), '# updated temp repo\n')
+
+  const result = spawnSync('./scripts/ralph/ralph-verify.sh', ['--targeted'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  })
+
+  assert.equal(result.status, 0, 'expected targeted verification to succeed via repo regression script')
+  assert.match(result.stdout, /skipping typecheck/)
+  assert.match(result.stdout, /skipping lint/)
+  assert.match(result.stdout, /relying on test:regression for required verification/)
+  assert.match(result.stdout, /targeted selection unavailable via npm run test:regression/)
+  assert.equal(fs.readFileSync(path.join(repoDir, '.regression-ran.txt'), 'utf8').trim(), 'ok')
+})

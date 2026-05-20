@@ -272,6 +272,22 @@ sanitize_specify_paths() {
   done | awk '!seen[$0]++'
 }
 
+join_with_comma_space() {
+  awk '
+    NF {
+      if (seen++) {
+        printf ", "
+      }
+      printf "%s", $0
+    }
+    END {
+      if (seen > 0) {
+        printf "\n"
+      }
+    }
+  '
+}
+
 specify_story_keywords() {
   local text="${1:-}"
   printf '%s\n' "$text" \
