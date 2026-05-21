@@ -10,7 +10,8 @@
 set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SOURCE_DIR/lib/codex-exec.sh"
+RUNTIME_SOURCE_DIR="$SOURCE_DIR/scripts/ralph"
+source "$RUNTIME_SOURCE_DIR/lib/codex-exec.sh"
 
 PROJECT_DIR="$(pwd)"
 DEST_DIR_REL="scripts/ralph"
@@ -166,30 +167,30 @@ collect_legacy_sprints() {
 }
 
 # Core story-task workflow
-copy_file "$SOURCE_DIR/ralph.sh" "$DEST_DIR_REL/ralph.sh"
-copy_file "$SOURCE_DIR/doctor.sh" "$DEST_DIR_REL/doctor.sh"
-copy_file "$SOURCE_DIR/ralph-sprint.sh" "$DEST_DIR_REL/ralph-sprint.sh"
-copy_file "$SOURCE_DIR/ralph-sprint-commit.sh" "$DEST_DIR_REL/ralph-sprint-commit.sh"
-copy_file "$SOURCE_DIR/ralph-sprint-migrate.sh" "$DEST_DIR_REL/ralph-sprint-migrate.sh"
-copy_file "$SOURCE_DIR/ralph-story.sh" "$DEST_DIR_REL/ralph-story.sh"
-copy_file "$SOURCE_DIR/ralph-story-run.sh" "$DEST_DIR_REL/ralph-story-run.sh"
-copy_file "$SOURCE_DIR/ralph-fallow.sh" "$DEST_DIR_REL/ralph-fallow.sh"
-copy_file "$SOURCE_DIR/ralph-roadmap.sh" "$DEST_DIR_REL/ralph-roadmap.sh"
-copy_file "$SOURCE_DIR/ralph-status.sh" "$DEST_DIR_REL/ralph-status.sh"
-copy_file "$SOURCE_DIR/ralph-cleanup.sh" "$DEST_DIR_REL/ralph-cleanup.sh"
-copy_file "$SOURCE_DIR/ralph-verify.sh" "$DEST_DIR_REL/ralph-verify.sh"
-copy_file "$SOURCE_DIR/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralph-sprint-test.sh.example"
-copy_file "$SOURCE_DIR/lib/codex-exec.sh" "$DEST_DIR_REL/lib/codex-exec.sh"
-copy_file "$SOURCE_DIR/lib/editor-intake.sh" "$DEST_DIR_REL/lib/editor-intake.sh"
-copy_file "$SOURCE_DIR/lib/search.sh" "$DEST_DIR_REL/lib/search.sh"
-copy_file "$SOURCE_DIR/lib/specify.sh" "$DEST_DIR_REL/lib/specify.sh"
-copy_file "$SOURCE_DIR/bin/specify" "$DEST_DIR_REL/bin/specify"
-copy_file "$SOURCE_DIR/templates/prd-intake.md" "$DEST_DIR_REL/templates/prd-intake.md"
-copy_file "$SOURCE_DIR/README-local.md" "$DEST_DIR_REL/README-local.md"
-copy_file "$SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-test-baseline-failures.txt"
-copy_file "$SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
-copy_file "$SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
-copy_file "$SOURCE_DIR/verify.local.sh.example" "$DEST_DIR_REL/verify.local.sh.example"
+copy_file "$RUNTIME_SOURCE_DIR/ralph.sh" "$DEST_DIR_REL/ralph.sh"
+copy_file "$RUNTIME_SOURCE_DIR/doctor.sh" "$DEST_DIR_REL/doctor.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint.sh" "$DEST_DIR_REL/ralph-sprint.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-commit.sh" "$DEST_DIR_REL/ralph-sprint-commit.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-migrate.sh" "$DEST_DIR_REL/ralph-sprint-migrate.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-story.sh" "$DEST_DIR_REL/ralph-story.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-story-run.sh" "$DEST_DIR_REL/ralph-story-run.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-fallow.sh" "$DEST_DIR_REL/ralph-fallow.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-roadmap.sh" "$DEST_DIR_REL/ralph-roadmap.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-status.sh" "$DEST_DIR_REL/ralph-status.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-cleanup.sh" "$DEST_DIR_REL/ralph-cleanup.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-verify.sh" "$DEST_DIR_REL/ralph-verify.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralph-sprint-test.sh.example"
+copy_file "$RUNTIME_SOURCE_DIR/lib/codex-exec.sh" "$DEST_DIR_REL/lib/codex-exec.sh"
+copy_file "$RUNTIME_SOURCE_DIR/lib/editor-intake.sh" "$DEST_DIR_REL/lib/editor-intake.sh"
+copy_file "$RUNTIME_SOURCE_DIR/lib/search.sh" "$DEST_DIR_REL/lib/search.sh"
+copy_file "$RUNTIME_SOURCE_DIR/lib/specify.sh" "$DEST_DIR_REL/lib/specify.sh"
+copy_file "$RUNTIME_SOURCE_DIR/bin/specify" "$DEST_DIR_REL/bin/specify"
+copy_file "$RUNTIME_SOURCE_DIR/templates/prd-intake.md" "$DEST_DIR_REL/templates/prd-intake.md"
+copy_file "$RUNTIME_SOURCE_DIR/README-local.md" "$DEST_DIR_REL/README-local.md"
+copy_file "$RUNTIME_SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-test-baseline-failures.txt"
+copy_file "$RUNTIME_SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
+copy_file "$RUNTIME_SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
+copy_file "$RUNTIME_SOURCE_DIR/verify.local.sh.example" "$DEST_DIR_REL/verify.local.sh.example"
 rm -f \
   "$DEST_DIR_REL/ralph-task.sh" \
   "$DEST_DIR_REL/ralph-prd.sh" \
@@ -228,10 +229,244 @@ repo_has_files() {
     -type f -name "$pattern" -print -quit 2>/dev/null | grep -q .
 }
 
+repo_has_nx_workspace() {
+  [ -f nx.json ] || return 1
+  find . \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -type f -name project.json -print -quit 2>/dev/null | grep -q .
+}
+
+select_json_runtime() {
+  if command -v python3 >/dev/null 2>&1; then
+    printf 'python3\n'
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    printf 'python\n'
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    printf 'node\n'
+    return 0
+  fi
+  return 1
+}
+
+json_relpath() {
+  local from_dir="$1"
+  local to_path="$2"
+  local runtime=""
+  runtime="$(select_json_runtime)" || return 1
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$from_dir" "$to_path" <<'PY'
+import os
+import sys
+print(os.path.relpath(sys.argv[2], sys.argv[1]))
+PY
+      ;;
+    node)
+      "$runtime" -e 'const path = require("node:path"); console.log(path.relative(process.argv[1], process.argv[2]));' "$from_dir" "$to_path"
+      ;;
+  esac
+}
+
+nx_typecheck_target_exists() {
+  local project_json="$1"
+  local runtime=""
+  runtime="$(select_json_runtime)" || return 1
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$project_json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], 'r', encoding='utf8') as handle:
+    data = json.load(handle)
+sys.exit(0 if isinstance(data.get('targets', {}).get('typecheck'), dict) else 1)
+PY
+      ;;
+    node)
+      "$runtime" -e 'const fs=require("node:fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(data.targets && data.targets.typecheck ? 0 : 1);' "$project_json"
+      ;;
+  esac
+}
+
+nx_project_root_from_config() {
+  local project_json="$1"
+  local runtime=""
+  runtime="$(select_json_runtime)" || return 1
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$project_json" <<'PY'
+import json
+import os
+import sys
+project_json = sys.argv[1]
+with open(project_json, 'r', encoding='utf8') as handle:
+    data = json.load(handle)
+root = data.get('root') or os.path.dirname(project_json)
+print(root)
+PY
+      ;;
+    node)
+      "$runtime" -e 'const fs=require("node:fs"); const path=require("node:path"); const file=process.argv[1]; const data=JSON.parse(fs.readFileSync(file, "utf8")); console.log(data.root || path.dirname(file));' "$project_json"
+      ;;
+  esac
+}
+
+write_nx_typecheck_tsconfig() {
+  local project_root="$1"
+  local tsconfig_target="$PROJECT_DIR/$project_root/tsconfig.typecheck.json"
+  local base_config=""
+  local next_env=""
+  local project_dir_abs="$PROJECT_DIR/$project_root"
+  local extend_rel=""
+  local next_env_rel=""
+  local src_types_rel=""
+
+  [ -f "$tsconfig_target" ] && return 0
+
+  if [ -f "$PROJECT_DIR/tsconfig.json" ]; then
+    base_config="$PROJECT_DIR/tsconfig.json"
+  elif [ -f "$PROJECT_DIR/tsconfig.base.json" ]; then
+    base_config="$PROJECT_DIR/tsconfig.base.json"
+  else
+    echo "WARN: Skipping Nx typecheck tsconfig for $project_root (no root tsconfig found)"
+    return 0
+  fi
+
+  extend_rel="$(json_relpath "$project_dir_abs" "$base_config")" || {
+    echo "WARN: Skipping Nx typecheck tsconfig for $project_root (could not compute relative path)"
+    return 0
+  }
+
+  if [ -f "$PROJECT_DIR/next-env.d.ts" ]; then
+    next_env="$PROJECT_DIR/next-env.d.ts"
+    next_env_rel="$(json_relpath "$project_dir_abs" "$next_env")"
+  fi
+
+  if [ -d "$PROJECT_DIR/src/types" ]; then
+    src_types_rel="$(json_relpath "$project_dir_abs" "$PROJECT_DIR/src/types")"
+  fi
+
+  mkdir -p "$project_dir_abs"
+  {
+    echo '{'
+    printf '  "extends": "%s",\n' "$extend_rel"
+    echo '  "include": ['
+    local first_entry=1
+    if [ -n "$next_env_rel" ]; then
+      printf '    "%s"' "$next_env_rel"
+      first_entry=0
+    fi
+    if [ -n "$src_types_rel" ]; then
+      if [ "$first_entry" -eq 0 ]; then
+        echo ','
+      fi
+      printf '    "%s/**/*.d.ts"' "$src_types_rel"
+      first_entry=0
+    fi
+    if [ "$first_entry" -eq 0 ]; then
+      echo ','
+    fi
+    cat <<'EOF'
+    "./**/*.ts",
+    "./**/*.tsx"
+  ],
+  "exclude": [
+    "./node_modules",
+    "./**/__tests__/**",
+    "./**/*.test.ts",
+    "./**/*.test.tsx",
+    "./**/*.spec.ts",
+    "./**/*.spec.tsx",
+    "./utility-tests/**"
+  ]
+}
+EOF
+  } > "$tsconfig_target"
+}
+
+add_nx_typecheck_target() {
+  local project_json="$1"
+  local project_root="$2"
+  local runtime=""
+  runtime="$(select_json_runtime)" || {
+    echo "WARN: Skipping Nx typecheck target for $project_json (no JSON runtime available)"
+    return 0
+  }
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$project_json" "$project_root" <<'PY'
+import json
+import sys
+project_json = sys.argv[1]
+project_root = sys.argv[2]
+with open(project_json, 'r', encoding='utf8') as handle:
+    data = json.load(handle)
+targets = data.setdefault('targets', {})
+if 'typecheck' not in targets:
+    targets['typecheck'] = {
+        'executor': 'nx:run-commands',
+        'options': {
+            'command': f'tsc -p {project_root}/tsconfig.typecheck.json --noEmit'
+        }
+    }
+with open(project_json, 'w', encoding='utf8') as handle:
+    json.dump(data, handle, indent=2)
+    handle.write('\n')
+PY
+      ;;
+    node)
+      "$runtime" -e 'const fs=require("node:fs"); const file=process.argv[1]; const root=process.argv[2]; const data=JSON.parse(fs.readFileSync(file, "utf8")); data.targets ||= {}; if (!data.targets.typecheck) { data.targets.typecheck = { executor: "nx:run-commands", options: { command: `tsc -p ${root}/tsconfig.typecheck.json --noEmit` } }; } fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");' "$project_json" "$project_root"
+      ;;
+  esac
+}
+
+configure_nx_typecheck_support() {
+  local runtime=""
+  local project_json=""
+  local project_root=""
+
+  repo_has_nx_workspace || return 0
+  runtime="$(select_json_runtime)" || {
+    echo "WARN: Nx workspace detected, but no Python/Node JSON runtime is available for typecheck scaffolding."
+    return 0
+  }
+
+  while IFS= read -r project_json; do
+    [ -n "$project_json" ] || continue
+    project_root="$(nx_project_root_from_config "$project_json" 2>/dev/null || true)"
+    [ -n "$project_root" ] || continue
+    [ "$project_root" = "." ] && continue
+
+    if nx_typecheck_target_exists "$project_json"; then
+      continue
+    fi
+
+    write_nx_typecheck_tsconfig "$project_root"
+    add_nx_typecheck_target "$project_json" "$project_root"
+    echo "Scaffolded Nx typecheck target for $project_root"
+  done < <(
+    find . \
+      -path "./.git" -prune -o \
+      -path "./node_modules" -prune -o \
+      -type f -name project.json -print 2>/dev/null \
+      | sed 's#^\./##' \
+      | sort
+  )
+}
+
 detect_repo_verification_profile() {
   local node_score=0 python_score=0 go_score=0 rust_score=0 max_score=0 max_kind="" tie=0
 
   [ -f package.json ] && node_score=$((node_score + 4))
+  repo_has_nx_workspace && node_score=$((node_score + 2))
   [ -f tsconfig.json ] && node_score=$((node_score + 2))
   repo_has_files "*.ts" && node_score=$((node_score + 1))
   repo_has_files "*.tsx" && node_score=$((node_score + 1))
@@ -278,7 +513,292 @@ write_verify_local_profile() {
   local target="$2"
 
   case "$profile" in
-    node|python)
+    node)
+      cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf 'node\n'
+}
+
+ralph_verify_scope_files() {
+  collect_scope_files \
+    | sed '/^$/d' \
+    | sort -u
+}
+
+ralph_verify_code_files() {
+  ralph_verify_scope_files \
+    | awk '/\.(js|jsx|ts|tsx)$/'
+}
+
+ralph_verify_has_code_scope() {
+  [ -n "$(ralph_verify_code_files)" ]
+}
+
+ralph_verify_repo_has_nx_workspace() {
+  [ -f nx.json ]
+}
+
+ralph_verify_resolve_scoped_typecheck_projects() {
+  local code_files
+  code_files="$(ralph_verify_code_files)"
+  [ -n "$code_files" ] || return 0
+  ralph_verify_repo_has_nx_workspace || return 0
+  command -v node >/dev/null 2>&1 || return 0
+
+  mapfile -t project_configs < <(
+    find . \
+      -path "./.git" -prune -o \
+      -path "./node_modules" -prune -o \
+      -type f -name project.json -print 2>/dev/null \
+      | sed 's#^\./##' \
+      | sort
+  )
+  [ "${#project_configs[@]}" -gt 0 ] || return 0
+
+  printf '%s\n' "$code_files" \
+    | node - "${project_configs[@]}" <<'NODE'
+const fs = require('node:fs')
+const path = require('node:path')
+
+const configs = process.argv.slice(2)
+const scopedFiles = fs.readFileSync(0, 'utf8')
+  .split(/\r?\n/)
+  .map((entry) => entry.trim())
+  .filter(Boolean)
+  .map((entry) => entry.replace(/^\.\//, ''))
+
+const projects = configs
+  .map((configPath) => {
+    try {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      const name = data.name
+      const root = String(data.root || path.dirname(configPath)).replace(/^\.\//, '').replace(/\/$/, '')
+      const hasTypecheck = !!(data.targets && data.targets.typecheck)
+      return name && root && hasTypecheck ? { name, root } : null
+    } catch {
+      return null
+    }
+  })
+  .filter(Boolean)
+  .sort((left, right) => right.root.length - left.root.length)
+
+const matched = new Set()
+for (const file of scopedFiles) {
+  for (const project of projects) {
+    if (file === project.root || file.startsWith(`${project.root}/`)) {
+      matched.add(project.name)
+      break
+    }
+  }
+}
+
+process.stdout.write([...matched].sort().join('\n'))
+NODE
+}
+
+ralph_verify_resolve_nx_affected_typecheck_projects() {
+  local code_files files_csv raw_projects
+  [ "$MODE" = "sprint" ] || return 0
+  ralph_verify_repo_has_nx_workspace || return 0
+
+  code_files="$(ralph_verify_code_files)"
+  [ -n "$code_files" ] || return 0
+
+  files_csv="$(printf '%s\n' "$code_files" | paste -sd, -)"
+  [ -n "$files_csv" ] || return 0
+
+  if ! raw_projects="$(npx nx show projects --affected --withTarget=typecheck --files="$files_csv" --json 2>/dev/null)"; then
+    return 0
+  fi
+
+  printf '%s\n' "$raw_projects" \
+    | node -e 'const fs=require("node:fs"); const data=JSON.parse(fs.readFileSync(0, "utf8")); if (Array.isArray(data)) { process.stdout.write(data.filter((entry) => typeof entry === "string").sort().join("\n")); }'
+}
+
+ralph_verify_intersect_project_lists() {
+  local first_list="$1"
+  local second_list="$2"
+  [ -n "$first_list" ] || return 0
+  [ -n "$second_list" ] || return 0
+
+  comm -12 \
+    <(printf '%s\n' "$first_list" | sed '/^$/d' | sort -u) \
+    <(printf '%s\n' "$second_list" | sed '/^$/d' | sort -u)
+}
+
+ralph_verify_run_scoped_typecheck_or_workspace_fallback() {
+  local projects affected_projects filtered_affected_projects
+  if ! ralph_verify_has_code_scope; then
+    echo "[ralph-verify] skipping typecheck (no JS/TS scope files)"
+    return 0
+  fi
+
+  projects="$(ralph_verify_resolve_scoped_typecheck_projects)"
+  affected_projects="$(ralph_verify_resolve_nx_affected_typecheck_projects)"
+  filtered_affected_projects="$(ralph_verify_intersect_project_lists "$affected_projects" "$projects")"
+  if [ -n "$filtered_affected_projects" ]; then
+    echo "[ralph-verify] running Nx affected typecheck for projects:"
+    printf '%s\n' "$filtered_affected_projects" | sed 's/^/  - /'
+    npx nx run-many -t typecheck --projects="$(printf '%s' "$filtered_affected_projects" | paste -sd, -)"
+    QUALITY_CHECKS_RAN=1
+    return 0
+  fi
+
+  if [ -n "$affected_projects" ]; then
+    echo "[ralph-verify] running Nx affected typecheck for projects:"
+    printf '%s\n' "$affected_projects" | sed 's/^/  - /'
+    npx nx run-many -t typecheck --projects="$(printf '%s' "$affected_projects" | paste -sd, -)"
+    QUALITY_CHECKS_RAN=1
+    return 0
+  fi
+
+  if [ -n "$projects" ]; then
+    echo "[ralph-verify] running scoped Nx typecheck for projects:"
+    printf '%s\n' "$projects" | sed 's/^/  - /'
+    npx nx run-many -t typecheck --projects="$(printf '%s' "$projects" | paste -sd, -)"
+    QUALITY_CHECKS_RAN=1
+    return 0
+  fi
+
+  echo "[ralph-verify] scoped Nx typecheck unavailable for this scope; running workspace typecheck"
+  npm run typecheck
+  QUALITY_CHECKS_RAN=1
+}
+
+ralph_verify_run_scoped_lint() {
+  local code_files
+  code_files="$(ralph_verify_code_files)"
+  if [ -z "$code_files" ]; then
+    echo "[ralph-verify] skipping lint (no JS/TS scope files)"
+    return 0
+  fi
+
+  echo "[ralph-verify] running scoped lint:"
+  printf '%s\n' "$code_files" | sed 's/^/  - /'
+  mapfile -t lint_args < <(printf '%s\n' "$code_files")
+  npx eslint --ext .js,.jsx,.ts,.tsx "${lint_args[@]}"
+  QUALITY_CHECKS_RAN=1
+}
+
+ralph_verify_run_scope_guard_if_needed() {
+  case "$MODE" in
+    sprint|full-regression)
+      if npm_has_script "guard:legacy-runtime"; then
+        echo "[ralph-verify] running guard:legacy-runtime"
+        npm run guard:legacy-runtime
+        QUALITY_CHECKS_RAN=1
+      else
+        echo "[ralph-verify] skipping guard:legacy-runtime (script not defined)"
+      fi
+      ;;
+  esac
+}
+
+ralph_verify_discover_targeted_tests() {
+  local scoped tests tmp_tests source_path base stem dirname
+  scoped="$(ralph_verify_scope_files)"
+  [ -n "$scoped" ] || return 0
+
+  tests=""
+  tmp_tests="/tmp/ralph-local-targeted-tests.$$"
+  : > "$tmp_tests"
+
+  while IFS= read -r source_path; do
+    [ -n "$source_path" ] || continue
+    case "$source_path" in
+      *test.ts|*test.tsx|*test.js|*test.jsx|*spec.ts|*spec.tsx|*spec.js|*spec.jsx)
+        [ -f "$source_path" ] && tests+="$source_path"$'\n'
+        continue
+        ;;
+    esac
+
+    dirname="$(dirname "$source_path")"
+    base="$(basename "$source_path")"
+    stem="${base%.*}"
+
+    case "$source_path" in
+      src/app/*/page.tsx|src/app/*/page.ts|src/app/page.tsx|src/app/page.ts)
+        find "$dirname/__tests__" -maxdepth 1 -type f \( -name 'page.test.*' -o -name 'page.spec.*' \) 2>/dev/null || true
+        ;;
+      src/app/api/*/route.ts|src/app/api/*/route.tsx)
+        find "$dirname/__tests__" -maxdepth 1 -type f \( -name 'route.test.*' -o -name 'route.spec.*' \) 2>/dev/null || true
+        ;;
+      *)
+        list_repo_test_files | while IFS= read -r candidate; do
+          [ -n "$candidate" ] || continue
+          case "$candidate" in
+            *"/${stem}.test."*|*"/${stem}.spec."*)
+              printf '%s\n' "$candidate"
+              ;;
+          esac
+        done
+        ;;
+    esac >> "$tmp_tests"
+  done <<< "$scoped"
+
+  if [ -s "$tmp_tests" ]; then
+    tests+="$(sort -u "$tmp_tests")"$'\n'
+  fi
+  rm -f "$tmp_tests" || true
+
+  printf '%s' "$tests" | sed '/^$/d' | sort -u
+}
+
+ralph_verify_run_base_checks() {
+  TEST_SCRIPT="test"
+  TEST_SCRIPT_SUPPORTS_TARGETING=1
+
+  case "$MODE" in
+    task|story|sprint)
+      ralph_verify_run_scoped_typecheck_or_workspace_fallback
+      ralph_verify_run_scoped_lint
+      ralph_verify_run_scope_guard_if_needed
+      ;;
+    full-regression)
+      echo "[ralph-verify] running workspace typecheck"
+      npm run typecheck
+      QUALITY_CHECKS_RAN=1
+
+      echo "[ralph-verify] running full lint"
+      npm run lint
+      QUALITY_CHECKS_RAN=1
+
+      ralph_verify_run_scope_guard_if_needed
+      ;;
+    *)
+      echo "[ralph-verify] running workspace typecheck"
+      npm run typecheck
+      QUALITY_CHECKS_RAN=1
+
+      echo "[ralph-verify] running full lint"
+      npm run lint
+      QUALITY_CHECKS_RAN=1
+      ;;
+  esac
+}
+
+ralph_verify_run_targeted_tests() {
+  echo "[ralph-verify] running targeted tests:"
+  printf '%s\n' "$@" | sed 's/^/  - /'
+  npm test -- --runInBand --runTestsByPath "$@"
+}
+
+ralph_verify_run_full_suite() {
+  local ignore_re
+  echo "[ralph-verify] running full test suite"
+  ignore_re="$(build_ignore_regex || true)"
+  if [ -n "$ignore_re" ]; then
+    echo "[ralph-verify] applying known baseline ignore patterns from $IGNORE_FILE"
+    npm test -- --runInBand --testPathIgnorePatterns "$ignore_re"
+  else
+    npm test -- --runInBand
+  fi
+}
+EOF
+      ;;
+    python)
       cat > "$target" <<EOF
 #!/usr/bin/env bash
 
@@ -433,7 +953,7 @@ Requirements:
 - Use the repo's standard verification tools and existing scripts when possible.
 - Prefer stable project commands already implied by manifests and config files.
 - Use helpers already provided by scripts/ralph/ralph-verify.sh when helpful:
-  collect_changed_files, list_repo_test_files, default_run_base_checks,
+  collect_changed_files, collect_scope_files, list_repo_test_files, default_run_base_checks,
   default_discover_targeted_tests, default_run_targeted_tests, default_run_full_suite,
   build_ignore_regex, npm_has_script, select_node_test_script, run_selected_node_test_script,
   detect_python_bin, python_has_module, run_python_module_or_cmd.
@@ -487,7 +1007,7 @@ configure_verify_local() {
 
   if [ "$VERIFY_SETUP_MODE" = "skip" ]; then
     if [ ! -f "$target" ]; then
-      copy_file "$SOURCE_DIR/verify.local.sh.example" "$target"
+      copy_file "$RUNTIME_SOURCE_DIR/verify.local.sh.example" "$target"
       chmod +x "$target"
       echo "Installed generic verify.local.sh example (verify setup skipped)."
     fi
@@ -508,6 +1028,9 @@ configure_verify_local() {
   fi
 
   if profile="$(detect_repo_verification_profile)"; then
+    if [ "$profile" = "node" ]; then
+      configure_nx_typecheck_support
+    fi
     write_verify_local_profile "$profile" "$target"
     echo "Configured verify.local.sh for detected repo profile: $profile"
     return 0
@@ -518,7 +1041,7 @@ configure_verify_local() {
     return 0
   fi
 
-  copy_file "$SOURCE_DIR/verify.local.sh.example" "$target"
+  copy_file "$RUNTIME_SOURCE_DIR/verify.local.sh.example" "$target"
   chmod +x "$target"
   echo "Installed generic verify.local.sh example (repo profile unknown)."
 }

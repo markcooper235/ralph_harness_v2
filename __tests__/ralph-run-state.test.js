@@ -8,6 +8,7 @@ const path = require('node:path')
 const { execFileSync, spawnSync } = require('node:child_process')
 
 const REPO_ROOT = path.resolve(__dirname, '..')
+const RUNTIME_ROOT = path.join(REPO_ROOT, 'scripts', 'ralph')
 
 function run(cmd, args, { cwd, env } = {}) {
   return execFileSync(cmd, args, {
@@ -53,7 +54,7 @@ function initTempRepo({ branch = 'master' } = {}) {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-test-'))
   const frameworkRoot = path.join(repoDir, 'scripts', 'ralph')
   fs.mkdirSync(path.dirname(frameworkRoot), { recursive: true })
-  fs.cpSync(REPO_ROOT, frameworkRoot, {
+  fs.cpSync(RUNTIME_ROOT, frameworkRoot, {
     recursive: true,
     filter: (src) =>
       !src.includes(`${path.sep}.git${path.sep}`) &&
@@ -460,8 +461,64 @@ test('install auto-configures verify.local.sh for a detected Node/TypeScript rep
 
   const verifyLocal = fs.readFileSync(path.join(repoDir, 'scripts/ralph/verify.local.sh'), 'utf8')
   assert.match(verifyLocal, /printf 'node\\n'/)
-  assert.match(verifyLocal, /default_run_base_checks/)
-  assert.match(verifyLocal, /default_run_targeted_tests/)
+  assert.match(verifyLocal, /collect_scope_files/)
+  assert.match(verifyLocal, /ralph_verify_run_scoped_typecheck_or_workspace_fallback/)
+  assert.match(verifyLocal, /npm test -- --runInBand --runTestsByPath/)
+})
+
+test('install scaffolds Nx typecheck targets and generates an Nx-aware verify.local.sh', () => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-install-node-nx-'))
+
+  writeFile(
+    path.join(repoDir, 'package.json'),
+    JSON.stringify({
+      name: 'node-nx-target',
+      private: true,
+      scripts: {
+        lint: 'eslint .',
+        test: 'jest',
+        typecheck: 'tsc --noEmit',
+      },
+    }, null, 2) + '\n'
+  )
+  writeFile(path.join(repoDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {} }, null, 2) + '\n')
+  writeFile(path.join(repoDir, 'nx.json'), JSON.stringify({ plugins: [] }, null, 2) + '\n')
+  writeFile(
+    path.join(repoDir, 'src/lib/project.json'),
+    JSON.stringify({
+      name: 'example-lib',
+      root: 'src/lib',
+      sourceRoot: 'src/lib',
+      projectType: 'library',
+      targets: {
+        lint: {
+          executor: 'nx:run-commands',
+          options: {
+            command: 'eslint .',
+          },
+        },
+      },
+    }, null, 2) + '\n'
+  )
+  writeFile(path.join(repoDir, 'src/lib/index.ts'), 'export const ok = true\n')
+
+  run('bash', [
+    path.join(REPO_ROOT, 'install.sh'),
+    '--project', repoDir,
+    '--skip-git-check',
+    '--no-install-speckit',
+    '--verify-setup', 'detect-only',
+  ])
+
+  const verifyLocal = fs.readFileSync(path.join(repoDir, 'scripts/ralph/verify.local.sh'), 'utf8')
+  const projectConfig = JSON.parse(fs.readFileSync(path.join(repoDir, 'src/lib/project.json'), 'utf8'))
+  const typecheckConfig = fs.readFileSync(path.join(repoDir, 'src/lib/tsconfig.typecheck.json'), 'utf8')
+
+  assert.match(verifyLocal, /ralph_verify_resolve_nx_affected_typecheck_projects/)
+  assert.match(verifyLocal, /npx nx show projects --affected --withTarget=typecheck/)
+  assert.equal(projectConfig.targets.typecheck.options.command, 'tsc -p src/lib/tsconfig.typecheck.json --noEmit')
+  assert.match(typecheckConfig, /"extends": "\.\.\/\.\.\/tsconfig\.json"/)
+  assert.match(typecheckConfig, /"\.\/\*\*\/\*\.ts"/)
 })
 
 test('install auto-configures verify.local.sh for a detected Python repo', () => {

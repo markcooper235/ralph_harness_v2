@@ -14,7 +14,7 @@ Install Ralph skills, install Ralph runtime into a project, and verify it is rea
 - Use an absolute target path for `--project`.
 - Verify with `./scripts/ralph/doctor.sh` after install — it checks for SpecKit, sprint state, and gitignore rules.
 - Prepare story task containers with `ralph-story.sh prepare-all` before the first `ralph.sh` run.
-- Keep project-specific regression commands in `scripts/ralph/ralph-sprint-test.sh`.
+- Keep project-specific scoped verification in `scripts/ralph/verify.local.sh`; reserve `scripts/ralph/ralph-sprint-test.sh` for explicit full-regression closeout when needed.
 
 ## Ask Only If Missing
 
@@ -101,6 +101,7 @@ Doctor checks: git, jq, codex, SpecKit CLI, sprint structure, gitignore rules.
 # Close sprint
 ./scripts/ralph/ralph-sprint-commit.sh
 # use --keep to retain merged sprint branch
+# use --full-regression to run repo-wide regression before closeout
 # use --skip-regression to bypass pre-merge regression gate
 ```
 
@@ -117,7 +118,7 @@ Doctor checks: git, jq, codex, SpecKit CLI, sprint structure, gitignore rules.
 
 ## Notes
 
-- Copy `scripts/ralph/ralph-sprint-test.sh.example` to `ralph-sprint-test.sh` and add project-specific typecheck, lint, and test commands — `ralph-sprint-commit.sh` requires this file.
+- `ralph-sprint-commit.sh` now uses sprint-scoped verification by default; copy `scripts/ralph/ralph-sprint-test.sh.example` to `ralph-sprint-test.sh` only when you want repo-wide `--full-regression` closeout.
 - `.specify/` artifacts are durable and should be committed alongside `story.json`.
 - Migrating from the old epic/PRD format? Run `ralph-sprint-migrate.sh`.
 - To reset a stuck story: `./scripts/ralph/ralph-story.sh set-status S-001 planned`

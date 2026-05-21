@@ -22,6 +22,8 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 
 ## Documentation Policy
 
+- `scripts/ralph/` is the only canonical runtime payload in this repo. Edit shipped framework files there, not at repo root.
+- Repo root should contain installer, tests, skills, docs, and packaging only. Avoid reintroducing mirrored runtime files at the top level.
 - Repo docs should describe the framework in terms of the simple operator flow: install, plan, prepare, run, commit.
 - Keep advanced helpers behind the main path instead of leading with internals.
 - README-level documentation should emphasize the current capabilities: roadmap planning, SpecKit preparation, story-task execution model, binary acceptance checks, fallow gate, and sprint closeout.

@@ -436,6 +436,7 @@ run_story_cycle() {
   local cycle_kind="$1"
   local prompt="$2"
   local log_file="$STORY_LOG_DIR/${cycle_kind}.log"
+  local cycle_exit=0
 
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[DRY RUN] Would run story cycle: $cycle_kind"
@@ -446,7 +447,18 @@ run_story_cycle() {
   fi
 
   log "Running Codex story cycle: $cycle_kind"
+  set +e
   codex_exec_prompt "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file"
+  cycle_exit=${PIPESTATUS[0]}
+  set -e
+
+  if [ "$cycle_exit" -eq 124 ]; then
+    log "WARN: Codex story cycle timed out; continuing with shell verification of any completed edits."
+  elif [ "$cycle_exit" -ne 0 ]; then
+    log "WARN: Codex story cycle exited non-zero ($cycle_exit); continuing with shell verification of any completed edits."
+  fi
+
+  return 0
 }
 
 ensure_task_handoff_fallback() {

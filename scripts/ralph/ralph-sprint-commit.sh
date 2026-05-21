@@ -19,15 +19,16 @@ KEEP_SOURCE=false
 SKIP_REGRESSION=false
 RUN_FALLOW=false
 FALLOW_AUTOFIX=false
+FULL_REGRESSION=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix]
+Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression]
 
 Behavior:
   1. Validates active sprint exists and all stories are done/abandoned
   2. Optionally runs fallow cleanup across completed stories
-  3. Runs sprint regression gate (ralph-sprint-test.sh) if present
+  3. Runs sprint-scoped verification by default, or full regression when requested
   4. Ensures sprint branch exists (ralph/sprint/<active-sprint>)
   5. Archives sprint-level artifacts to scripts/ralph/tasks/archive/sprints/
   6. Merges sprint branch into its recorded parent branch (or explicit target)
@@ -40,6 +41,7 @@ Options:
   --skip-regression    Skip the sprint regression gate (bypass for debugging)
   --run-fallow         Run optional fallow cleanup/checks before regression
   --fallow-autofix     Allow scoped fallow auto-fix during --run-fallow cleanup
+  --full-regression    Run repo-wide regression instead of sprint-scoped verification
   -h, --help           Show this help
 USAGE
 }
@@ -158,6 +160,10 @@ while [ $# -gt 0 ]; do
       FALLOW_AUTOFIX=true
       shift
       ;;
+    --full-regression)
+      FULL_REGRESSION=true
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -270,17 +276,22 @@ run_optional_fallow_cleanup
 # Pre-merge regression gate
 if [ "$SKIP_REGRESSION" = "true" ]; then
   echo "WARN: Sprint regression gate skipped (--skip-regression)"
-elif [ ! -f "$SCRIPT_DIR/ralph-sprint-test.sh" ]; then
-  fail "ralph-sprint-test.sh not found — regression gate is required before sprint commit.
-  Create it from the template: cp $SCRIPT_DIR/ralph-sprint-test.sh.example $SCRIPT_DIR/ralph-sprint-test.sh
-  Then add your project's build/test commands and re-run.
-  To bypass: pass --skip-regression (not recommended)."
-else
-  echo "--- Sprint regression gate ---"
-  if ! "$SCRIPT_DIR/ralph-sprint-test.sh"; then
-    fail "Sprint regression failed — correct failures before sprint commit. Use --skip-regression to bypass."
+elif [ "$FULL_REGRESSION" = "true" ]; then
+  if [ ! -f "$SCRIPT_DIR/ralph-sprint-test.sh" ]; then
+    fail "ralph-sprint-test.sh not found — full regression gate is required when --full-regression is requested.
+  Create it from the template: cp $SCRIPT_DIR/ralph-sprint-test.sh.example $SCRIPT_DIR/ralph-sprint-test.sh"
   fi
-  echo "Sprint regression: PASS"
+  echo "--- Full regression gate ---"
+  if ! "$SCRIPT_DIR/ralph-sprint-test.sh"; then
+    fail "Full regression failed — correct failures before sprint commit. Use --skip-regression to bypass."
+  fi
+  echo "Full regression: PASS"
+else
+  echo "--- Sprint scoped verification gate ---"
+  if ! "$SCRIPT_DIR/ralph-verify.sh" --sprint --sprint-name "$ACTIVE_SPRINT"; then
+    fail "Sprint-scoped verification failed — correct failures before sprint commit. Use --full-regression for full repo validation or --skip-regression to bypass."
+  fi
+  echo "Sprint-scoped verification: PASS"
 fi
 
 CURRENT_BRANCH="$(git branch --show-current)"

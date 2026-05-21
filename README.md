@@ -6,6 +6,12 @@ Ralph is a Codex-native autonomous loop that executes sprint stories as focused 
 
 Ralph uses story-local SpecKit artifacts under each story directory's `.specify/` folder. A repo-wide `specify init` step is optional and not required for normal Ralph workflows.
 
+Framework source of truth:
+
+- `scripts/ralph/` is the canonical runtime payload that gets installed into target repos
+- `install.sh` copies from `scripts/ralph/` into the target project's `scripts/ralph/`
+- repo-root files are installer, tests, skills, and maintainer assets only
+
 This repo is the Ralph-for-Codex framework — **story-task architecture**:
 
 - stories replace epics as the sprint-level planning unit
@@ -50,21 +56,25 @@ bash /path/to/ralph/install.sh
 ./scripts/ralph/ralph-sprint.sh status
 
 # 4. Prepare story task containers
-./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
 
-# 5. Execute the sprint
+# 5. Mark the sprint ready, then activate it
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh use sprint-1
+
+# 6. Execute the sprint
 ./scripts/ralph/ralph.sh
 
-# 6. Close the sprint
+# 7. Close the sprint
 ./scripts/ralph/ralph-sprint-commit.sh
 ```
 
 What happens:
 
 - `ralph-roadmap.sh` decomposes a vision into sprint backlogs (`stories.json`)
-- `ralph-story.sh prepare-all` runs SpecKit analysis and generates `story.json` task containers
+- `ralph-story.sh prepare-all --sprint <name>` runs SpecKit analysis and generates `story.json` task containers
 - `ralph.sh` picks up the next eligible story, runs it via `ralph-story-run.sh`, validates binary checks, and merges the story branch back to the sprint branch
-- `ralph-sprint-commit.sh` runs the regression gate, archives sprint artifacts, and merges to `main`/`master`
+- `ralph-sprint-commit.sh` runs sprint-scoped verification by default, archives sprint artifacts, and merges to `main`/`master`
 
 ### Multi-Sprint Workflow
 
@@ -72,13 +82,15 @@ After sprint 1 completes, activate and run subsequent sprints:
 
 ```bash
 # Sprint 1
-./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
 ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh          # merges sprint-1 branch to main
 
 # Sprint 2
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-2
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-2
 ./scripts/ralph/ralph-sprint.sh use sprint-2    # activate the next sprint
-./scripts/ralph/ralph-story.sh prepare-all      # prepare sprint-2 stories
 ./scripts/ralph/ralph.sh                        # execute sprint-2
 ./scripts/ralph/ralph-sprint-commit.sh          # merges sprint-2 branch to main
 ```
@@ -86,8 +98,9 @@ After sprint 1 completes, activate and run subsequent sprints:
 Or use `next --activate` to automatically select the next ready sprint:
 
 ```bash
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-3
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-3
 ./scripts/ralph/ralph-sprint.sh next --activate
-./scripts/ralph/ralph-story.sh prepare-all
 ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh
 ```
@@ -165,9 +178,9 @@ Prerequisites:
 
 - each task's `checks[]` are binary shell expressions (exit 0 = pass)
 - the fallow gate is available as an explicit quality pass and can be run during sprint closeout
-- `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to pass before merging the sprint
-- `ralph-verify.sh --targeted` runs typecheck, lint, and tests scoped to changed files
-- `ralph-verify.sh --full` runs the full suite with known baseline failures filtered out
+- `ralph-sprint-commit.sh` uses sprint-scoped verification by default and supports `--full-regression` for repo-wide closeout
+- `ralph-verify.sh --task`, `--story-scope`, and `--sprint` scope verification to the current Ralph surface
+- `ralph-verify.sh --full-regression` runs the full suite with known baseline failures filtered out
 
 ### Sprint Management
 
@@ -190,7 +203,7 @@ Prerequisites:
 - empty local prompt files are ignored; non-matching legacy content falls back to append mode
 - framework reinstall does not overwrite `prompt.local.md`
 
-See [README-local.md](README-local.md).
+See [scripts/ralph/README-local.md](scripts/ralph/README-local.md).
 
 ---
 
@@ -199,55 +212,55 @@ See [README-local.md](README-local.md).
 ```bash
 # Install / validate
 ./install.sh [--project PATH] [--dest RELDIR] [--force] [--install-skills] [--install-prompts] [--install-speckit] [--skip-git-check]
-./doctor.sh
+./scripts/ralph/doctor.sh
 
 # Roadmap / sprint planning
-./ralph-roadmap.sh --vision "Roadmap from current state to target state"
-./ralph-roadmap.sh --refine --revision-note "Adjust after new findings"
-./ralph-sprint.sh list
-./ralph-sprint.sh create sprint-2
-./ralph-sprint.sh status
-./ralph-sprint.sh use sprint-1
-./ralph-sprint.sh mark-ready sprint-1
-./ralph-sprint.sh next [--activate]
-./ralph-sprint.sh branch sprint-1
+./scripts/ralph/ralph-roadmap.sh --vision "Roadmap from current state to target state"
+./scripts/ralph/ralph-roadmap.sh --refine --revision-note "Adjust after new findings"
+./scripts/ralph/ralph-sprint.sh list
+./scripts/ralph/ralph-sprint.sh create sprint-2
+./scripts/ralph/ralph-sprint.sh status
+./scripts/ralph/ralph-sprint.sh use sprint-1
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh next [--activate]
+./scripts/ralph/ralph-sprint.sh branch sprint-1
 
 # Story management
-./ralph-story.sh list
-./ralph-story.sh add --title "My Story" --goal "..." --prompt-context "..."
-./ralph-story.sh specify S-001
-./ralph-story.sh specify-all [--force] [--jobs N]
-./ralph-story.sh generate S-001
-./ralph-story.sh generate-all [--force] [--jobs N]
-./ralph-story.sh prepare-all [--force] [--jobs N]
-./ralph-story.sh health [S-001]
-./ralph-story.sh health-all
-./ralph-story.sh show S-001
-./ralph-story.sh tasks S-001
-./ralph-story.sh set-status S-001 planned
-./ralph-story.sh abandon S-001 [reason]
-./ralph-story.sh import-prd [PATH]
-./ralph-story.sh start-next
+./scripts/ralph/ralph-story.sh list
+./scripts/ralph/ralph-story.sh add --title "My Story" --goal "..." --prompt-context "..."
+./scripts/ralph/ralph-story.sh specify S-001
+./scripts/ralph/ralph-story.sh specify-all [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh generate S-001
+./scripts/ralph/ralph-story.sh generate-all [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh prepare-all [--sprint NAME] [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh health [S-001]
+./scripts/ralph/ralph-story.sh health-all
+./scripts/ralph/ralph-story.sh show S-001
+./scripts/ralph/ralph-story.sh tasks S-001
+./scripts/ralph/ralph-story.sh set-status S-001 planned
+./scripts/ralph/ralph-story.sh abandon S-001 [reason]
+./scripts/ralph/ralph-story.sh import-prd [PATH]
+./scripts/ralph/ralph-story.sh start-next
 
 # Loop / execution
-./ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
-./ralph-story-run.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
-./ralph-status.sh
+./scripts/ralph/ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
+./scripts/ralph/ralph-story-run.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
+./scripts/ralph/ralph-status.sh
 
 # Verification
-./ralph-verify.sh [--targeted|--full]
+./scripts/ralph/ralph-verify.sh [--targeted|--task|--story-scope|--sprint|--full-regression]
 
 # Code quality
-./ralph-fallow.sh [--story PATH] [--dry-run] [--no-autofix]
+./scripts/ralph/ralph-fallow.sh [--story PATH] [--dry-run] [--no-autofix]
 
 # Sprint closeout
-./ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix]
+./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression]
 
 # Migration from legacy epic/PRD format
-./ralph-sprint-migrate.sh [--sprint NAME] [--dry-run] [--force]
+./scripts/ralph/ralph-sprint-migrate.sh [--sprint NAME] [--dry-run] [--force]
 
 # Recovery
-./ralph-cleanup.sh --force
+./scripts/ralph/ralph-cleanup.sh --force
 ```
 
 ---

@@ -6,6 +6,7 @@ const path = require('node:path')
 const { execFileSync, spawnSync } = require('node:child_process')
 
 const REPO_ROOT = path.resolve(__dirname, '..')
+const RUNTIME_ROOT = path.join(REPO_ROOT, 'scripts', 'ralph')
 
 function run(cmd, args, { cwd, env, stdio = 'pipe' } = {}) {
   return execFileSync(cmd, args, {
@@ -45,7 +46,7 @@ function initTempRepo() {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-verify-'))
   const frameworkRoot = path.join(repoDir, 'scripts', 'ralph')
   fs.mkdirSync(path.dirname(frameworkRoot), { recursive: true })
-  fs.cpSync(REPO_ROOT, frameworkRoot, {
+  fs.cpSync(RUNTIME_ROOT, frameworkRoot, {
     recursive: true,
     filter: (sourcePath) => !sourcePath.includes(`${path.sep}.git${path.sep}`) && !sourcePath.endsWith(`${path.sep}.git`),
   })
@@ -132,7 +133,7 @@ test('ralph-verify targeted mode falls back to repo regression script when lint 
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-verify-regression-only-'))
   const frameworkRoot = path.join(repoDir, 'scripts', 'ralph')
   fs.mkdirSync(path.dirname(frameworkRoot), { recursive: true })
-  fs.cpSync(REPO_ROOT, frameworkRoot, {
+  fs.cpSync(RUNTIME_ROOT, frameworkRoot, {
     recursive: true,
     filter: (sourcePath) => !sourcePath.includes(`${path.sep}.git${path.sep}`) && !sourcePath.endsWith(`${path.sep}.git`),
   })
@@ -180,7 +181,7 @@ writeFileSync(".regression-ran.txt", "ok\\n");
   assert.match(result.stdout, /skipping typecheck/)
   assert.match(result.stdout, /skipping lint/)
   assert.match(result.stdout, /relying on test:regression for required verification/)
-  assert.match(result.stdout, /no targeted test files inferred from changed files; falling back to full test suite/)
+  assert.match(result.stdout, /no targeted test files inferred from scoped files; falling back to full test suite/)
   assert.equal(fs.readFileSync(path.join(repoDir, '.regression-ran.txt'), 'utf8').trim(), 'ok')
 })
 

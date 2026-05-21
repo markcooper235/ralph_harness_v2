@@ -30,86 +30,87 @@ roadmap → stories.json (per sprint)
 ./install.sh --install-prompts
 
 # Validate a Ralph-enabled repo
-./doctor.sh
+./scripts/ralph/doctor.sh
 
 # Roadmap / sprint planning
-./ralph-roadmap.sh --vision "Roadmap from baseline to target state"
-./ralph-sprint.sh status
-./ralph-sprint.sh next [--activate]
+./scripts/ralph/ralph-roadmap.sh --vision "Roadmap from baseline to target state"
+./scripts/ralph/ralph-sprint.sh status
+./scripts/ralph/ralph-sprint.sh next [--activate]
 
 # Story preparation
-./ralph-story.sh prepare-all               # specify + generate + health + promote
-./ralph-story.sh specify S-001             # SpecKit analysis only
-./ralph-story.sh generate S-001            # generate story.json from .specify/ artifacts
-./ralph-story.sh health [S-001]            # validate story task containers
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1   # specify + generate + health + promote
+./scripts/ralph/ralph-story.sh specify S-001                   # SpecKit analysis only
+./scripts/ralph/ralph-story.sh generate S-001                  # generate story.json from .specify/ artifacts
+./scripts/ralph/ralph-story.sh health [S-001]                  # validate story task containers
 
 # Loop execution
-./ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
+./scripts/ralph/ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
 
 # Status
-./ralph-status.sh
+./scripts/ralph/ralph-status.sh
 
 # Verification
-./ralph-verify.sh [--targeted|--full]
+./scripts/ralph/ralph-verify.sh [--targeted|--task|--story-scope|--sprint|--full-regression]
 
 # Closeout
-./ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression]
+./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--full-regression]
 
 # Advanced / recovery helpers
-./ralph-story.sh add --title "..." --goal "..." --prompt-context "..."
-./ralph-story.sh set-status S-001 planned
-./ralph-story.sh import-prd scripts/ralph/prd.json
-./ralph-sprint-migrate.sh [--sprint NAME]
-./ralph-cleanup.sh --force
+./scripts/ralph/ralph-story.sh add --title "..." --goal "..." --prompt-context "..."
+./scripts/ralph/ralph-story.sh set-status S-001 planned
+./scripts/ralph/ralph-story.sh import-prd scripts/ralph/prd.json
+./scripts/ralph/ralph-sprint-migrate.sh [--sprint NAME]
+./scripts/ralph/ralph-cleanup.sh --force
 ```
 
 ## Recommended Flow
 
 Sprint:
 
-1. Run `./doctor.sh`
-2. Plan backlog with `./ralph-roadmap.sh --vision "..."`
-3. Check readiness with `./ralph-sprint.sh status`
-4. Run `./ralph-story.sh prepare-all` to generate task containers
-5. Run `./ralph.sh` — stories execute automatically
-6. Run `./ralph-sprint-commit.sh`
+1. Run `./scripts/ralph/doctor.sh`
+2. Plan backlog with `./scripts/ralph/ralph-roadmap.sh --vision "..."`
+3. Check readiness with `./scripts/ralph/ralph-sprint.sh status`
+4. Run `./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1` to generate task containers
+5. Run `./scripts/ralph/ralph.sh` — stories execute automatically
+6. Run `./scripts/ralph/ralph-sprint-commit.sh`
 
 Repeat for the next sprint:
 
 ```bash
-./ralph-sprint.sh next --activate
-./ralph-story.sh prepare-all
-./ralph.sh
-./ralph-sprint-commit.sh
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-2
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-2
+./scripts/ralph/ralph-sprint.sh next --activate
+./scripts/ralph/ralph.sh
+./scripts/ralph/ralph-sprint-commit.sh
 ```
 
 Importing an existing `prd.json`:
 
 ```bash
-./ralph-story.sh import-prd scripts/ralph/prd.json
-./ralph-story.sh prepare-all
-./ralph.sh
-./ralph-sprint-commit.sh
+./scripts/ralph/ralph-story.sh import-prd scripts/ralph/prd.json
+./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph.sh
+./scripts/ralph/ralph-sprint-commit.sh
 ```
 
 ## Key Files
 
-- `ralph-roadmap.sh` — Plan or refine roadmap-driven sprint backlogs
-- `ralph-sprint.sh` — Manage sprint containers and sprint readiness
-- `ralph-story.sh` — Manage stories: specify, generate, health, start-next, add, import
-- `ralph-story-run.sh` — Execute the active story in one primary Codex cycle with shell verification
-- `ralph.sh` — Sprint execution loop: start-next → ralph-story-run.sh → repeat
-- `ralph-status.sh` — Show sprint, story, branch, and loop state
-- `ralph-verify.sh` — Run typecheck + lint + tests (--targeted or --full)
-- `ralph-fallow.sh` — Code-quality gate (dead code, duplication, lint)
-- `ralph-sprint-commit.sh` — Archive and merge the completed sprint
-- `ralph-sprint-migrate.sh` — Convert sprint from legacy epic/PRD format
-- `ralph-cleanup.sh` — Reset local Ralph runtime state without archiving
-- `ralph-sprint-test.sh` — Project-specific regression gate (required for sprint commit)
-- `prompt.md` — Base loop prompt
-- `prompt.local.md` — Repo-local prompt extensions (survives framework reinstalls)
-- `story.json` — Task container: title, description, spec, tasks[], checks[], depends_on
-- `stories.json` — Sprint story backlog with status and story_path pointers
+- `scripts/ralph/ralph-roadmap.sh` — Plan or refine roadmap-driven sprint backlogs
+- `scripts/ralph/ralph-sprint.sh` — Manage sprint containers and sprint readiness
+- `scripts/ralph/ralph-story.sh` — Manage stories: specify, generate, health, start-next, add, import
+- `scripts/ralph/ralph-story-run.sh` — Execute the active story in one primary Codex cycle with shell verification
+- `scripts/ralph/ralph.sh` — Sprint execution loop: start-next → ralph-story-run.sh → repeat
+- `scripts/ralph/ralph-status.sh` — Show sprint, story, branch, and loop state
+- `scripts/ralph/ralph-verify.sh` — Run scoped task, story, sprint, or explicit full-regression verification
+- `scripts/ralph/ralph-fallow.sh` — Code-quality gate (dead code, duplication, lint)
+- `scripts/ralph/ralph-sprint-commit.sh` — Archive and merge the completed sprint
+- `scripts/ralph/ralph-sprint-migrate.sh` — Convert sprint from legacy epic/PRD format
+- `scripts/ralph/ralph-cleanup.sh` — Reset local Ralph runtime state without archiving
+- `scripts/ralph/ralph-sprint-test.sh` — Optional project-specific full-regression gate for explicit sprint closeout
+- `scripts/ralph/prompt.md` — Base loop prompt
+- `scripts/ralph/prompt.local.md` — Repo-local prompt extensions (survives framework reinstalls)
+- `scripts/ralph/story.json` — Task container: title, description, spec, tasks[], checks[], depends_on
+- `scripts/ralph/stories.json` — Sprint story backlog with status and story_path pointers
 
 ## Broad Rules
 
@@ -117,8 +118,8 @@ Importing an existing `prd.json`:
 - Acceptance checks (`checks[]`) are binary shell expressions — exit 0 = pass, non-zero = fail.
 - Durable planning artifacts belong in git; transient execution state does not.
 - SpecKit artifacts (`.specify/`) are durable and should be committed.
-- `ralph-sprint-test.sh` must exist before running `ralph-sprint-commit.sh`.
-- `ralph-cleanup.sh --force` removes workflow locks and transient state.
+- `scripts/ralph/ralph-sprint-test.sh` is only needed when a repo opts into explicit full-regression sprint closeout.
+- `scripts/ralph/ralph-cleanup.sh --force` removes workflow locks and transient state.
 
 ## Artifact Rules
 

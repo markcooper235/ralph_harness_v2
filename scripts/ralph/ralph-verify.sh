@@ -3,6 +3,8 @@ set -euo pipefail
 
 MODE="targeted"
 STORY_PATH=""
+TASK_ID=""
+SPRINT_NAME=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 LOCAL_VERIFY_ADAPTER="$SCRIPT_DIR/verify.local.sh"
@@ -20,12 +22,16 @@ fi
 
 usage() {
   cat <<USAGE
-Usage: ./scripts/ralph/ralph-verify.sh [--targeted|--full] [--story-final] [--story PATH]
+Usage: ./scripts/ralph/ralph-verify.sh [--targeted|--task|--story-scope|--sprint|--full-regression|--full] [--story-final] [--story PATH] [--task-id ID] [--sprint-name NAME]
 
 Modes:
-  --targeted    Run repo verification focused on changed files (default)
-  --full        Run repo full verification
-  --story-final Compatibility alias for --full
+  --targeted         Run legacy repo verification focused on changed files
+  --task             Run verification scoped to one story task
+  --story-scope      Run verification scoped to one story
+  --sprint           Run verification scoped to one sprint diff
+  --full-regression  Run repo-wide verification
+  --full             Compatibility alias for --full-regression
+  --story-final      Compatibility alias for --story-scope
 
 Repo adapters:
   - Define repo-specific behavior in scripts/ralph/verify.local.sh
@@ -45,9 +51,14 @@ has_function() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --targeted) MODE="targeted"; shift ;;
-    --full) MODE="full"; shift ;;
-    --story-final) MODE="full"; shift ;;
+    --task) MODE="task"; shift ;;
+    --story-scope) MODE="story"; shift ;;
+    --sprint) MODE="sprint"; shift ;;
+    --full-regression|--full) MODE="full-regression"; shift ;;
+    --story-final) MODE="story"; shift ;;
     --story) STORY_PATH="${2:-}"; shift 2 ;;
+    --task-id) TASK_ID="${2:-}"; shift 2 ;;
+    --sprint-name|--sprint-id|--sprint-branch) SPRINT_NAME="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage; exit 1 ;;
   esac
@@ -64,6 +75,68 @@ collect_changed_files() {
     git diff --name-only --diff-filter=ACMRTUXB HEAD || true
     git ls-files --others --exclude-standard || true
   } | sed '/^$/d' | sort -u
+}
+
+story_scope_files() {
+  [ -n "$STORY_PATH" ] || fail "--story PATH is required for $MODE verification"
+  [ -f "$STORY_PATH" ] || fail "Story file not found: $STORY_PATH"
+
+  if [ "$MODE" = "task" ]; then
+    [ -n "$TASK_ID" ] || fail "--task-id is required for --task verification"
+    jq -r --arg id "$TASK_ID" '
+      .tasks[]
+      | select(.id == $id)
+      | (.scope // [])[]
+      | select(type == "string")
+    ' "$STORY_PATH"
+    return 0
+  fi
+
+  jq -r '
+    [
+      (.story_handoff.files_touched // [])[],
+      (.tasks[]? | (.handoff.changed_files // .scope // [])[]?)
+    ]
+    | .[]
+    | select(type == "string")
+  ' "$STORY_PATH" | sed '/^$/d' | sort -u
+}
+
+resolve_sprint_branch() {
+  if [ -n "$SPRINT_NAME" ]; then
+    case "$SPRINT_NAME" in
+      ralph/sprint/*) printf '%s\n' "$SPRINT_NAME" ;;
+      *) printf 'ralph/sprint/%s\n' "$SPRINT_NAME" ;;
+    esac
+    return 0
+  fi
+
+  local current_branch
+  current_branch="$(git branch --show-current)"
+  case "$current_branch" in
+    ralph/sprint/*) printf '%s\n' "$current_branch" ;;
+    *) fail "--sprint-name is required when not on a sprint branch" ;;
+  esac
+}
+
+sprint_scope_files() {
+  local sprint_branch merge_target merge_base
+  sprint_branch="$(resolve_sprint_branch)"
+  git show-ref --verify --quiet "refs/heads/$sprint_branch" || fail "Sprint branch not found: $sprint_branch"
+  merge_target="$(git for-each-ref --format='%(upstream:short)' "refs/heads/$sprint_branch" 2>/dev/null | head -n1)"
+  [ -n "$merge_target" ] || merge_target="$(git show-ref --verify --quiet refs/heads/master && echo master || echo main)"
+  git show-ref --verify --quiet "refs/heads/$merge_target" || fail "Sprint merge target not found: $merge_target"
+  merge_base="$(git merge-base "$merge_target" "$sprint_branch")"
+  git diff --name-only --diff-filter=ACMRTUXB "$merge_base".."$sprint_branch"
+}
+
+collect_scope_files() {
+  case "$MODE" in
+    task|story) story_scope_files ;;
+    sprint) sprint_scope_files ;;
+    targeted|full-regression) collect_changed_files ;;
+    *) collect_changed_files ;;
+  esac | sed '/^$/d' | sort -u
 }
 
 list_repo_test_files() {
@@ -182,7 +255,7 @@ append_matching_node_tests_for_source() {
 
 discover_node_targeted_tests() {
   local changed tests tmp_tests has_changed_source test_count repo_tests
-  changed="$(collect_changed_files)"
+  changed="$(collect_scope_files)"
   [ -n "$changed" ] || return 0
 
   tests=""
@@ -225,7 +298,7 @@ discover_node_targeted_tests() {
   fi
 
   if [ "$has_changed_source" -eq 1 ] && [ "${test_count:-0}" -eq 0 ]; then
-    echo "[ralph-verify] no related targeted tests inferred for changed source files; falling back to full test suite" >&2
+    echo "[ralph-verify] no related targeted tests inferred for scoped source files; falling back to full test suite" >&2
     return 2
   fi
 
@@ -305,7 +378,7 @@ append_matching_python_tests_for_source() {
 
 discover_python_targeted_tests() {
   local changed tests tmp_tests has_changed_source test_count repo_tests
-  changed="$(collect_changed_files)"
+  changed="$(collect_scope_files)"
   [ -n "$changed" ] || return 0
 
   tests=""
@@ -349,7 +422,7 @@ discover_python_targeted_tests() {
   fi
 
   if [ "$has_changed_source" -eq 1 ] && [ "${test_count:-0}" -eq 0 ]; then
-    echo "[ralph-verify] no related targeted tests inferred for changed source files; falling back to full test suite" >&2
+    echo "[ralph-verify] no related targeted tests inferred for scoped source files; falling back to full test suite" >&2
     return 2
   fi
 
@@ -488,12 +561,20 @@ run_targeted_tests() {
   tests="$(discover_targeted_tests)" || discover_status=$?
 
   if [ "$discover_status" -eq 2 ]; then
+    if [ "$MODE" != "targeted" ]; then
+      echo "[ralph-verify] no scoped tests inferred for $MODE verification; skipping test step"
+      return 0
+    fi
     run_full_suite
     return 0
   fi
 
   if [ -z "$tests" ]; then
-    echo "[ralph-verify] no targeted test files inferred from changed files; falling back to full test suite"
+    if [ "$MODE" != "targeted" ]; then
+      echo "[ralph-verify] no scoped test files inferred for $MODE verification; skipping test step"
+      return 0
+    fi
+    echo "[ralph-verify] no targeted test files inferred from scoped files; falling back to full test suite"
     run_full_suite
     return 0
   fi
@@ -525,8 +606,8 @@ if [ "$QUALITY_CHECKS_RAN" -eq 0 ]; then
 fi
 
 case "$MODE" in
-  targeted) run_targeted_tests ;;
-  full) run_full_suite ;;
+  targeted|task|story|sprint) run_targeted_tests ;;
+  full-regression) run_full_suite ;;
   *) echo "Invalid mode: $MODE" >&2; exit 1 ;;
 esac
 

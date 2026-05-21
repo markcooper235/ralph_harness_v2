@@ -30,18 +30,22 @@ This document is the installed reference for a Ralph-enabled project. For framew
 ./scripts/ralph/ralph-sprint.sh status
 
 # 4. Prepare story task containers (SpecKit analysis + generate + health)
-./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
 
-# 5. Execute the sprint
+# 5. Mark the sprint ready, then activate it
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh use sprint-1
+
+# 6. Execute the sprint
 ./scripts/ralph/ralph.sh
 
-# 6. Close the sprint (merges sprint branch to main)
+# 7. Close the sprint (merges sprint branch to main)
 ./scripts/ralph/ralph-sprint-commit.sh
 ```
 
 What happens during execution:
 
-- `ralph-story.sh prepare-all` runs SpecKit analysis for each story (`specify → plan → tasks`), generates `story.json` task containers, validates health, and promotes healthy stories to `ready`
+- `ralph-story.sh prepare-all --sprint <name>` runs SpecKit analysis for each story (`specify → plan → tasks`), generates `story.json` task containers, validates health, and promotes healthy stories to `ready`
 - `ralph.sh` picks up the next eligible story, runs it in one primary Codex cycle via `ralph-story-run.sh`, evaluates binary `checks[]`, uses targeted remediation only when needed, and merges each story branch back to the sprint branch when done
 - `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to pass, archives sprint artifacts, merges the sprint branch, and deletes it
 
@@ -53,13 +57,15 @@ A sprint must be closed before the next one is activated.
 
 ```bash
 # Sprint 1 (after planning with ralph-roadmap.sh)
-./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
 ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh          # closes sprint-1, merges to main
 
 # Sprint 2
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-2
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-2
 ./scripts/ralph/ralph-sprint.sh use sprint-2    # activate sprint-2
-./scripts/ralph/ralph-story.sh prepare-all      # prepare sprint-2 stories
 ./scripts/ralph/ralph.sh                        # execute sprint-2
 ./scripts/ralph/ralph-sprint-commit.sh          # closes sprint-2, merges to main
 ```
@@ -67,8 +73,9 @@ A sprint must be closed before the next one is activated.
 Or let `next --activate` select the next ready sprint automatically:
 
 ```bash
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-3
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-3
 ./scripts/ralph/ralph-sprint.sh next --activate
-./scripts/ralph/ralph-story.sh prepare-all
 ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh
 ```
@@ -195,7 +202,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 ./scripts/ralph/ralph-sprint.sh mark-ready <sprint-name>
 ./scripts/ralph/ralph-sprint.sh next [--activate]
 ./scripts/ralph/ralph-sprint.sh branch <sprint-name>
-./scripts/ralph/ralph-sprint.sh status
+./scripts/ralph/ralph-sprint.sh status [sprint-name]
 ```
 
 ### Story management
@@ -208,7 +215,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 ./scripts/ralph/ralph-story.sh specify-all [--force] [--jobs N]
 ./scripts/ralph/ralph-story.sh generate <ID>
 ./scripts/ralph/ralph-story.sh generate-all [--force] [--jobs N]
-./scripts/ralph/ralph-story.sh prepare-all [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh prepare-all [--sprint NAME] [--force] [--jobs N]
 ./scripts/ralph/ralph-story.sh health [<ID>]
 ./scripts/ralph/ralph-story.sh health-all
 ./scripts/ralph/ralph-story.sh tasks <ID>
@@ -236,18 +243,21 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 ### Verification and quality
 
 ```bash
-./scripts/ralph/ralph-verify.sh [--targeted|--full]
+./scripts/ralph/ralph-verify.sh [--targeted|--task|--story-scope|--sprint|--full-regression]
 ./scripts/ralph/ralph-fallow.sh [--story PATH] [--dry-run] [--no-autofix]
 ```
 
 `ralph-verify.sh` modes:
-- `--targeted` — typecheck, lint, and tests scoped to changed files (default)
-- `--full` — full suite with known baseline failures filtered out
+- `--targeted` — compatibility alias for story-scoped verification
+- `--task` — verify one task using Ralph-declared scope and checks
+- `--story-scope` — verify the story slice without full-repo regression
+- `--sprint` — verify the sprint diff using sprint-scoped lint, tests, and typecheck
+- `--full-regression` — explicit full-repo verification when requested
 
 ### Sprint closeout
 
 ```bash
-./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix]
+./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression]
 ```
 
 ### Recovery and migration

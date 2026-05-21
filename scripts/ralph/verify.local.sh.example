@@ -13,6 +13,7 @@
 #
 # Helpful core helpers exposed by ralph-verify.sh:
 #   collect_changed_files
+#   collect_scope_files
 #   list_repo_test_files
 #
 # Example Node/TypeScript adapter:
