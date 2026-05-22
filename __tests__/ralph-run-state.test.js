@@ -2801,3 +2801,136 @@ test('ralph-story prep-status shows latest prep journal summary and story filter
   assert.match(output, /Prep detail S-002 specify: failed - SpecKit did not produce all required artifacts \(duration-ms=1500, updated=2026-05-22T00:00:55Z\)/)
   assert.match(output, new RegExp(prepSummaryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 })
+
+test('ralph loop refreshes sprint-run manifest during live story execution', () => {
+  const repoDir = initTempRepo()
+  const mockCodexPath = path.join(repoDir, 'mock-codex.sh')
+  const storyPath = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json')
+  const storiesPath = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json')
+
+  writeExecutable(
+    mockCodexPath,
+    `#!/bin/bash
+set -euo pipefail
+if [ "$1" = "--yolo" ] && [ "$2" = "exec" ] && [ "$3" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+echo "mock codex"
+`
+  )
+
+  run('./scripts/ralph/ralph-sprint.sh', ['create', 'sprint-1'], { cwd: repoDir })
+
+  writeFile(
+    storiesPath,
+    storiesJson('sprint-1', {
+      status: 'active',
+      stories: [
+        {
+          id: 'S-001',
+          title: 'Live manifest story',
+          priority: 1,
+          effort: 1,
+          status: 'ready',
+          sprint: 'sprint-1',
+          depends_on: [],
+          passes: false,
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+          goal: 'Update the manifest during story execution.',
+          promptContext: 'Use a mocked story runner to complete one story.',
+        },
+      ],
+    })
+  )
+
+  writeFile(
+    storyPath,
+    JSON.stringify({
+      version: 1,
+      project: 'tmp-ralph-test',
+      storyId: 'S-001',
+      title: 'Live manifest story',
+      description: 'Update the manifest during story execution.',
+      branchName: 'ralph/sprint-1/story-S-001',
+      sprint: 'sprint-1',
+      priority: 1,
+      depends_on: [],
+      status: 'planned',
+      spec: {
+        scope: 'Update one file and verify the manifest is live.',
+        out_of_scope: [],
+        first_slice: {},
+        preserved_invariants: [],
+        supporting_files: [],
+        verification: ['echo ok'],
+      },
+      tasks: [
+        {
+          id: 'T-01',
+          title: 'Mock complete the story',
+          context: 'A mocked story runner will mark this story done.',
+          scope: ['README.md'],
+          acceptance: 'The story is marked done.',
+          checks: ['echo ok'],
+          depends_on: [],
+          status: 'pending',
+          passes: false,
+        },
+      ],
+      passes: false,
+    }, null, 2)
+  )
+
+  writeExecutable(
+    path.join(repoDir, 'scripts/ralph/ralph-story-run.sh'),
+    `#!/bin/bash
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+manifest="$RALPH_SPRINT_RUN_DIR/sprint-run.json"
+stories="$repo/scripts/ralph/sprints/sprint-1/stories.json"
+story="$repo/scripts/ralph/sprints/sprint-1/stories/S-001/story.json"
+
+jq -e '.phase == "running-story"' "$manifest" >/dev/null
+jq -e '.story_count == 1' "$manifest" >/dev/null
+jq -e '.total_story_count == 1' "$manifest" >/dev/null
+jq -e '.done_count == 0' "$manifest" >/dev/null
+jq -e '.remaining_stories == 1' "$manifest" >/dev/null
+jq -e '.active_story_id == "S-001"' "$manifest" >/dev/null
+jq -e '.active_story_title == "Live manifest story"' "$manifest" >/dev/null
+
+tmp="$(mktemp)"
+jq '(.tasks[] | .status = "done" | .passes = true) | .status = "done" | .passes = true' "$story" > "$tmp"
+mv "$tmp" "$story"
+
+tmp="$(mktemp)"
+jq '(.stories[] | select(.id == "S-001") | .status) = "done" |
+    (.stories[] | select(.id == "S-001") | .passes) = true |
+    .activeStoryId = null' "$stories" > "$tmp"
+mv "$tmp" "$stories"
+
+git checkout ralph/sprint/sprint-1 >/dev/null 2>&1 || true
+`
+  )
+
+  run('git', ['add', '.'], { cwd: repoDir })
+  run('git', ['commit', '-m', 'setup live manifest test'], { cwd: repoDir })
+
+  const output = run('./scripts/ralph/ralph.sh', ['--max-stories', '1'], {
+    cwd: repoDir,
+    env: { CODEX_BIN: mockCodexPath },
+  })
+
+  assert.match(output, /DONE: S-001 complete/)
+  const runDirs = fs.readdirSync(path.join(repoDir, 'scripts/ralph/runtime/sprint-runs'))
+  assert.equal(runDirs.length, 1)
+  const manifestPath = path.join(repoDir, 'scripts/ralph/runtime/sprint-runs', runDirs[0], 'sprint-run.json')
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  assert.equal(manifest.phase, 'completed')
+  assert.equal(manifest.story_count, 1)
+  assert.equal(manifest.total_story_count, 1)
+  assert.equal(manifest.done_count, 1)
+  assert.equal(manifest.failed_count, 0)
+  assert.equal(manifest.remaining_stories, 0)
+  assert.equal(manifest.active_story_id, null)
+})

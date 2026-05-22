@@ -146,6 +146,12 @@ prune_runtime_runs() {
 write_sprint_run_manifest() {
   local phase="$1"
   local manifest_path="$SPRINT_RUN_DIR/sprint-run.json"
+  local total_story_count current_active_story_id current_active_story_title current_done_count current_remaining
+  total_story_count="$(jq -r '(.stories // []) | length' "$STORIES_FILE" 2>/dev/null || echo 0)"
+  current_active_story_id="$(jq -r '.activeStoryId // ""' "$STORIES_FILE" 2>/dev/null || true)"
+  current_active_story_title="$(jq -r --arg id "$current_active_story_id" 'if $id == "" then "" else (.stories[] | select(.id == $id) | .title // "") end' "$STORIES_FILE" 2>/dev/null || true)"
+  current_done_count="$(jq -r '[.stories[]? | select((.status // "") == "done" and (.passes // false) == true)] | length' "$STORIES_FILE" 2>/dev/null || echo 0)"
+  current_remaining="$(jq -r '[.stories[]? | select((.status // "") != "done" and (.status // "") != "abandoned")] | length' "$STORIES_FILE" 2>/dev/null || echo 0)"
   jq -n \
     --arg sprint "$ACTIVE_SPRINT" \
     --arg sprint_branch "$SPRINT_BRANCH" \
@@ -155,10 +161,13 @@ write_sprint_run_manifest() {
     --arg phase "$phase" \
     --arg log_file "$SPRINT_LOG_FILE" \
     --arg run_dir "$SPRINT_RUN_DIR" \
+    --arg active_story_id "$current_active_story_id" \
+    --arg active_story_title "$current_active_story_title" \
     --argjson story_count "${story_count:-0}" \
-    --argjson done_count "${done_count:-0}" \
+    --argjson total_story_count "$total_story_count" \
+    --argjson done_count "$current_done_count" \
     --argjson failed_count "${failed_count:-0}" \
-    --arg remaining "${remaining:-unknown}" \
+    --argjson remaining "$current_remaining" \
     '{
       sprint: $sprint,
       sprint_branch: $sprint_branch,
@@ -169,9 +178,12 @@ write_sprint_run_manifest() {
       log_file: $log_file,
       run_dir: $run_dir,
       story_count: $story_count,
+      total_story_count: $total_story_count,
       done_count: $done_count,
       failed_count: $failed_count,
-      remaining_stories: $remaining
+      remaining_stories: $remaining,
+      active_story_id: (if $active_story_id == "" then null else $active_story_id end),
+      active_story_title: (if $active_story_title == "" then null else $active_story_title end)
     }' > "$manifest_path"
 }
 
@@ -223,15 +235,18 @@ echo "Runtime journal:   $SPRINT_RUN_DIR"
 echo ""
 
 while [ "$story_count" -lt "$MAX_STORIES" ]; do
+  write_sprint_run_manifest "selecting-story"
   next_id="$("$SCRIPT_DIR/ralph-story.sh" next-id 2>/dev/null || true)"
 
   if [ -z "$next_id" ]; then
     echo "No more eligible stories."
+    write_sprint_run_manifest "idle"
     break
   fi
 
   story_title="$(jq -r --arg id "$next_id" '.stories[] | select(.id == $id) | .title' "$STORIES_FILE" 2>/dev/null || echo "(unknown)")"
   story_count=$((story_count + 1))
+  write_sprint_run_manifest "story-selected"
 
   echo ""
   echo "════════════════════════════════════════════════════"
@@ -241,6 +256,7 @@ while [ "$story_count" -lt "$MAX_STORIES" ]; do
   if [ "$DRY_RUN" = "true" ]; then
     echo "[DRY RUN] Would run: ralph-story.sh start-next && ralph-story-run.sh"
     echo "[DRY RUN] Stopping after first story in dry-run mode."
+    write_sprint_run_manifest "dry-run"
     break
   fi
 
@@ -249,12 +265,15 @@ while [ "$story_count" -lt "$MAX_STORIES" ]; do
     echo ""
     echo "ERROR: start-next failed for $next_id"
     failed_count=$((failed_count + 1))
+    write_sprint_run_manifest "start-next-failed"
     if [ "$CONTINUE_ON_FAILURE" = "true" ]; then
       git -C "$WORKSPACE_ROOT" checkout "$SPRINT_BRANCH" 2>/dev/null || true
+      write_sprint_run_manifest "waiting-for-next"
       continue
     fi
     break
   fi
+  write_sprint_run_manifest "running-story"
 
   # Build ralph-story-run.sh args
   story_run_args=(--max-retries "$MAX_RETRIES")
@@ -264,13 +283,16 @@ while [ "$story_count" -lt "$MAX_STORIES" ]; do
     echo ""
     echo "DONE: $next_id complete"
     done_count=$((done_count + 1))
+    write_sprint_run_manifest "story-completed"
   else
     echo ""
     echo "FAIL: $next_id — story branch left intact for inspection"
     echo "      To reset: ./scripts/ralph/ralph-story.sh set-status $next_id planned"
     failed_count=$((failed_count + 1))
+    write_sprint_run_manifest "story-failed"
     if [ "$CONTINUE_ON_FAILURE" = "true" ]; then
       git -C "$WORKSPACE_ROOT" checkout "$SPRINT_BRANCH" 2>/dev/null || true
+      write_sprint_run_manifest "waiting-for-next"
       continue
     fi
     break
