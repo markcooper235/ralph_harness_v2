@@ -620,6 +620,7 @@ test('ralph-story-run completes a simple story in one primary Codex cycle and sy
   const repoDir = initTempRepo()
   const storyPath = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json')
   const mockCodexPath = path.join(repoDir, 'mock-story-run-codex.sh')
+  const promptLog = path.join(repoDir, 'mock-story-run-prompt.log')
 
   writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
   writeFile(path.join(repoDir, 'app.txt'), 'Hello World\n')
@@ -692,7 +693,7 @@ if [ "\${1:-}" = "exec" ] && [ "\${2:-}" = "--dangerously-bypass-approvals-and-s
   echo "Run Codex non-interactively"
   exit 0
 fi
-cat >/dev/null
+cat >"$PROMPT_LOG"
 repo_root="$(git rev-parse --show-toplevel)"
 manifest_path="$repo_root/scripts/ralph/sprints/sprint-1/stories/S-001/.story-execution.json"
 if grep -q 'node_modules/example/docs.md' "$manifest_path"; then
@@ -707,6 +708,14 @@ if grep -q 'dist-docs/index.html' "$manifest_path"; then
   echo "execution manifest leaked generated docs scope" >&2
   exit 1
 fi
+runtime_bundle_dir="$(find "$repo_root/scripts/ralph/runtime/story-runs" -path '*/stories/S-001/.exec' -type d | head -n 1)"
+[ -d "$runtime_bundle_dir" ] || { echo "missing execution bundle" >&2; exit 1; }
+[ -f "$runtime_bundle_dir/context.json" ] || { echo "missing context.json" >&2; exit 1; }
+[ -f "$runtime_bundle_dir/commands.json" ] || { echo "missing commands.json" >&2; exit 1; }
+[ -f "$runtime_bundle_dir/files.json" ] || { echo "missing files.json" >&2; exit 1; }
+[ -f "$runtime_bundle_dir/dependencies.json" ] || { echo "missing dependencies.json" >&2; exit 1; }
+[ -f "$runtime_bundle_dir/checks.json" ] || { echo "missing checks.json" >&2; exit 1; }
+[ -f "$runtime_bundle_dir/summary.md" ] || { echo "missing summary.md" >&2; exit 1; }
 printf 'Hello Ralph\\n' > "$repo_root/app.txt"
 story_file="$MOCK_STORY_FILE"
 tmp="$(mktemp)"
@@ -727,6 +736,7 @@ git -C "$repo_root" commit -m "feat: story cycle update" >/dev/null 2>&1 || true
     env: {
       CODEX_BIN: mockCodexPath,
       MOCK_STORY_FILE: storyPath,
+      PROMPT_LOG: promptLog,
     },
   })
 
@@ -737,13 +747,13 @@ git -C "$repo_root" commit -m "feat: story cycle update" >/dev/null 2>&1 || true
   assert.equal(storyData.passes, true)
   assert.equal(storyData.tasks[0].status, 'done')
   assert.equal(storyData.tasks[0].passes, true)
-  assert.deepEqual(storyData.tasks[0].handoff.changed_files, [
-    'app.txt',
-    'scripts/ralph/runtime/story-runs/run-1/log.json',
-    'dist-docs/index.html',
-  ])
+  assert.deepEqual(storyData.tasks[0].handoff.changed_files, ['app.txt'])
   assert.deepEqual(storyData.story_handoff.completed_tasks, ['T-01'])
   assert.deepEqual(storyData.story_handoff.files_touched, ['app.txt'])
+  const promptText = fs.readFileSync(promptLog, 'utf8')
+  assert.match(promptText, /execution-baseline\.md/)
+  assert.match(promptText, /\.exec\/summary\.md/)
+  assert.match(promptText, /The framework will persist pass\/fail bookkeeping/)
 
   const backlog = JSON.parse(
     fs.readFileSync(path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'), 'utf8')

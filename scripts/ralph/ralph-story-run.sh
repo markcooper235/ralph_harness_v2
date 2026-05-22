@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 source "$SCRIPT_DIR/lib/codex-exec.sh"
+source "$SCRIPT_DIR/lib/specify.sh"
 LOCK_DIR="$SCRIPT_DIR/.workflow-lock"
 
 STORY_FILE=""
@@ -117,6 +118,14 @@ STORY_RUNTIME_DIR=""
 CHECK_RUNTIME_DIR=""
 STORY_LOG_DIR=""
 STORY_MANIFEST_PATH=""
+EXEC_BUNDLE_DIR=""
+EXEC_BUNDLE_SUMMARY_PATH=""
+EXEC_BUNDLE_CONTEXT_PATH=""
+EXEC_BUNDLE_COMMANDS_PATH=""
+EXEC_BUNDLE_FILES_PATH=""
+EXEC_BUNDLE_DEPENDENCIES_PATH=""
+EXEC_BUNDLE_CHECKS_PATH=""
+EXECUTION_COMPAT_PATH=""
 VERIFY_FAILED_BUNDLE_PATH=""
 VERIFY_FAILED_SUMMARY_PATH=""
 
@@ -134,7 +143,16 @@ ensure_story_runtime_dir() {
   STORY_LOG_DIR="$STORY_RUNTIME_DIR"
   CHECK_RUNTIME_DIR="$STORY_RUNTIME_DIR/checks"
   STORY_MANIFEST_PATH="$STORY_RUNTIME_DIR/story-summary.json"
+  EXEC_BUNDLE_DIR="$STORY_RUNTIME_DIR/.exec"
+  EXEC_BUNDLE_SUMMARY_PATH="$EXEC_BUNDLE_DIR/summary.md"
+  EXEC_BUNDLE_CONTEXT_PATH="$EXEC_BUNDLE_DIR/context.json"
+  EXEC_BUNDLE_COMMANDS_PATH="$EXEC_BUNDLE_DIR/commands.json"
+  EXEC_BUNDLE_FILES_PATH="$EXEC_BUNDLE_DIR/files.json"
+  EXEC_BUNDLE_DEPENDENCIES_PATH="$EXEC_BUNDLE_DIR/dependencies.json"
+  EXEC_BUNDLE_CHECKS_PATH="$EXEC_BUNDLE_DIR/checks.json"
+  EXECUTION_COMPAT_PATH="$STORY_DIR/.story-execution.json"
   mkdir -p "$CHECK_RUNTIME_DIR"
+  mkdir -p "$EXEC_BUNDLE_DIR"
 }
 
 write_story_runtime_manifest() {
@@ -261,6 +279,19 @@ filtered_task_scope_json() {
   ' "$STORY_FILE"
 }
 
+sanitize_paths_json() {
+  local raw_json="${1:-[]}"
+  jq -c '
+    [
+      .[]?
+      | select(type == "string")
+      | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor|tmp|temp|output|playwright-report|test-results|\\.cache|scripts/ralph/runtime|dist-docs)(/|$)")) | not)
+      | select((test("(^|/)(docs|doc)(/|$)")) | not)
+      | select((test("\\.(log|tmp|temp|cache)$")) | not)
+    ] | unique
+  ' <<< "$raw_json"
+}
+
 extract_check_file() {
   local check="$1"
   if [[ "$check" =~ test[[:space:]]+-[fed][[:space:]]+([^[:space:]]+) ]]; then
@@ -360,13 +391,33 @@ dependency_handoff_json() {
   printf '%s\n' "$entries"
 }
 
-write_execution_manifest() {
-  local manifest_path="$STORY_RUNTIME_DIR/.story-execution.json"
-  local deps_json
+execution_baseline_path() {
+  printf '%s/execution-baseline.md\n' "$SCRIPT_DIR"
+}
+
+execution_local_prompt_path() {
+  printf '%s/prompt.local.md\n' "$SCRIPT_DIR"
+}
+
+pending_task_ids_json() {
+  jq -c --arg target "$TARGET_TASK_ID" '
+    [
+      .tasks[]
+      | select(.passes != true)
+      | select($target == "" or .id == $target)
+      | .id
+    ]
+  ' "$STORY_FILE"
+}
+
+build_execution_context_json() {
+  local deps_json task_ids_json
   deps_json="$(dependency_handoff_json)"
+  task_ids_json="$(pending_task_ids_json)"
   jq -c \
     --arg target "$TARGET_TASK_ID" \
-    --argjson deps "$deps_json" '
+    --argjson deps "$deps_json" \
+    --argjson pending_task_ids "$task_ids_json" '
     {
       storyId,
       title,
@@ -374,62 +425,192 @@ write_execution_manifest() {
       scope: (.spec.scope // ""),
       preserved_invariants: (.spec.preserved_invariants // []),
       dependency_handoff: $deps,
-      tasks: [
+      pending_task_ids: $pending_task_ids,
+      target_task_id: (if $target == "" then null else $target end)
+    }
+  ' "$STORY_FILE" > "$EXEC_BUNDLE_CONTEXT_PATH"
+}
+
+build_execution_commands_json() {
+  local prep_commands_path="$STORY_DIR/.prep/commands.json"
+  if [ -f "$prep_commands_path" ]; then
+    cp "$prep_commands_path" "$EXEC_BUNDLE_COMMANDS_PATH"
+    return 0
+  fi
+
+  build_project_command_map_json "$WORKSPACE_ROOT" > "$EXEC_BUNDLE_COMMANDS_PATH"
+}
+
+build_execution_files_json() {
+  local task_scopes_json tests_json dep_files_json
+  task_scopes_json="$(jq -c --arg target "$TARGET_TASK_ID" '
+    [
+      .tasks[]
+      | select(.passes != true)
+      | select($target == "" or .id == $target)
+      | (.scope // [])[]
+    ]
+  ' "$STORY_FILE")"
+
+  tests_json="$(
+    jq -c --arg target "$TARGET_TASK_ID" '
+      [
         .tasks[]
         | select(.passes != true)
         | select($target == "" or .id == $target)
-        | {
-            id,
-            title,
-            scope: [
-              (.scope // [])[]
-              | select(type == "string")
-              | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor)/")) | not)
-            ],
-            depends_on: (.depends_on // []),
-            checks: (.checks // [])
-          }
+        | (.checks // [])[]
       ]
-    }
-  ' "$STORY_FILE" > "$manifest_path"
-  printf '%s\n' "$manifest_path"
+    ' "$STORY_FILE" \
+      | jq -rc '.[]?' \
+      | while IFS= read -r check; do
+          extract_check_file "$check" || true
+        done \
+      | jq -Rsc 'split("\n") | map(select(length > 0)) | unique'
+  )"
+
+  dep_files_json="$(jq -c '[ .dependency_handoff[]?.files_touched[]? ] | unique' "$EXEC_BUNDLE_CONTEXT_PATH")"
+
+  jq -n \
+    --argjson task_scope "$(sanitize_paths_json "$task_scopes_json")" \
+    --argjson nearest_tests "$(sanitize_paths_json "$tests_json")" \
+    --argjson dependency_files "$(sanitize_paths_json "$dep_files_json")" \
+    '{
+      writable_scope: $task_scope,
+      nearest_tests: $nearest_tests,
+      dependency_files: $dependency_files,
+      blocked_paths: [
+        "node_modules/**",
+        ".next/**",
+        "coverage/**",
+        "dist/**",
+        "build/**",
+        "vendor/**",
+        "scripts/ralph/runtime/**",
+        "dist-docs/**",
+        "scripts/ralph/README-local.md",
+        "scripts/ralph/doctor.sh",
+        "scripts/ralph/lib/specify.sh"
+      ]
+    }' > "$EXEC_BUNDLE_FILES_PATH"
 }
 
-build_story_prompt() {
-  local manifest_path mode_line
-  manifest_path="$(write_execution_manifest)"
+build_execution_checks_json() {
+  jq -c --arg target "$TARGET_TASK_ID" '
+    [
+      .tasks[]
+      | select(.passes != true)
+      | select($target == "" or .id == $target)
+      | {
+          id,
+          title,
+          depends_on: (.depends_on // []),
+          checks: (.checks // [])
+        }
+    ]
+  ' "$STORY_FILE" > "$EXEC_BUNDLE_CHECKS_PATH"
+}
+
+write_execution_compat_manifest() {
+  jq -c \
+    --slurpfile context "$EXEC_BUNDLE_CONTEXT_PATH" \
+    --slurpfile checks "$EXEC_BUNDLE_CHECKS_PATH" \
+    '{
+      storyId: $context[0].storyId,
+      title: $context[0].title,
+      goal: $context[0].goal,
+      scope: $context[0].scope,
+      preserved_invariants: $context[0].preserved_invariants,
+      dependency_handoff: $context[0].dependency_handoff,
+      tasks: ($checks[0] | map({
+        id,
+        title,
+        scope: [],
+        depends_on,
+        checks
+      }))
+    }' > "$EXECUTION_COMPAT_PATH"
+}
+
+write_execution_summary() {
+  local mode_line
   if [ -n "$TARGET_TASK_ID" ]; then
-    mode_line="Only execute task $TARGET_TASK_ID and any required story.json updates for that task."
+    mode_line="Only execute task $TARGET_TASK_ID and any required supporting edits."
   else
     mode_line="Execute all pending tasks in dependency order."
   fi
 
+  cat > "$EXEC_BUNDLE_SUMMARY_PATH" <<EOF
+# Ralph Story Execution Bundle
+
+Story file: $STORY_FILE
+Execution mode: $mode_line
+
+Authoritative bundle files:
+- Context: $EXEC_BUNDLE_CONTEXT_PATH
+- Commands: $EXEC_BUNDLE_COMMANDS_PATH
+- Files: $EXEC_BUNDLE_FILES_PATH
+- Dependencies: $EXEC_BUNDLE_DEPENDENCIES_PATH
+- Checks: $EXEC_BUNDLE_CHECKS_PATH
+
+Execution rules:
+- Treat the bundle files above as authoritative.
+- Edit only files listed in \`writable_scope\` unless a failing check requires a minimal expansion.
+- Do not inspect \`node_modules\`, generated trees, or Ralph framework docs/helpers by default.
+- Let shell verification decide pass/fail; do not spend time on bookkeeping narration.
+EOF
+}
+
+build_execution_bundle() {
+  local deps_json
+  deps_json="$(dependency_handoff_json)"
+  printf '%s\n' "$deps_json" > "$EXEC_BUNDLE_DEPENDENCIES_PATH"
+  build_execution_context_json
+  build_execution_commands_json
+  build_execution_files_json
+  build_execution_checks_json
+  write_execution_compat_manifest
+  write_execution_summary
+}
+
+build_story_prompt() {
+  build_execution_bundle
+
   cat <<PROMPT
-Execute this story.
+Execute this Ralph story.
 
-Read this execution summary first:
-$manifest_path
+Read these files in order:
+1. $(execution_baseline_path)
+2. $EXEC_BUNDLE_SUMMARY_PATH
+3. $EXEC_BUNDLE_CONTEXT_PATH
+4. $EXEC_BUNDLE_COMMANDS_PATH
+5. $EXEC_BUNDLE_FILES_PATH
+6. $EXEC_BUNDLE_DEPENDENCIES_PATH
+7. $EXEC_BUNDLE_CHECKS_PATH
 
-Update this source-of-truth file as you work:
+Primary durable story file:
 $STORY_FILE
 
-$mode_line
+Compatibility execution summary:
+$EXECUTION_COMPAT_PATH
 
 Rules:
-- Use the execution summary for the minimal task list, checks, invariants, and dependency handoff.
-- Use story.json as the durable source of truth when you need fuller details and when writing status/handoff updates.
-- Ignore vendor and generated trees such as node_modules, .next, coverage, dist, build, and vendor unless a check explicitly requires them.
-- Stay inside each task's scope when editing.
-- Run each task's checks yourself before moving on.
-- Fix ordinary check failures in-session instead of stopping early.
-- After a task passes, update that task with:
-  status="done", passes=true, and handoff={"changed_files":[],"artifacts":[],"checks_passed":[],"remaining_risks":[]}
-- If a task cannot be completed, mark it failed with a compact handoff and stop.
-- When all tasks pass, set status="done", passes=true, and story_handoff={"completed_tasks":[],"files_touched":[],"contracts_added":[],"residual_risks":[]}
-- Keep residual risk lists empty unless something truly remains unresolved.
+- Treat the execution bundle as authoritative for task scope, commands, checks, invariants, and dependency handoff.
+- Inspect only files listed in $EXEC_BUNDLE_FILES_PATH unless a failing check requires a minimal expansion.
+- Do not inspect node_modules, generated trees, or Ralph framework docs/helpers such as scripts/ralph/README-local.md, scripts/ralph/doctor.sh, or scripts/ralph/lib/specify.sh unless a failing check explicitly requires them.
+- Run the required checks yourself while working. Fix ordinary failures in-session instead of stopping early.
+- Keep output terse. No planning narration, no completion essay, no restating the bundle.
+- The framework will persist pass/fail bookkeeping, fallback handoffs, and final story_handoff from shell verification. Only edit story.json when you need to record meaningful task or story context that shell verification cannot infer.
 - Commit code and story.json changes as needed.
 - Do not update stories.json.
 PROMPT
+
+  if [ -f "$(execution_local_prompt_path)" ]; then
+    cat <<PROMPT
+
+Local prompt extensions:
+$(execution_local_prompt_path)
+PROMPT
+  fi
 }
 
 run_story_cycle() {
@@ -465,13 +646,31 @@ ensure_task_handoff_fallback() {
   local task_id="$1"
   local existing
   existing="$(jq -c --arg id "$task_id" '.tasks[] | select(.id == $id) | .handoff // empty' "$STORY_FILE")"
-  [ -n "$existing" ] && [ "$existing" != "null" ] && return 0
+  [ -n "$existing" ] && [ "$existing" != "null" ] || existing='{}'
 
   local handoff
   handoff="$(jq -nc \
-    --argjson changed "$(filtered_task_scope_json "$task_id")" \
-    --argjson checks "$(jq -c --arg id "$task_id" '.tasks[] | select(.id == $id) | (.checks // [])' "$STORY_FILE")" \
-    '{changed_files: $changed, artifacts: [], checks_passed: $checks, remaining_risks: []}')"
+    --argjson existing "$existing" \
+    --argjson fallback_changed "$(filtered_task_scope_json "$task_id")" \
+    --argjson fallback_checks "$(jq -c --arg id "$task_id" '.tasks[] | select(.id == $id) | (.checks // [])' "$STORY_FILE")" \
+    '
+    {
+      changed_files: (
+        ($existing.changed_files // $fallback_changed)
+        | [
+            .[]?
+            | select(type == "string")
+            | select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor|tmp|temp|output|playwright-report|test-results|\\.cache|scripts/ralph/runtime|dist-docs)(/|$)")) | not)
+            | select((test("(^|/)(docs|doc)(/|$)")) | not)
+            | select((test("\\.(log|tmp|temp|cache)$")) | not)
+          ]
+        | unique
+        | if length == 0 then $fallback_changed else . end
+      ),
+      artifacts: (($existing.artifacts // []) | unique),
+      checks_passed: (($existing.checks_passed // $fallback_checks) | unique),
+      remaining_risks: (($existing.remaining_risks // []) | unique)
+    }')"
   set_task_field "$task_id" "handoff" "$handoff"
 }
 
@@ -723,24 +922,32 @@ build_remediation_prompt() {
   cat <<PROMPT
 Repair the remaining failing story checks.
 
-Read and update:
-$STORY_FILE
+Read these files in order:
+1. $(execution_baseline_path)
+2. $EXEC_BUNDLE_SUMMARY_PATH
+3. $EXEC_BUNDLE_CONTEXT_PATH
+4. $EXEC_BUNDLE_COMMANDS_PATH
+5. $EXEC_BUNDLE_FILES_PATH
+6. $EXEC_BUNDLE_DEPENDENCIES_PATH
+7. $EXEC_BUNDLE_CHECKS_PATH
+8. $STORY_FILE
 
 Focus only on task $task_id.
-Scope: ${task_scope:-none}
+Writable scope: ${task_scope:-none}
 Still failing checks:
 $checks_text
 
-Failure bundle:
-$failure_bundle_path
+Failure bundle: $failure_bundle_path
 
 Compact error context:
 $failure_summary
 
 Rules:
 - Make only the minimal code and story.json changes needed to satisfy the failing checks.
+- Stay inside the execution bundle scope unless a failing check requires a minimal expansion.
 - Re-run the failing checks yourself before finishing.
-- Update the task handoff compactly.
+- Keep output terse. Do not narrate your plan or summarize completion.
+- The framework will persist pass/fail bookkeeping and fallback handoffs from shell verification.
 - Stop once the failing checks are green. Do not update stories.json.
 PROMPT
 }
