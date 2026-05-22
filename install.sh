@@ -180,6 +180,7 @@ copy_file "$RUNTIME_SOURCE_DIR/ralph-status.sh" "$DEST_DIR_REL/ralph-status.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-cleanup.sh" "$DEST_DIR_REL/ralph-cleanup.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-verify.sh" "$DEST_DIR_REL/ralph-verify.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralph-sprint-test.sh.example"
+copy_file "$RUNTIME_SOURCE_DIR/execution-baseline.md" "$DEST_DIR_REL/execution-baseline.md"
 copy_file "$RUNTIME_SOURCE_DIR/lib/codex-exec.sh" "$DEST_DIR_REL/lib/codex-exec.sh"
 copy_file "$RUNTIME_SOURCE_DIR/lib/editor-intake.sh" "$DEST_DIR_REL/lib/editor-intake.sh"
 copy_file "$RUNTIME_SOURCE_DIR/lib/search.sh" "$DEST_DIR_REL/lib/search.sh"
@@ -536,6 +537,16 @@ ralph_verify_has_code_scope() {
   [ -n "$(ralph_verify_code_files)" ]
 }
 
+ralph_verify_repo_has_eslint_config() {
+  find . \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -maxdepth 2 \
+    -type f \
+    \( -name "eslint.config.js" -o -name "eslint.config.mjs" -o -name "eslint.config.cjs" -o -name ".eslintrc" -o -name ".eslintrc.js" -o -name ".eslintrc.cjs" -o -name ".eslintrc.json" -o -name ".eslintrc.yaml" -o -name ".eslintrc.yml" \) \
+    -print -quit 2>/dev/null | grep -q .
+}
+
 ralph_verify_repo_has_nx_workspace() {
   [ -f nx.json ]
 }
@@ -672,6 +683,13 @@ ralph_verify_run_scoped_lint() {
   code_files="$(ralph_verify_code_files)"
   if [ -z "$code_files" ]; then
     echo "[ralph-verify] skipping lint (no JS/TS scope files)"
+    return 0
+  fi
+
+  if ! ralph_verify_repo_has_eslint_config; then
+    echo "[ralph-verify] scoped ESLint unavailable (no ESLint config); running workspace lint"
+    npm run lint
+    QUALITY_CHECKS_RAN=1
     return 0
   fi
 

@@ -150,7 +150,7 @@ ensure_story_runtime_dir() {
   EXEC_BUNDLE_FILES_PATH="$EXEC_BUNDLE_DIR/files.json"
   EXEC_BUNDLE_DEPENDENCIES_PATH="$EXEC_BUNDLE_DIR/dependencies.json"
   EXEC_BUNDLE_CHECKS_PATH="$EXEC_BUNDLE_DIR/checks.json"
-  EXECUTION_COMPAT_PATH="$STORY_DIR/.story-execution.json"
+  EXECUTION_COMPAT_PATH="$STORY_RUNTIME_DIR/.story-execution.json"
   mkdir -p "$CHECK_RUNTIME_DIR"
   mkdir -p "$EXEC_BUNDLE_DIR"
 }
@@ -532,18 +532,64 @@ write_execution_compat_manifest() {
 }
 
 write_execution_summary() {
-  local mode_line
+  local mode_line commands_text writable_files_text tests_text pending_tasks_text dependency_text
   if [ -n "$TARGET_TASK_ID" ]; then
     mode_line="Only execute task $TARGET_TASK_ID and any required supporting edits."
   else
     mode_line="Execute all pending tasks in dependency order."
   fi
 
+  commands_text="$(
+    jq -r '
+      [
+        (.build // empty | select(length > 0) | "build: " + .),
+        (.typecheck // empty | select(length > 0) | "typecheck: " + .),
+        (.lint // empty | select(length > 0) | "lint: " + .),
+        (.test // empty | select(length > 0) | "test: " + .)
+      ] | if length == 0 then ["(none resolved)"] else . end | .[]
+    ' "$EXEC_BUNDLE_COMMANDS_PATH"
+  )"
+  writable_files_text="$(jq -r '(.writable_scope // []) | if length == 0 then ["(none)"] else . end | .[]' "$EXEC_BUNDLE_FILES_PATH")"
+  tests_text="$(jq -r '(.nearest_tests // []) | if length == 0 then ["(none)"] else . end | .[]' "$EXEC_BUNDLE_FILES_PATH")"
+  pending_tasks_text="$(
+    jq -r '
+      if length == 0 then
+        "(none)"
+      else
+        .[] | "- " + .id + ": " + .title + " | checks=" + ((.checks // []) | length | tostring)
+      end
+    ' "$EXEC_BUNDLE_CHECKS_PATH"
+  )"
+  dependency_text="$(
+    jq -r '
+      if length == 0 then
+        "(none)"
+      else
+        .[] | "- " + .id + ": " + .title
+      end
+    ' "$EXEC_BUNDLE_DEPENDENCIES_PATH"
+  )"
+
   cat > "$EXEC_BUNDLE_SUMMARY_PATH" <<EOF
 # Ralph Story Execution Bundle
 
 Story file: $STORY_FILE
 Execution mode: $mode_line
+
+Resolved commands:
+$commands_text
+
+Writable scope:
+$writable_files_text
+
+Nearest tests:
+$tests_text
+
+Pending tasks:
+$pending_tasks_text
+
+Dependency handoff:
+$dependency_text
 
 Authoritative bundle files:
 - Context: $EXEC_BUNDLE_CONTEXT_PATH
@@ -581,20 +627,14 @@ Execute this Ralph story.
 Read these files in order:
 1. $(execution_baseline_path)
 2. $EXEC_BUNDLE_SUMMARY_PATH
-3. $EXEC_BUNDLE_CONTEXT_PATH
-4. $EXEC_BUNDLE_COMMANDS_PATH
-5. $EXEC_BUNDLE_FILES_PATH
-6. $EXEC_BUNDLE_DEPENDENCIES_PATH
-7. $EXEC_BUNDLE_CHECKS_PATH
+3. $STORY_FILE
 
 Primary durable story file:
 $STORY_FILE
 
-Compatibility execution summary:
-$EXECUTION_COMPAT_PATH
-
 Rules:
 - Treat the execution bundle as authoritative for task scope, commands, checks, invariants, and dependency handoff.
+- Use the JSON bundle files only when the summary or a failing check requires more detail.
 - Inspect only files listed in $EXEC_BUNDLE_FILES_PATH unless a failing check requires a minimal expansion.
 - Do not inspect node_modules, generated trees, or Ralph framework docs/helpers such as scripts/ralph/README-local.md, scripts/ralph/doctor.sh, or scripts/ralph/lib/specify.sh unless a failing check explicitly requires them.
 - Run the required checks yourself while working. Fix ordinary failures in-session instead of stopping early.
@@ -706,6 +746,22 @@ finalize_story_handoff() {
     }
   ' "$STORY_FILE")"
   set_story_field "story_handoff" "$handoff"
+}
+
+story_tracked_files_json() {
+  jq -c '
+    (
+      [
+        (.story_handoff.files_touched // [])[]?,
+        (.tasks[]?.handoff.changed_files // [])[]?
+      ]
+      | map(select(type == "string"))
+      | map(select((test("(^|/)(node_modules|\\.next|coverage|dist|build|vendor|tmp|temp|output|playwright-report|test-results|\\.cache|scripts/ralph/runtime|dist-docs)(/|$)")) | not))
+      | map(select((test("(^|/)(docs|doc)(/|$)")) | not))
+      | map(select((test("\\.(log|tmp|temp|cache)$")) | not))
+      | unique
+    )
+  ' "$STORY_FILE"
 }
 
 VERIFY_FAILED_TASK_ID=""
@@ -887,6 +943,13 @@ merge_story_branch() {
     return 0
   fi
 
+  local tracked_files_json tracked_path
+  tracked_files_json="$(story_tracked_files_json)"
+  while IFS= read -r tracked_path; do
+    [ -n "$tracked_path" ] || continue
+    git -C "$WORKSPACE_ROOT" add -- "$tracked_path" 2>/dev/null || true
+  done < <(jq -r '.[]?' <<< "$tracked_files_json")
+
   git -C "$WORKSPACE_ROOT" add "$STORY_FILE" 2>/dev/null || true
   [ -f "$meta_stories_file" ] && git -C "$WORKSPACE_ROOT" add "$meta_stories_file" 2>/dev/null || true
   if ! git -C "$WORKSPACE_ROOT" diff --cached --quiet 2>/dev/null; then
@@ -925,12 +988,7 @@ Repair the remaining failing story checks.
 Read these files in order:
 1. $(execution_baseline_path)
 2. $EXEC_BUNDLE_SUMMARY_PATH
-3. $EXEC_BUNDLE_CONTEXT_PATH
-4. $EXEC_BUNDLE_COMMANDS_PATH
-5. $EXEC_BUNDLE_FILES_PATH
-6. $EXEC_BUNDLE_DEPENDENCIES_PATH
-7. $EXEC_BUNDLE_CHECKS_PATH
-8. $STORY_FILE
+3. $STORY_FILE
 
 Focus only on task $task_id.
 Writable scope: ${task_scope:-none}
@@ -944,6 +1002,7 @@ $failure_summary
 
 Rules:
 - Make only the minimal code and story.json changes needed to satisfy the failing checks.
+- Use JSON bundle files only when the summary or failure bundle is insufficient.
 - Stay inside the execution bundle scope unless a failing check requires a minimal expansion.
 - Re-run the failing checks yourself before finishing.
 - Keep output terse. Do not narrate your plan or summarize completion.

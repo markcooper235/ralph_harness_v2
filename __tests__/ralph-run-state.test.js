@@ -696,15 +696,17 @@ fi
 cat >"$PROMPT_LOG"
 repo_root="$(git rev-parse --show-toplevel)"
 manifest_path="$repo_root/scripts/ralph/sprints/sprint-1/stories/S-001/.story-execution.json"
-if grep -q 'node_modules/example/docs.md' "$manifest_path"; then
+runtime_manifest_path="$(find "$repo_root/scripts/ralph/runtime/story-runs" -path '*/stories/S-001/.story-execution.json' -type f | head -n 1)"
+[ -f "$runtime_manifest_path" ] || { echo "missing runtime execution manifest" >&2; exit 1; }
+if grep -q 'node_modules/example/docs.md' "$runtime_manifest_path"; then
   echo "execution manifest leaked vendor scope" >&2
   exit 1
 fi
-if grep -q 'scripts/ralph/runtime/story-runs/run-1/log.json' "$manifest_path"; then
+if grep -q 'scripts/ralph/runtime/story-runs/run-1/log.json' "$runtime_manifest_path"; then
   echo "execution manifest leaked runtime scope" >&2
   exit 1
 fi
-if grep -q 'dist-docs/index.html' "$manifest_path"; then
+if grep -q 'dist-docs/index.html' "$runtime_manifest_path"; then
   echo "execution manifest leaked generated docs scope" >&2
   exit 1
 fi
