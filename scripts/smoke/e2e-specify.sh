@@ -263,6 +263,109 @@ validate_story_json() {
   log "  [$story_id] story.json OK ($task_count tasks)"
 }
 
+# ── validate_prep_observability ──────────────────────────────────────────────
+# Assert that prepare-all recorded the latest prep journal and that prep-status
+# surfaces compact and detailed stage output for the sprint.
+
+validate_prep_observability() {
+  local prep_log="$1"
+  local prep_summary
+  prep_summary="$(sed -n 's/^Prep summary: //p' "$prep_log" | tail -n1)"
+  [ -n "$prep_summary" ] || fail "prepare-all did not print a prep summary path"
+  assert_file_exists "$prep_summary"
+  assert_json_expr "$prep_summary" '.status == "passed"'
+  assert_json_expr "$prep_summary" '.metrics.stage_count >= 6'
+
+  local pslog="$LOG_DIR/prep-status.log"
+  local pdlog="$LOG_DIR/prep-status-details.log"
+
+  if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-story.sh prep-status) > "$pslog" 2>&1; then
+    cat "$pslog" >&2
+    fail "prep-status failed — see $pslog"
+  fi
+  if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-story.sh prep-status --details --story S-002) > "$pdlog" 2>&1; then
+    cat "$pdlog" >&2
+    fail "prep-status --details failed — see $pdlog"
+  fi
+
+  assert_contains "$pslog" '^Prep sprint: sprint-1$'
+  assert_contains "$pslog" '^Prep status: passed$'
+  assert_contains "$pslog" '^Prep story S-001: generate=skipped, specify=skipped$'
+  assert_contains "$pslog" '^Prep story S-002: generate=skipped, specify=skipped$'
+  assert_contains "$pslog" '^Prep story S-003: generate=skipped, specify=skipped$'
+  assert_contains "$pdlog" '^Prep story S-002: generate=skipped, specify=skipped$'
+  assert_contains "$pdlog" '^Prep detail S-002 generate: skipped - story\.json up to date \(prep fingerprint match\) '
+  assert_contains "$pdlog" '^Prep detail S-002 specify: skipped - story\.json already exists '
+
+  log "  Prep observability PASS"
+}
+
+count_exec_reads() {
+  local log_file="$1"
+  local pattern="$2"
+  rg -c "$pattern" "$log_file" 2>/dev/null || echo 0
+}
+
+validate_prep_discipline() {
+  local forbidden_pattern='/bin/bash -lc ".*(scripts/ralph/README-local\.md|scripts/ralph/doctor\.sh|scripts/ralph/lib/specify\.sh)'
+  local sid slog
+
+  for sid in S-001 S-002 S-003; do
+    slog="$LOG_DIR/specify-${sid}.log"
+    assert_file_exists "$slog"
+    [ "$(count_exec_reads "$slog" "$forbidden_pattern")" -eq 0 ] \
+      || fail "[$sid] specify reread Ralph framework files"
+    [ "$(count_exec_reads "$slog" '/bin/bash -lc "sed -n .*\.specify/input\.md')" -le 1 ] \
+      || fail "[$sid] specify reread input.md too many times"
+    [ "$(count_exec_reads "$slog" '/bin/bash -lc "sed -n .*repo-briefing\.md')" -le 1 ] \
+      || fail "[$sid] specify reread repo briefing too many times"
+    [ "$(count_exec_reads "$slog" '/bin/bash -lc "sed -n .*/\.prep/context\.json')" -le 1 ] \
+      || fail "[$sid] specify reread prep bundle context too many times"
+    [ "$(count_exec_reads "$slog" '/bin/bash -lc "sed -n .*/\.prep/dependencies\.json')" -le 1 ] \
+      || fail "[$sid] specify reread prep bundle dependencies too many times"
+    [ "$(count_exec_reads "$slog" '/bin/bash -lc "sed -n .*/\.prep/commands\.json')" -le 1 ] \
+      || fail "[$sid] specify reread prep bundle commands too many times"
+  done
+
+  [ "$(count_exec_reads "$LOG_DIR/generate-all.log" "$forbidden_pattern")" -eq 0 ] \
+    || fail "generate reread Ralph framework files"
+
+  log "  Prep discipline PASS"
+}
+
+print_context_stats() {
+  echo ""
+  echo "── prep context stats ───────────────────────────────────────"
+  for sid in S-001 S-002 S-003; do
+    local prep_context_path story_path input_path
+    prep_context_path="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/.prep-context.json"
+    story_path="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/story.json"
+    input_path="$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories/$sid/.specify/input.md"
+
+    if [ ! -f "$prep_context_path" ]; then
+      echo "  $sid: prep-context MISSING"
+      continue
+    fi
+
+    local prep_bytes likely_files dep_chars dep_lines prompt_words input_words context_chars tasks
+    prep_bytes="$(wc -c < "$prep_context_path" | tr -d ' ')"
+    likely_files="$(jq '.likelyFiles | length' "$prep_context_path" 2>/dev/null || echo 0)"
+    dep_chars="$(jq -r '.dependencyContext // ""' "$prep_context_path" 2>/dev/null | wc -c | tr -d ' ')"
+    dep_lines="$(jq -r '.dependencyContext // ""' "$prep_context_path" 2>/dev/null | awk 'NF{c++} END{print c+0}')"
+    prompt_words="$(jq -r '.promptContext // ""' "$prep_context_path" 2>/dev/null | wc -w | tr -d ' ')"
+    input_words=0
+    [ -f "$input_path" ] && input_words="$(wc -w < "$input_path" | tr -d ' ')"
+    context_chars=0
+    tasks=0
+    if [ -f "$story_path" ]; then
+      context_chars="$(jq -r '[.tasks[].context // ""] | join("\n")' "$story_path" 2>/dev/null | wc -c | tr -d ' ')"
+      tasks="$(jq '.tasks | length' "$story_path" 2>/dev/null || echo 0)"
+    fi
+
+    echo "  $sid: prep-bytes=$prep_bytes input-words=$input_words prompt-words=$prompt_words likely-files=$likely_files dep-lines=$dep_lines dep-chars=$dep_chars task-context-chars=$context_chars tasks=$tasks"
+  done
+}
+
 # ── normalize_story_checks ─────────────────────────────────────────────────
 # Fix rg escape sequences and add grep -E fallback in a story's story.json.
 
@@ -528,6 +631,7 @@ log "=== Creating sprint and stories ==="
 
   ./ralph-sprint.sh create sprint-1 > "$LOG_DIR/sprint-create.log" 2>&1
   assert_contains "$LOG_DIR/sprint-create.log" "Created sprint: sprint-1"
+  assert_contains "$LOG_DIR/sprint-create.log" "Active sprint set to: sprint-1"
 
   ./ralph-story.sh add \
     --title "PhoneValidatorService" \
@@ -550,11 +654,6 @@ log "=== Creating sprint and stories ==="
     --prompt-context "Create lib/batch-validator.ts. Export interface BatchResult { valid: string[]; invalid: string[]; summary: string }. Export class BatchValidator with method validateAll(phones: string[]): BatchResult — uses PhoneValidatorService.isValidFormat. Update app/page.tsx to import and render the PhoneInput component with useState for the phone value. Add integration tests in __tests__/batch-validator.test.ts." \
     > "$LOG_DIR/story-add-S-003.log" 2>&1
 ) || fail "Sprint and story setup failed"
-
-_cur_branch="$(git -C "$PROJ_DIR" rev-parse --abbrev-ref HEAD)"
-[ "$_cur_branch" = "ralph/sprint/sprint-1" ] \
-  || fail "Sprint branch not checked out: expected 'ralph/sprint/sprint-1', got '$_cur_branch'"
-log "  Sprint branch confirmed: $_cur_branch"
 
 assert_file_exists "$PROJ_DIR/scripts/ralph/sprints/sprint-1/stories.json"
 
@@ -619,6 +718,7 @@ for sid in S-001 S-002 S-003; do
 done
 
 log "  All stories: specify + generate complete"
+validate_prep_discipline
 
 # Restage sprint to "planned" now that specify+generate are done so
 # prepare-all and sprint activation exercise the full planned→ready→active path.
@@ -648,6 +748,7 @@ if ! (cd "$PROJ_DIR/scripts/ralph" && ./ralph-story.sh prepare-all) > "$palog" 2
   fail "prepare-all failed — see $palog"
 fi
 log "  prepare-all PASS"
+validate_prep_observability "$palog"
 
 # Durable planning artifacts belong in git, and ralph.sh requires a clean tree.
 # Commit the generated .specify/ and story.json files before sprint activation.
@@ -842,6 +943,8 @@ elif [ "$SPRINT_EXIT" -ne 0 ] || [ "$COMMIT_EXIT" -ne 0 ]; then
 else
   echo "  ralph-verify:   FAIL"
 fi
+
+print_context_stats
 
 echo ""
 

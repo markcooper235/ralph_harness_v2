@@ -2363,3 +2363,441 @@ JSON
   assert.equal(stories.status, 'ready')
   assert.equal(stories.stories[0].status, 'ready')
 })
+
+test('ralph-story specify skips when prep fingerprint matches existing artifacts', () => {
+  const repoDir = initTempRepo()
+  const promptLog = path.join(repoDir, 'mock-codex-specify.log')
+  const mockCodexPath = path.join(repoDir, 'mock-codex-specify.sh')
+  const storyDir = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-001')
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  writeFile(
+    path.join(repoDir, 'package.json'),
+    JSON.stringify({
+      name: 'tmp-ralph-test',
+      private: true,
+      scripts: {
+        typecheck: 'echo typecheck',
+        lint: 'echo lint',
+        test: 'echo test',
+        build: 'echo build',
+      },
+    }, null, 2)
+  )
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'),
+    storiesJson('sprint-1', {
+      status: 'planned',
+      stories: [
+        {
+          id: 'S-001',
+          title: 'Prep Story',
+          priority: 1,
+          effort: 1,
+          status: 'planned',
+          sprint: 'sprint-1',
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+          goal: 'Create lib/example.ts and test it.',
+          promptContext: 'Touch lib/example.ts and __tests__/example.test.ts.',
+        },
+      ],
+    })
+  )
+
+  writeExecutable(
+    mockCodexPath,
+    `#!/bin/bash
+set -euo pipefail
+if [ "$1" = "--yolo" ] && [ "$2" = "exec" ] && [ "$3" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--dangerously-bypass-approvals-and-sandbox" ] && [ "$3" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+prompt="$(cat)"
+printf '%s\\n---\\n' "$prompt" >> "${promptLog}"
+while IFS= read -r target; do
+  [ -n "$target" ] || continue
+  mkdir -p "$(dirname "$target")"
+  case "$target" in
+    *.md) printf '# artifact\\n\\ncontent\\n' > "$target" ;;
+  esac
+done < <(printf '%s' "$prompt" | sed -n 's|^Write output to: ||p')
+`
+  )
+
+  const first = run('./scripts/ralph/ralph-story.sh', ['specify', 'S-001', '--no-generate'], {
+    cwd: repoDir,
+    env: { CODEX_BIN: mockCodexPath },
+  })
+  assert.match(first, /SpecKit artifacts written:/)
+  assert.ok(fs.existsSync(path.join(storyDir, '.specify', 'spec.md')))
+  assert.ok(fs.existsSync(path.join(storyDir, '.prep-context.json')))
+  assert.ok(fs.existsSync(path.join(storyDir, '.prep', 'context.json')))
+  assert.ok(fs.existsSync(path.join(storyDir, '.prep', 'commands.json')))
+  assert.ok(fs.existsSync(path.join(storyDir, '.prep', 'dependencies.json')))
+  assert.ok(fs.existsSync(path.join(storyDir, '.prep', 'schema.json')))
+
+  const second = run('./scripts/ralph/ralph-story.sh', ['specify', 'S-001', '--no-generate'], {
+    cwd: repoDir,
+    env: { CODEX_BIN: mockCodexPath },
+  })
+  assert.match(second, /SpecKit artifacts up to date for S-001 \(fingerprint match\)/)
+
+  const promptInvocations = fs.readFileSync(promptLog, 'utf8').split('\n---\n').filter(Boolean)
+  assert.equal(promptInvocations.length, 1)
+  const prepContext = JSON.parse(fs.readFileSync(path.join(storyDir, '.prep-context.json'), 'utf8'))
+  assert.ok(prepContext.fingerprint)
+  const prepBundleContext = JSON.parse(fs.readFileSync(path.join(storyDir, '.prep', 'context.json'), 'utf8'))
+  assert.equal(prepBundleContext.storyId, 'S-001')
+  assert.deepEqual(prepBundleContext.likelyFiles, ['lib/example.ts', '__tests__/example.test.ts'])
+})
+
+test('ralph-story generate skips when story.json matches recorded prep fingerprint', () => {
+  const repoDir = initTempRepo()
+  const promptLog = path.join(repoDir, 'mock-codex-generate.log')
+  const mockCodexPath = path.join(repoDir, 'mock-codex-generate.sh')
+  const storyDir = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-001')
+  const prepContextPath = path.join(storyDir, '.prep-context.json')
+  const storyPath = path.join(storyDir, 'story.json')
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  writeFile(
+    path.join(repoDir, 'package.json'),
+    JSON.stringify({
+      name: 'tmp-ralph-test',
+      private: true,
+      scripts: {
+        typecheck: 'echo typecheck',
+        lint: 'echo lint',
+        test: 'echo test',
+        build: 'echo build',
+      },
+    }, null, 2)
+  )
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'),
+    storiesJson('sprint-1', {
+      status: 'planned',
+      stories: [
+        {
+          id: 'S-001',
+          title: 'Prep Story',
+          priority: 1,
+          effort: 1,
+          status: 'planned',
+          sprint: 'sprint-1',
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+          goal: 'Create lib/example.ts and test it.',
+          promptContext: 'Touch lib/example.ts and __tests__/example.test.ts.',
+        },
+      ],
+    })
+  )
+
+  writeExecutable(
+    mockCodexPath,
+    `#!/bin/bash
+set -euo pipefail
+if [ "$1" = "--yolo" ] && [ "$2" = "exec" ] && [ "$3" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+if [ "$1" = "exec" ] && [ "$2" = "--dangerously-bypass-approvals-and-sandbox" ] && [ "$3" = "--help" ]; then
+  echo "Run Codex non-interactively"
+  exit 0
+fi
+prompt="$(cat)"
+printf '%s\\n---\\n' "$prompt" >> "${promptLog}"
+while IFS= read -r target; do
+  [ -n "$target" ] || continue
+  mkdir -p "$(dirname "$target")"
+  case "$target" in
+    *.md) printf '# artifact\\n\\ncontent\\n' > "$target" ;;
+    */story.json)
+      cat > "$target" <<'JSON'
+{
+  "storyId": "S-001",
+  "title": "Prep Story",
+  "status": "planned",
+  "branchName": "ralph/sprint-1/story-S-001",
+  "spec": {
+    "asA": "developer",
+    "iWant": "a prepared story",
+    "soThat": "prep can skip deterministically",
+    "scope": "Create lib/example.ts and test it.",
+    "verification": ["npm test"]
+  },
+  "tasks": [
+    {
+      "id": "T-01",
+      "title": "Create example file",
+      "context": "Implement example",
+      "scope": ["lib/example.ts"],
+      "acceptance": "Example file exists.",
+      "checks": ["test -f lib/example.ts"],
+      "depends_on": [],
+      "status": "pending",
+      "passes": false
+    }
+  ],
+  "passes": false
+}
+JSON
+      ;;
+  esac
+done < <(printf '%s' "$prompt" | sed -n 's|^Write output to: ||p')
+`
+  )
+
+  run('./scripts/ralph/ralph-story.sh', ['specify', 'S-001', '--no-generate'], {
+    cwd: repoDir,
+    env: { CODEX_BIN: mockCodexPath },
+  })
+  const prepContext = JSON.parse(fs.readFileSync(prepContextPath, 'utf8'))
+  prepContext.generation = {
+    generatedFromFingerprint: prepContext.fingerprint,
+    sourceType: 'story.json',
+    storyPath: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+    generatedAt: '2026-05-22T00:00:30Z',
+  }
+  writeFile(prepContextPath, JSON.stringify(prepContext, null, 2))
+  writeFile(
+    storyPath,
+    JSON.stringify({
+      storyId: 'S-001',
+      title: 'Prep Story',
+      status: 'planned',
+      branchName: 'ralph/sprint-1/story-S-001',
+      spec: {
+        asA: 'developer',
+        iWant: 'a prepared story',
+        soThat: 'prep can skip deterministically',
+        scope: 'Create lib/example.ts and test it.',
+        verification: ['npm test'],
+      },
+      tasks: [
+        {
+          id: 'T-01',
+          title: 'Create example file',
+          context: 'Implement example',
+          scope: ['lib/example.ts'],
+          acceptance: 'Example file exists.',
+          checks: ['test -f lib/example.ts'],
+          depends_on: [],
+          status: 'pending',
+          passes: false,
+        },
+      ],
+      passes: false,
+    }, null, 2)
+  )
+
+  const output = run('./scripts/ralph/ralph-story.sh', ['generate', 'S-001'], {
+    cwd: repoDir,
+    env: { CODEX_BIN: mockCodexPath },
+  })
+
+  assert.match(output, /story\.json up to date for S-001 \(prep fingerprint match\)/)
+  const promptInvocations = fs.readFileSync(promptLog, 'utf8').split('\n---\n').filter(Boolean)
+  assert.equal(promptInvocations.length, 1)
+})
+
+test('ralph-status reports latest prep journal for the active sprint', () => {
+  const repoDir = initTempRepo()
+  const prepRunDir = path.join(repoDir, 'scripts/ralph/runtime/prep-runs/20260522T000000Z-sprint-1-prepare-all')
+  const prepSummaryPath = path.join(prepRunDir, 'prepare-run.json')
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'),
+    storiesJson('sprint-1', {
+      status: 'planned',
+      stories: [
+        {
+          id: 'S-001',
+          title: 'Prep Story',
+          priority: 1,
+          effort: 1,
+          status: 'planned',
+          sprint: 'sprint-1',
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+          goal: 'Create lib/example.ts and test it.',
+          promptContext: 'Touch lib/example.ts and __tests__/example.test.ts.',
+        },
+      ],
+    })
+  )
+  writeFile(
+    prepSummaryPath,
+    JSON.stringify({
+      version: 1,
+      mode: 'prepare-all',
+      sprint: 'sprint-1',
+      started_at: '2026-05-22T00:00:00Z',
+      finished_at: '2026-05-22T00:01:00Z',
+      status: 'passed',
+      metrics: {
+        stage_count: 2,
+        passed_stages: 1,
+        skipped_stages: 1,
+        failed_stages: 0,
+        running_stages: 0,
+        total_duration_ms: 1200,
+      },
+      stories: {
+        'S-001': {
+          specify: { status: 'passed', detail: 'SpecKit artifacts created', artifacts: [], duration_ms: 700, updated_at: '2026-05-22T00:00:30Z' },
+          generate: { status: 'skipped', detail: 'story.json already exists', artifacts: [], duration_ms: 0, updated_at: '2026-05-22T00:00:50Z' },
+        },
+      },
+    }, null, 2)
+  )
+
+  const output = run('./scripts/ralph/ralph-status.sh', [], { cwd: repoDir })
+  assert.match(output, /Prep: passed \(prepare-all, stories=1, passed-stages=1, failed-stages=0, skipped-stages=1, duration-ms=1200\)/)
+  assert.match(output, /Prep updated: 2026-05-22T00:01:00Z/)
+  assert.match(output, /Prep story S-001: generate=skipped, specify=passed/)
+  assert.match(output, new RegExp(prepSummaryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+})
+
+test('ralph-status --prep-details shows prep stage detail lines', () => {
+  const repoDir = initTempRepo()
+  const prepRunDir = path.join(repoDir, 'scripts/ralph/runtime/prep-runs/20260522T000000Z-sprint-1-prepare-all')
+  const prepSummaryPath = path.join(prepRunDir, 'prepare-run.json')
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'),
+    storiesJson('sprint-1', {
+      status: 'planned',
+      stories: [
+        {
+          id: 'S-001',
+          title: 'Prep Story',
+          priority: 1,
+          effort: 1,
+          status: 'planned',
+          sprint: 'sprint-1',
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+          goal: 'Create lib/example.ts and test it.',
+          promptContext: 'Touch lib/example.ts and __tests__/example.test.ts.',
+        },
+      ],
+    })
+  )
+  writeFile(
+    prepSummaryPath,
+    JSON.stringify({
+      version: 1,
+      mode: 'prepare-all',
+      sprint: 'sprint-1',
+      started_at: '2026-05-22T00:00:00Z',
+      finished_at: '2026-05-22T00:01:00Z',
+      status: 'passed',
+      metrics: {
+        stage_count: 2,
+        passed_stages: 1,
+        skipped_stages: 1,
+        failed_stages: 0,
+        running_stages: 0,
+        total_duration_ms: 1200,
+      },
+      stories: {
+        'S-001': {
+          specify: { status: 'passed', detail: 'SpecKit artifacts created', artifacts: [], duration_ms: 700, updated_at: '2026-05-22T00:00:30Z' },
+          generate: { status: 'skipped', detail: 'story.json up to date (prep fingerprint match)', artifacts: [], duration_ms: 0, updated_at: '2026-05-22T00:00:50Z' },
+        },
+      },
+    }, null, 2)
+  )
+
+  const output = run('./scripts/ralph/ralph-status.sh', ['--prep-details'], { cwd: repoDir })
+  assert.match(output, /Prep detail S-001 generate: skipped - story\.json up to date \(prep fingerprint match\) \(duration-ms=0, updated=2026-05-22T00:00:50Z\)/)
+  assert.match(output, /Prep detail S-001 specify: passed - SpecKit artifacts created \(duration-ms=700, updated=2026-05-22T00:00:30Z\)/)
+  assert.match(output, new RegExp(prepSummaryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+})
+
+test('ralph-story prep-status shows latest prep journal summary and story filter', () => {
+  const repoDir = initTempRepo()
+  const prepRunDir = path.join(repoDir, 'scripts/ralph/runtime/prep-runs/20260522T000000Z-sprint-1-prepare-all')
+  const prepSummaryPath = path.join(prepRunDir, 'prepare-run.json')
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  writeFile(
+    path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'),
+    storiesJson('sprint-1', {
+      status: 'planned',
+      stories: [
+        {
+          id: 'S-001',
+          title: 'Prep Story',
+          priority: 1,
+          effort: 1,
+          status: 'planned',
+          sprint: 'sprint-1',
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-001/story.json',
+          goal: 'Create lib/example.ts and test it.',
+          promptContext: 'Touch lib/example.ts and __tests__/example.test.ts.',
+        },
+        {
+          id: 'S-002',
+          title: 'Second Story',
+          priority: 2,
+          effort: 2,
+          status: 'planned',
+          sprint: 'sprint-1',
+          depends_on: [],
+          story_path: 'scripts/ralph/sprints/sprint-1/stories/S-002/story.json',
+          goal: 'Update another file.',
+          promptContext: 'Touch lib/second.ts.',
+        },
+      ],
+    })
+  )
+  writeFile(
+    prepSummaryPath,
+    JSON.stringify({
+      version: 1,
+      mode: 'prepare-all',
+      sprint: 'sprint-1',
+      started_at: '2026-05-22T00:00:00Z',
+      finished_at: '2026-05-22T00:01:00Z',
+      status: 'passed',
+      metrics: {
+        stage_count: 4,
+        passed_stages: 2,
+        skipped_stages: 1,
+        failed_stages: 1,
+        running_stages: 0,
+        total_duration_ms: 2200,
+      },
+      stories: {
+        'S-001': {
+          specify: { status: 'passed', detail: 'SpecKit artifacts created', artifacts: [], duration_ms: 700, updated_at: '2026-05-22T00:00:30Z' },
+          generate: { status: 'skipped', detail: 'story.json up to date (prep fingerprint match)', artifacts: [], duration_ms: 0, updated_at: '2026-05-22T00:00:50Z' },
+        },
+        'S-002': {
+          specify: { status: 'failed', detail: 'SpecKit did not produce all required artifacts', artifacts: [], duration_ms: 1500, updated_at: '2026-05-22T00:00:55Z' },
+          generate: { status: 'passed', detail: 'Generated 3 tasks', artifacts: [], duration_ms: 0, updated_at: '2026-05-22T00:00:58Z' },
+        },
+      },
+    }, null, 2)
+  )
+
+  const output = run('./scripts/ralph/ralph-story.sh', ['prep-status', '--story', 'S-002', '--details'], { cwd: repoDir })
+  assert.match(output, /Prep sprint: sprint-1/)
+  assert.match(output, /Prep mode: prepare-all/)
+  assert.match(output, /Prep metrics: passed=2 failed=1 skipped=1 running=0 duration-ms=2200/)
+  assert.match(output, /Prep story S-002: generate=passed, specify=failed/)
+  assert.doesNotMatch(output, /Prep story S-001:/)
+  assert.match(output, /Prep detail S-002 specify: failed - SpecKit did not produce all required artifacts \(duration-ms=1500, updated=2026-05-22T00:00:55Z\)/)
+  assert.match(output, new RegExp(prepSummaryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+})

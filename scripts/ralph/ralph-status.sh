@@ -14,7 +14,7 @@ SPRINT_BRANCH_PREFIX="ralph/sprint"
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/ralph/ralph-status.sh
+Usage: ./scripts/ralph/ralph-status.sh [--prep-details] [--prep-story-limit N]
 
 Shows the current Ralph workflow state for the active sprint and story,
 including loop status, branch/worktree state, and next action guidance.
@@ -59,6 +59,83 @@ loop_status() {
   else
     printf 'stopped\n'
   fi
+}
+
+latest_prep_summary_for_sprint() {
+  local sprint="$1"
+  local prep_root="$SCRIPT_DIR/runtime/prep-runs"
+  [ -d "$prep_root" ] || return 1
+  find "$prep_root" -type f -name 'prepare-run.json' -path "*-${sprint}-*/prepare-run.json" 2>/dev/null | sort | tail -n1
+}
+
+prep_status_line() {
+  local sprint="$1"
+  local prep_details="${2:-0}"
+  local prep_story_limit="${3:-5}"
+  local summary_path
+  summary_path="$(latest_prep_summary_for_sprint "$sprint" || true)"
+  if [ -z "$summary_path" ] || [ ! -f "$summary_path" ]; then
+    printf 'Prep: (no prep run journal found)\n'
+    return 0
+  fi
+
+  local mode status finished_at story_count failed_count skipped_count passed_count total_duration_ms
+  mode="$(jq -r '.mode // "prep"' "$summary_path" 2>/dev/null || echo "prep")"
+  status="$(jq -r '.status // "running"' "$summary_path" 2>/dev/null || echo "running")"
+  finished_at="$(jq -r '.finished_at // .started_at // ""' "$summary_path" 2>/dev/null || true)"
+  story_count="$(jq -r '(.stories // {}) | length' "$summary_path" 2>/dev/null || echo 0)"
+  failed_count="$(jq -r '.metrics.failed_stages // ([.stories[]?[]? | select(.status == "failed")] | length)' "$summary_path" 2>/dev/null || echo 0)"
+  skipped_count="$(jq -r '.metrics.skipped_stages // ([.stories[]?[]? | select(.status == "skipped")] | length)' "$summary_path" 2>/dev/null || echo 0)"
+  passed_count="$(jq -r '.metrics.passed_stages // ([.stories[]?[]? | select(.status == "passed")] | length)' "$summary_path" 2>/dev/null || echo 0)"
+  total_duration_ms="$(jq -r '.metrics.total_duration_ms // 0' "$summary_path" 2>/dev/null || echo 0)"
+
+  printf 'Prep: %s (%s, stories=%s, passed-stages=%s, failed-stages=%s, skipped-stages=%s, duration-ms=%s)\n' "$status" "$mode" "$story_count" "$passed_count" "$failed_count" "$skipped_count" "$total_duration_ms"
+  [ -n "$finished_at" ] && printf 'Prep updated: %s\n' "$finished_at"
+  printf 'Prep journal: %s\n' "$summary_path"
+  prep_story_stage_lines "$summary_path" "$prep_story_limit"
+  if [ "$prep_details" -eq 1 ]; then
+    prep_story_stage_detail_lines "$summary_path" "$prep_story_limit"
+  fi
+}
+
+prep_story_stage_lines() {
+  local summary_path="$1"
+  local story_limit="${2:-5}"
+  [ -f "$summary_path" ] || return 0
+
+  jq -r '
+    (.stories // {})
+    | to_entries
+    | sort_by(.key)
+    | .[:$limit]
+    | .[]
+    | .key as $story_id
+    | (.value | to_entries | sort_by(.key) | map("\(.key)=\(.value.status // "unknown")") | join(", ")) as $stages
+    | "Prep story " + $story_id + ": " + (if $stages == "" then "(no stages recorded)" else $stages end)
+  ' --argjson limit "$story_limit" "$summary_path" 2>/dev/null || true
+}
+
+prep_story_stage_detail_lines() {
+  local summary_path="$1"
+  local story_limit="${2:-5}"
+  [ -f "$summary_path" ] || return 0
+
+  jq -r '
+    (.stories // {})
+    | to_entries
+    | sort_by(.key)
+    | .[:$limit]
+    | .[]
+    | .key as $story_id
+    | .value
+    | to_entries
+    | sort_by(.key)
+    | .[]
+    | "Prep detail " + $story_id + " " + .key + ": "
+      + (.value.status // "unknown")
+      + (if (.value.detail // "") == "" then "" else " - " + .value.detail end)
+      + " (duration-ms=" + ((.value.duration_ms // 0) | tostring) + ", updated=" + (.value.updated_at // "unknown") + ")"
+  ' --argjson limit "$story_limit" "$summary_path" 2>/dev/null || true
 }
 
 story_readiness() {
@@ -211,17 +288,29 @@ main() {
   require_cmd jq
   require_cmd pgrep
 
-  case "${1:-}" in
-    -h|--help|help)
-      usage
-      exit 0
-      ;;
-    "")
-      ;;
-    *)
-      fail "Unknown argument: $1"
-      ;;
-  esac
+  local prep_details=0 prep_story_limit=5
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      --prep-details)
+        prep_details=1
+        shift
+        ;;
+      --prep-story-limit)
+        prep_story_limit="${2:-}"
+        [ -n "$prep_story_limit" ] || fail "Missing value for --prep-story-limit"
+        [[ "$prep_story_limit" =~ ^[1-9][0-9]*$ ]] || fail "--prep-story-limit must be a positive integer"
+        shift 2
+        ;;
+      *)
+        fail "Unknown argument: $1"
+        ;;
+    esac
+  done
 
   local active_sprint stories_file current_branch sprint_branch loop_state worktree_state sprint_story_id
   active_sprint="$(get_active_sprint || true)"
@@ -252,6 +341,7 @@ main() {
   echo "Current branch: ${current_branch:-'(detached)'}"
   echo "Loop: $loop_state"
   echo "Worktree: $worktree_state"
+  prep_status_line "$active_sprint" "$prep_details" "$prep_story_limit"
   if [ -f "$stories_file" ]; then
     if [ -n "$sprint_story_id" ]; then
       active_sprint_story_line "$stories_file" "$sprint_story_id"

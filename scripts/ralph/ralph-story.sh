@@ -23,6 +23,600 @@ fail() { echo "ERROR: $1" >&2; exit 1; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"; }
 require_cmd jq
 
+timestamp_utc() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+epoch_seconds() {
+  date +%s
+}
+
+compact_text() {
+  local value="${1:-}"
+  local max_chars="${2:-280}"
+  printf '%s' "$value" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' \
+    | awk -v limit="$max_chars" '{
+        if (length($0) <= limit) {
+          print $0
+        } else {
+          print substr($0, 1, limit - 3) "..."
+        }
+      }'
+}
+
+compact_list() {
+  local value="${1:-}"
+  local max_items="${2:-4}"
+  [ -n "$value" ] || return 0
+  printf '%s\n' "$value" \
+    | tr ',' '\n' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+    | sed '/^$/d' \
+    | awk -v limit="$max_items" '
+        NR <= limit { items[NR] = $0 }
+        END {
+          for (i = 1; i <= NR && i <= limit; i++) {
+            if (i > 1) printf ", "
+            printf "%s", items[i]
+          }
+          if (NR > limit) printf ", ..."
+          printf "\n"
+        }
+      '
+}
+
+prep_runtime_root() {
+  printf '%s/runtime/prep-runs\n' "$SCRIPT_DIR"
+}
+
+latest_prep_summary_for_sprint() {
+  local sprint="$1"
+  local prep_root
+  prep_root="$(prep_runtime_root)"
+  [ -d "$prep_root" ] || return 1
+  find "$prep_root" -type f -name 'prepare-run.json' -path "*-${sprint}-*/prepare-run.json" 2>/dev/null | sort | tail -n1
+}
+
+ensure_prep_run_dir() {
+  local sprint="$1"
+  local mode="${2:-prep}"
+  if [ -n "${RALPH_PREP_RUN_DIR:-}" ]; then
+    mkdir -p "$RALPH_PREP_RUN_DIR"
+    printf '%s\n' "$RALPH_PREP_RUN_DIR"
+    return 0
+  fi
+
+  local stamp run_dir
+  stamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+  run_dir="$(prep_runtime_root)/${stamp}-${sprint}-${mode}"
+  mkdir -p "$run_dir"
+  cat > "$run_dir/prepare-run.json" <<EOF
+{
+  "version": 1,
+  "mode": "$mode",
+  "sprint": "$sprint",
+  "started_at": "$(timestamp_utc)",
+  "stories": {}
+}
+EOF
+  RALPH_PREP_RUN_DIR="$run_dir"
+  export RALPH_PREP_RUN_DIR
+  printf '%s\n' "$run_dir"
+}
+
+prep_summary_path() {
+  [ -n "${RALPH_PREP_RUN_DIR:-}" ] || return 1
+  printf '%s/prepare-run.json\n' "$RALPH_PREP_RUN_DIR"
+}
+
+prep_stage_log_path() {
+  local story_id="$1"
+  local stage="$2"
+  [ -n "${RALPH_PREP_RUN_DIR:-}" ] || return 1
+  printf '%s/%s-%s.log\n' "$RALPH_PREP_RUN_DIR" "$story_id" "$stage"
+}
+
+prep_stage_status_path() {
+  local story_id="$1"
+  local stage="$2"
+  [ -n "${RALPH_PREP_RUN_DIR:-}" ] || return 1
+  printf '%s/stages/%s-%s.json\n' "$RALPH_PREP_RUN_DIR" "$story_id" "$stage"
+}
+
+prep_record_stage() {
+  local story_id="$1"
+  local stage="$2"
+  local status="$3"
+  local detail="${4:-}"
+  local artifacts_json="${5:-[]}"
+  local duration_ms="${6:-0}"
+  local stage_path
+  stage_path="$(prep_stage_status_path "$story_id" "$stage" 2>/dev/null || true)"
+  [ -n "$stage_path" ] || return 0
+  mkdir -p "$(dirname "$stage_path")"
+  jq -n \
+    --arg storyId "$story_id" \
+    --arg stage "$stage" \
+    --arg status "$status" \
+    --arg detail "$detail" \
+    --arg updated_at "$(timestamp_utc)" \
+    --argjson artifacts "$artifacts_json" \
+    --argjson duration_ms "$duration_ms" \
+    '{
+      storyId: $storyId,
+      stage: $stage,
+      status: $status,
+      detail: $detail,
+      artifacts: $artifacts,
+      duration_ms: $duration_ms,
+      updated_at: $updated_at
+    }' > "$stage_path"
+}
+
+prep_finalize_summary() {
+  local final_status="$1"
+  local summary_path tmp stories_json metrics_json stage_dir
+  summary_path="$(prep_summary_path 2>/dev/null || true)"
+  [ -n "$summary_path" ] && [ -f "$summary_path" ] || return 0
+  stage_dir="$RALPH_PREP_RUN_DIR/stages"
+  if [ -d "$stage_dir" ]; then
+    stories_json="$(
+      find "$stage_dir" -type f -name '*.json' -print \
+        | sort \
+        | while IFS= read -r stage_file; do
+            jq -c '.' "$stage_file"
+          done \
+        | jq -sc '
+            reduce .[] as $entry ({};
+              .[$entry.storyId] = ((.[$entry.storyId] // {}) + {
+                ($entry.stage): {
+                  status: $entry.status,
+                  detail: $entry.detail,
+                  artifacts: $entry.artifacts,
+                  duration_ms: ($entry.duration_ms // 0),
+                  updated_at: $entry.updated_at
+                }
+              })
+            )
+          '
+    )"
+    metrics_json="$(
+      find "$stage_dir" -type f -name '*.json' -print \
+        | sort \
+        | while IFS= read -r stage_file; do
+            jq -c '.' "$stage_file"
+          done \
+        | jq -sc '
+            {
+              stage_count: length,
+              passed_stages: map(select(.status == "passed")) | length,
+              skipped_stages: map(select(.status == "skipped")) | length,
+              failed_stages: map(select(.status == "failed")) | length,
+              running_stages: map(select(.status == "running")) | length,
+              total_duration_ms: (map(.duration_ms // 0) | add // 0)
+            }
+          '
+    )"
+  else
+    stories_json='{}'
+    metrics_json='{"stage_count":0,"passed_stages":0,"skipped_stages":0,"failed_stages":0,"running_stages":0,"total_duration_ms":0}'
+  fi
+  tmp="$(mktemp)"
+  jq \
+    --arg status "$final_status" \
+    --arg finished_at "$(timestamp_utc)" \
+    --argjson stories "$stories_json" \
+    --argjson metrics "$metrics_json" \
+    '.status = $status | .finished_at = $finished_at | .stories = $stories | .metrics = $metrics' \
+    "$summary_path" > "$tmp"
+  mv "$tmp" "$summary_path"
+}
+
+require_story_sprint() {
+  local sprint_value="${1:-}"
+  local story_id="${2:-story}"
+  [ -n "$sprint_value" ] || fail "Story $story_id is missing sprint metadata in stories.json."
+}
+
+story_prep_context_path() {
+  local story_dir="$1"
+  printf '%s/.prep-context.json\n' "$story_dir"
+}
+
+story_prep_bundle_dir() {
+  local story_dir="$1"
+  printf '%s/.prep\n' "$story_dir"
+}
+
+story_prep_bundle_context_path() {
+  local story_dir="$1"
+  printf '%s/context.json\n' "$(story_prep_bundle_dir "$story_dir")"
+}
+
+story_prep_bundle_dependencies_path() {
+  local story_dir="$1"
+  printf '%s/dependencies.json\n' "$(story_prep_bundle_dir "$story_dir")"
+}
+
+story_prep_bundle_commands_path() {
+  local story_dir="$1"
+  printf '%s/commands.json\n' "$(story_prep_bundle_dir "$story_dir")"
+}
+
+story_prep_bundle_schema_path() {
+  local story_dir="$1"
+  printf '%s/schema.json\n' "$(story_prep_bundle_dir "$story_dir")"
+}
+
+focus_hints_to_json() {
+  local focus_hints="${1:-}"
+  if [ -n "$focus_hints" ]; then
+    printf '%s\n' "$focus_hints" | sed -n 's/^[[:space:]]*-[[:space:]]*`\(.*\)`$/\1/p' | jq -R . | jq -s .
+  else
+    printf '[]\n'
+  fi
+}
+
+write_story_prep_bundle() {
+  local story_dir="$1"
+  local story_id="$2"
+  local sprint="$3"
+  local title="$4"
+  local goal="$5"
+  local prompt_context="$6"
+  local repo_briefing_rel="$7"
+  local command_map_json="$8"
+  local depends_on_json="$9"
+  local likely_files_json="${10:-[]}"
+  local dependency_bundle_json="${11:-[]}"
+  local fingerprint="${12:-}"
+  local bundle_dir context_path dependencies_path commands_path schema_path
+
+  bundle_dir="$(story_prep_bundle_dir "$story_dir")"
+  context_path="$(story_prep_bundle_context_path "$story_dir")"
+  dependencies_path="$(story_prep_bundle_dependencies_path "$story_dir")"
+  commands_path="$(story_prep_bundle_commands_path "$story_dir")"
+  schema_path="$(story_prep_bundle_schema_path "$story_dir")"
+  mkdir -p "$bundle_dir"
+
+  jq -n \
+    --arg storyId "$story_id" \
+    --arg sprint "$sprint" \
+    --arg title "$title" \
+    --arg goal "$goal" \
+    --arg promptContext "$prompt_context" \
+    --arg repoBriefing "$repo_briefing_rel" \
+    --arg fingerprint "$fingerprint" \
+    --arg generatedAt "$(timestamp_utc)" \
+    --argjson dependsOn "$depends_on_json" \
+    --argjson likelyFiles "$likely_files_json" \
+    '{
+      version: 1,
+      storyId: $storyId,
+      sprint: $sprint,
+      title: $title,
+      goal: $goal,
+      promptContext: $promptContext,
+      repoBriefing: $repoBriefing,
+      fingerprint: $fingerprint,
+      dependsOn: $dependsOn,
+      likelyFiles: $likelyFiles,
+      generatedAt: $generatedAt
+    }' > "$context_path"
+
+  printf '%s\n' "$dependency_bundle_json" | jq '.' > "$dependencies_path"
+  printf '%s\n' "$command_map_json" | jq '.' > "$commands_path"
+  jq -n \
+    --arg sprint "$sprint" \
+    --arg title "$title" \
+    --arg exampleBranch "ralph/${sprint}/story-S-001" \
+    '{
+      version: 1,
+      container: {
+        requiredTopLevel: [
+          "version",
+          "project",
+          "storyId",
+          "title",
+          "description",
+          "branchName",
+          "sprint",
+          "priority",
+          "depends_on",
+          "status",
+          "spec",
+          "tasks",
+          "passes"
+        ],
+        requiredSpecFields: [
+          "scope",
+          "out_of_scope",
+          "first_slice",
+          "preserved_invariants",
+          "supporting_files",
+          "verification"
+        ],
+        requiredTaskFields: [
+          "id",
+          "title",
+          "context",
+          "scope",
+          "acceptance",
+          "checks",
+          "depends_on",
+          "status",
+          "passes"
+        ],
+        topLevelDefaults: {
+          version: 1,
+          sprint: $sprint,
+          status: "planned",
+          passes: false
+        },
+        taskDefaults: {
+          status: "pending",
+          passes: false
+        },
+        taskStatusValues: ["pending", "done", "failed", "blocked"],
+        fieldRules: [
+          "spec.scope is a concise string summary, not an array",
+          "task scope arrays must contain repo-relative concrete file paths",
+          "task acceptance is a single string summary, not an array",
+          "checks must be binary shell commands",
+          "depends_on must reference task ids within the same story",
+          "do not add extra top-level sections outside the standard story container"
+        ],
+        example: {
+          version: 1,
+          project: "repo-name",
+          storyId: "S-001",
+          title: $title,
+          description: "Backlog goal for the story.",
+          branchName: $exampleBranch,
+          sprint: $sprint,
+          priority: 1,
+          depends_on: [],
+          status: "planned",
+          spec: {
+            scope: "Concise summary of the work for this story.",
+            out_of_scope: [],
+            first_slice: {},
+            preserved_invariants: [],
+            supporting_files: [],
+            verification: ["npm run test"]
+          },
+          tasks: [
+            {
+              id: "T-01",
+              title: "Implement the main slice",
+              context: "Self-contained implementation instructions for a fresh Codex session.",
+              scope: ["lib/example.ts", "__tests__/example.test.ts"],
+              acceptance: "Implementation exists and the targeted verification passes.",
+              checks: ["npm run test"],
+              depends_on: [],
+              status: "pending",
+              passes: false
+            }
+          ],
+          passes: false
+        }
+      }
+    }' > "$schema_path"
+}
+
+write_story_prep_context() {
+  local output_path="$1"
+  local story_id="$2"
+  local sprint="$3"
+  local title="$4"
+  local goal="$5"
+  local prompt_context="$6"
+  local repo_briefing_rel="$7"
+  local command_map_json="$8"
+  local depends_on_json="$9"
+  local focus_hints="${10:-}"
+  local dependency_context="${11:-}"
+  local fingerprint="${12:-}"
+  local dependency_bundle_json="${13:-[]}"
+
+  local focus_json dependency_context_json existing_generation_json
+  focus_json="$(focus_hints_to_json "$focus_hints")"
+  dependency_context_json="$(printf '%s' "$dependency_context" | jq -Rs '.')"
+  existing_generation_json='null'
+  if [ -f "$output_path" ]; then
+    existing_generation_json="$(jq -c --arg fingerprint "$fingerprint" '
+      if (.fingerprint // "") == $fingerprint then
+        (.generation // null)
+      else
+        null
+      end
+    ' "$output_path" 2>/dev/null || printf 'null')"
+  fi
+  mkdir -p "$(dirname "$output_path")"
+
+  jq -n \
+    --arg storyId "$story_id" \
+    --arg sprint "$sprint" \
+    --arg title "$title" \
+    --arg goal "$goal" \
+    --arg promptContext "$prompt_context" \
+    --arg repoBriefing "$repo_briefing_rel" \
+    --arg fingerprint "$fingerprint" \
+    --arg generatedAt "$(timestamp_utc)" \
+    --argjson commands "$command_map_json" \
+    --argjson dependsOn "$depends_on_json" \
+    --argjson likelyFiles "$focus_json" \
+    --argjson dependencyContext "$dependency_context_json" \
+    --argjson dependencyStories "$dependency_bundle_json" \
+    --argjson generation "$existing_generation_json" \
+    '{
+      version: 1,
+      storyId: $storyId,
+      sprint: $sprint,
+      title: $title,
+      goal: $goal,
+      promptContext: $promptContext,
+      repoBriefing: $repoBriefing,
+      fingerprint: $fingerprint,
+      commands: $commands,
+      dependsOn: $dependsOn,
+      likelyFiles: $likelyFiles,
+      dependencyContext: $dependencyContext,
+      dependencyStories: $dependencyStories
+    }
+    + (if $generation == null then {} else {generation: $generation} end)
+    + {
+      generatedAt: $generatedAt
+    }' > "$output_path"
+}
+
+format_command_map_for_prompt() {
+  local command_map_json="$1"
+  printf '%s' "$command_map_json" | jq -r '
+    [
+      "- typecheck: " + (.typecheck // "unavailable"),
+      "- lint: " + (.lint // "unavailable"),
+      "- test: " + (.test // "unavailable"),
+      "- build: " + (.build // "unavailable")
+    ] | join("\n")
+  '
+}
+
+read_story_prep_fingerprint() {
+  local prep_context_path="$1"
+  [ -f "$prep_context_path" ] || return 0
+  jq -r '.fingerprint // empty' "$prep_context_path" 2>/dev/null || true
+}
+
+read_story_generate_fingerprint() {
+  local prep_context_path="$1"
+  [ -f "$prep_context_path" ] || return 0
+  jq -r '.generation.generatedFromFingerprint // empty' "$prep_context_path" 2>/dev/null || true
+}
+
+write_story_generate_provenance() {
+  local prep_context_path="$1"
+  local source_fingerprint="$2"
+  local source_type="${3:-generated}"
+  local story_path="$4"
+  local tmp
+
+  mkdir -p "$(dirname "$prep_context_path")"
+  if [ -f "$prep_context_path" ]; then
+    tmp="$(mktemp)"
+    jq \
+      --arg fingerprint "$source_fingerprint" \
+      --arg source_type "$source_type" \
+      --arg story_path "$story_path" \
+      --arg generated_at "$(timestamp_utc)" \
+      '.generation = {
+        generatedFromFingerprint: $fingerprint,
+        sourceType: $source_type,
+        storyPath: $story_path,
+        generatedAt: $generated_at
+      }' \
+      "$prep_context_path" > "$tmp"
+    mv "$tmp" "$prep_context_path"
+    return 0
+  fi
+
+  jq -n \
+    --arg fingerprint "$source_fingerprint" \
+    --arg source_type "$source_type" \
+    --arg story_path "$story_path" \
+    --arg generated_at "$(timestamp_utc)" \
+    '{
+      version: 1,
+      fingerprint: $fingerprint,
+      generatedAt: $generated_at,
+      generation: {
+        generatedFromFingerprint: $fingerprint,
+        sourceType: $source_type,
+        storyPath: $story_path,
+        generatedAt: $generated_at
+      }
+    }' > "$prep_context_path"
+}
+
+specify_artifacts_complete() {
+  local specify_dir="$1"
+  [ -f "$specify_dir/spec.md" ] && [ -s "$specify_dir/spec.md" ] \
+    && [ -f "$specify_dir/plan.md" ] && [ -s "$specify_dir/plan.md" ] \
+    && [ -f "$specify_dir/tasks.md" ] && [ -s "$specify_dir/tasks.md" ]
+}
+
+hash_text() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 -r | awk '{print $1}'
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+    return 0
+  fi
+  fail "Missing SHA-256 hashing support (sha256sum, shasum, openssl, or python3)."
+}
+
+compute_story_prep_fingerprint() {
+  local story_id="$1"
+  local sprint="$2"
+  local title="$3"
+  local goal="$4"
+  local prompt_context="$5"
+  local repo_briefing_abs="$6"
+  local command_map_json="$7"
+  local depends_on_json="$8"
+  local focus_hints="${9:-}"
+  local dependency_context="${10:-}"
+  local repo_briefing_hash focus_json dependency_context_json payload
+
+  if [ -n "$repo_briefing_abs" ] && [ -f "$repo_briefing_abs" ]; then
+    repo_briefing_hash="$(hash_text < "$repo_briefing_abs")"
+  else
+    repo_briefing_hash=""
+  fi
+
+  if [ -n "$focus_hints" ]; then
+    focus_json="$(printf '%s\n' "$focus_hints" | sed -n 's/^[[:space:]]*-[[:space:]]*`\(.*\)`$/\1/p' | jq -R . | jq -s .)"
+  else
+    focus_json='[]'
+  fi
+  dependency_context_json="$(printf '%s' "$dependency_context" | jq -Rs '.')"
+
+  payload="$(jq -nc \
+    --arg storyId "$story_id" \
+    --arg sprint "$sprint" \
+    --arg title "$title" \
+    --arg goal "$goal" \
+    --arg promptContext "$prompt_context" \
+    --arg repoBriefingHash "$repo_briefing_hash" \
+    --argjson commands "$command_map_json" \
+    --argjson dependsOn "$depends_on_json" \
+    --argjson likelyFiles "$focus_json" \
+    --argjson dependencyContext "$dependency_context_json" \
+    '{
+      storyId: $storyId,
+      sprint: $sprint,
+      title: $title,
+      goal: $goal,
+      promptContext: $promptContext,
+      repoBriefingHash: $repoBriefingHash,
+      commands: $commands,
+      dependsOn: $dependsOn,
+      likelyFiles: $likelyFiles,
+      dependencyContext: $dependencyContext
+    }')"
+  printf '%s' "$payload" | hash_text
+}
+
 sanitize_dep_file_list() {
   local value="${1:-}"
   [ -n "$value" ] || return 0
@@ -85,6 +679,7 @@ Commands:
   generate <ID>              Generate story.json (uses SpecKit artifacts when present)
   generate-all [--force] [--jobs N] Generate story.json for all stories with SpecKit artifacts
   prepare-all [--force] [--jobs N]  specify-all + generate-all + health + promote to ready
+  prep-status [options]      Show latest prep journal summary for a sprint
   import-prd [PATH]          Import prd.json userStories into sprint backlog
   import-story <ID> <PATH|-] Import a story.json via framework validation
   add [options]              Add a story non-interactively
@@ -102,6 +697,12 @@ Specify options:
 Generate options:
   --dry-run                  Print the Codex prompt without running
   --force                    Overwrite existing story.json
+
+Prep-status options:
+  --sprint NAME              Inspect a specific sprint (default: active sprint)
+  --story ID                 Limit detail output to one story
+  --details                  Include per-stage detail lines
+  --story-limit N            Limit compact story output (default: 5)
 
 Import-prd options:
   PATH                       Path to prd.json (default: scripts/ralph/prd.json)
@@ -1539,11 +2140,6 @@ cmd_generate() {
     fi
   fi
 
-  if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ]; then
-    fail "story.json already exists: $story_path_abs
-  Use --force to overwrite."
-  fi
-
   local title goal prompt_context effort sprint priority depends_on_arr
   title="$(printf '%s' "$story_meta" | jq -r '.title // ""')"
   goal="$(printf '%s' "$story_meta" | jq -r '.goal // ""')"
@@ -1552,47 +2148,97 @@ cmd_generate() {
   priority="$(printf '%s' "$story_meta" | jq -r '.priority // 1')"
   sprint="$(printf '%s' "$story_meta" | jq -r '.sprint // empty')"
   [ -n "$sprint" ] || sprint="$(jq -r '.sprint // empty' "$STORIES_FILE")"
-  [ -n "$sprint" ] || sprint="$(get_active_sprint 2>/dev/null || echo "sprint-1")"
+  require_story_sprint "$sprint" "$story_id"
   depends_on_arr="$(printf '%s' "$story_meta" | jq -c '.depends_on // []')"
+  ensure_prep_run_dir "$sprint" "generate" >/dev/null
 
   local branch_name="ralph/$sprint/story-$story_id"
   [ -n "$existing_branch_name" ] && branch_name="$existing_branch_name"
   local project_name
   project_name="$(jq -r '.project // empty' "$STORIES_FILE")"
   [ -n "$project_name" ] || project_name="$(basename "$WORKSPACE_ROOT")"
-
-  # Check for SpecKit artifacts (.specify/ in story directory)
   local story_dir specify_dir has_speckit
   story_dir="$(dirname "$story_path_abs")"
   specify_dir="$story_dir/.specify"
   has_speckit=0
+  local command_map_json command_map_text prep_context_path prep_fingerprint existing_prep_fingerprint existing_generate_fingerprint
+  command_map_json="$(build_project_command_map_json "$WORKSPACE_ROOT")"
+  command_map_text="$(format_command_map_for_prompt "$command_map_json")"
+  prep_context_path="$(story_prep_context_path "$story_dir")"
+  prep_fingerprint="$(compute_story_prep_fingerprint \
+    "$story_id" \
+    "$sprint" \
+    "$title" \
+    "$goal" \
+    "$prompt_context" \
+    "" \
+    "$command_map_json" \
+    "$depends_on_arr" \
+    "" \
+    "")"
+  existing_prep_fingerprint="$(read_story_prep_fingerprint "$prep_context_path")"
+  existing_generate_fingerprint="$(read_story_generate_fingerprint "$prep_context_path")"
+  if [ -n "$existing_prep_fingerprint" ]; then
+    prep_fingerprint="$existing_prep_fingerprint"
+  fi
+
+  if [ ! -f "$prep_context_path" ]; then
+    write_story_prep_context \
+      "$prep_context_path" \
+      "$story_id" \
+      "$sprint" \
+      "$title" \
+      "$goal" \
+      "$prompt_context" \
+      "" \
+      "$command_map_json" \
+      "$depends_on_arr" \
+      "" \
+      "" \
+      "$prep_fingerprint" \
+      '[]'
+  fi
+  if [ ! -f "$(story_prep_bundle_context_path "$story_dir")" ] || [ ! -f "$(story_prep_bundle_commands_path "$story_dir")" ] || [ ! -f "$(story_prep_bundle_dependencies_path "$story_dir")" ] || [ ! -f "$(story_prep_bundle_schema_path "$story_dir")" ]; then
+    write_story_prep_bundle \
+      "$story_dir" \
+      "$story_id" \
+      "$sprint" \
+      "$title" \
+      "$goal" \
+      "$prompt_context" \
+      "" \
+      "$command_map_json" \
+      "$depends_on_arr" \
+      '[]' \
+      "$(jq -c '.dependencyStories // []' "$prep_context_path" 2>/dev/null || printf '[]')" \
+      "$prep_fingerprint"
+  fi
+
+  if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ] && [ -n "$existing_generate_fingerprint" ] && [ "$existing_generate_fingerprint" = "$prep_fingerprint" ]; then
+    echo "story.json up to date for $story_id (prep fingerprint match)"
+    prep_record_stage "$story_id" "generate" "skipped" "story.json up to date (prep fingerprint match)" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0
+    return 0
+  fi
+  if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ]; then
+    fail "story.json already exists: $story_path_abs
+  Use --force to overwrite."
+  fi
+
+  # Check for SpecKit artifacts (.specify/ in story directory)
   [ -f "$specify_dir/spec.md" ] && [ -f "$specify_dir/tasks.md" ] && has_speckit=1
 
-  # Pull compact dependency handoff from dependent stories for context injection
-  local dep_context=""
-  while IFS= read -r dep_id; do
-    [ -z "$dep_id" ] && continue
-    local dep_raw_path dep_abs_path dep_title dep_note
-    dep_raw_path="$(jq -r --arg d "$dep_id" '.stories[] | select(.id == $d) | .story_path // ""' "$STORIES_FILE" 2>/dev/null || true)"
-    [ -n "$dep_raw_path" ] || continue
-    [[ "$dep_raw_path" != /* ]] && dep_abs_path="$WORKSPACE_ROOT/$dep_raw_path" || dep_abs_path="$dep_raw_path"
-    [ -f "$dep_abs_path" ] || continue
-    dep_title="$(jq -r '.title // ""' "$dep_abs_path" 2>/dev/null || true)"
-    dep_note="$(jq -r '
-      if (.story_handoff // null) != null then
-        "Files touched: " + ((.story_handoff.files_touched // []) | join(", ")) + "\n" +
-        "Contracts added: " + ((.story_handoff.contracts_added // []) | join(", ")) + "\n" +
-        "Residual risks: " + ((.story_handoff.residual_risks // []) | join("; "))
-      else
-        ""
-      end
-    ' "$dep_abs_path" 2>/dev/null || true)"
-    [ -n "$dep_note" ] || continue
-    dep_context="${dep_context}
-Prior story $dep_id ($dep_title):
-$dep_note
-"
-  done < <(printf '%s' "$story_meta" | jq -r '.depends_on[]?' 2>/dev/null)
+  # Pull compact dependency handoff from the prep bundle when available.
+  local dependency_bundle_json dep_context=""
+  dependency_bundle_json="$(jq -c '.dependencyStories // []' "$prep_context_path" 2>/dev/null || printf '[]')"
+  dep_context="$(
+    printf '%s\n' "$dependency_bundle_json" | jq -r '
+      .[]?
+      | "Prior story \(.storyId) (\(.title)):\n"
+        + (if (.files // []) | length > 0 then "  Files: " + ((.files // []) | join(", ")) + "\n" else "" end)
+        + (if (.invariants // "") != "" then "  Invariants: " + .invariants + "\n" else "" end)
+        + (if (.notes // "") != "" then "  Notes: " + .notes + "\n" else "" end)
+    ' 2>/dev/null || true
+  )"
 
   local dep_section=""
   [ -n "$dep_context" ] && dep_section="Prior story results (dependencies):
@@ -1600,12 +2246,10 @@ $dep_context"
 
   local skill_instruction
   if [ "$has_speckit" -eq 1 ]; then
-    skill_instruction="SpecKit analysis artifacts are available — use them as the primary source:
-  spec.md:  $specify_dir/spec.md
-  plan.md:  $specify_dir/plan.md
-  tasks.md: $specify_dir/tasks.md
-
-Use the story-specify skill to convert these artifacts into story.json."
+    skill_instruction="Use the SpecKit artifacts as the primary source:
+- $specify_dir/spec.md
+- $specify_dir/plan.md
+- $specify_dir/tasks.md"
   elif [ "$placeholder_recovery" -eq 1 ]; then
     if [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
       skill_instruction="Legacy migration placeholder detected — recover the story plan from the preserved PRD markdown.
@@ -1640,9 +2284,10 @@ Use the story-generate skill for schema and task design rules."
 
   local prompt
   prompt="$(cat <<GENPROMPT
-## Generate story.json for $story_id
+Generate story.json for $story_id.
 
-Story backlog entry:
+Backlog entry:
+- Project: $project_name
 - ID: $story_id
 - Title: $title
 - Sprint: $sprint
@@ -1657,14 +2302,27 @@ $placeholder_section
 $skill_instruction
 
 Write the completed story.json to: $story_path_abs
+Prep context: $prep_context_path
+Prep bundle context: $(story_prep_bundle_context_path "$story_dir")
+Prep bundle dependencies: $(story_prep_bundle_dependencies_path "$story_dir")
+Prep bundle commands: $(story_prep_bundle_commands_path "$story_dir")
+Prep bundle schema: $(story_prep_bundle_schema_path "$story_dir")
+
+Resolved verification commands:
+$command_map_text
 
 Requirements:
-1. Read package.json to find real script names for typecheck, lint, test, and build.
-2. scope[] must contain real file paths (verify they exist or will be created).
-3. context must be self-contained for a fresh isolated Codex session.
-4. branchName: $branch_name
-5. Create the parent directory if needed.
-6. Do not commit.
+1. Use the resolved verification commands above; do not rediscover them.
+2. Use the canonical Ralph story container from the prep bundle schema. Keep the exact top-level shape used there.
+3. Set project from the repo package name, sprint to $sprint, priority to $priority, depends_on to $depends_on_arr, status to planned, and passes to false.
+4. spec.scope is a concise string summary. Task scope[] must contain repo-relative real file paths.
+5. Task acceptance is a single string summary, not an array.
+6. context must be self-contained for a fresh isolated Codex session.
+7. branchName: $branch_name
+8. Create the parent directory if needed. Do not commit.
+9. The prep bundle schema file is authoritative for story.json shape. Do not read Ralph framework docs or scripts for schema unless that file is missing a required fact.
+10. Do not read .prep-context.json, package.json, jest.config.ts, or tsconfig.json when the prep bundle and SpecKit artifacts already provide the needed schema, commands, and dependency handoff.
+11. Do not narrate your plan or summarize your work.
 GENPROMPT
 )"
 
@@ -1683,7 +2341,10 @@ GENPROMPT
     return 0
   fi
 
+  local stage_started_at stage_duration_ms
+  stage_started_at="$(epoch_seconds)"
   echo "Generating story.json for $story_id..."
+  prep_record_stage "$story_id" "generate" "running" "Generating story container" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0
   mkdir -p "$(dirname "$story_path_abs")"
   local deterministic_recovery=0 prd_bridge_recovery=0 fallback_reason="" temp_bridge_prd=""
   if [ "$placeholder_recovery" -eq 1 ] && [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
@@ -1782,6 +2443,9 @@ GENPROMPT
 
   local task_count
   task_count="$(jq '.tasks | length' "$story_path_abs")"
+  stage_duration_ms="$(( ($(epoch_seconds) - stage_started_at) * 1000 ))"
+  write_story_generate_provenance "$prep_context_path" "$prep_fingerprint" "story.json" "$raw_path"
+  prep_record_stage "$story_id" "generate" "passed" "Generated $task_count tasks" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" "$stage_duration_ms"
   echo "Generated: $raw_path ($task_count tasks)"
   echo "Run './ralph-story.sh health $story_id' to validate."
 }
@@ -1915,21 +2579,6 @@ cmd_specify() {
   Or re-run: bash install.sh --install-speckit"
   echo "SpecKit: $specify_bin"
 
-  # Short-circuit if artifacts already exist and --force not set
-  if [ -f "$specify_dir/spec.md" ] && [ -f "$specify_dir/tasks.md" ] && [ "$force" -eq 0 ]; then
-    echo "SpecKit artifacts already exist for $story_id (use --force to regenerate)"
-    if [ "$no_generate" -eq 0 ]; then
-      if [ ! -f "$story_path_abs" ]; then
-        local gen_args=()
-        [ "$dry_run" -eq 1 ] && gen_args+=(--dry-run)
-        cmd_generate "$story_id" "${gen_args[@]}"
-      else
-        echo "story.json already exists for $story_id — skipping generate."
-      fi
-    fi
-    return 0
-  fi
-
   # Extract story metadata
   local title goal prompt_context effort sprint priority depends_on_arr
   title="$(printf '%s' "$story_meta" | jq -r '.title // ""')"
@@ -1938,14 +2587,15 @@ cmd_specify() {
   effort="$(printf '%s' "$story_meta" | jq -r '.effort // 3')"
   sprint="$(printf '%s' "$story_meta" | jq -r '.sprint // empty')"
   [ -n "$sprint" ] || sprint="$(jq -r '.sprint // empty' "$STORIES_FILE")"
-  [ -n "$sprint" ] || sprint="$(get_active_sprint 2>/dev/null || echo "sprint-1")"
+  require_story_sprint "$sprint" "$story_id"
   priority="$(printf '%s' "$story_meta" | jq -r '.priority // 1')"
   depends_on_arr="$(printf '%s' "$story_meta" | jq -c '.depends_on // []')"
   story_focus_text="$(printf '%s\n%s\n%s\n' "$title" "$goal" "$prompt_context")"
   story_focus_hints="$(collect_story_focus_hints "$WORKSPACE_ROOT" "$story_focus_text" || true)"
+  ensure_prep_run_dir "$sprint" "specify" >/dev/null
 
   # Pull dependency context (spec fields + compact story handoff) for SpecKit input
-  local dep_context=""
+  local dep_context="" dependency_bundle_json='[]'
   while IFS= read -r dep_id; do
     [ -z "$dep_id" ] && continue
     local dep_raw_path dep_abs_path dep_title dep_scope dep_invariants dep_files dep_note dep_entry
@@ -1967,15 +2617,54 @@ cmd_specify() {
       end
     ' "$dep_abs_path" 2>/dev/null || true)"
     dep_entry=""
+    dep_scope="$(compact_text "$dep_scope" 180)"
+    dep_files="$(compact_list "$dep_files" 4)"
+    dep_invariants="$(compact_text "$dep_invariants" 180)"
+    dep_note="$(compact_text "$dep_note" 160)"
     if [ -n "$dep_scope" ]; then dep_entry="${dep_entry}  Scope: $dep_scope"$'\n'; fi
-    if [ -n "$dep_files" ]; then dep_entry="${dep_entry}  Files changed: $dep_files"$'\n'; fi
-    if [ -n "$dep_invariants" ]; then dep_entry="${dep_entry}  Preserved invariants: $dep_invariants"$'\n'; fi
-    if [ -n "$dep_note" ]; then dep_entry="${dep_entry}  Completion summary: $dep_note"$'\n'; fi
+    if [ -n "$dep_files" ]; then dep_entry="${dep_entry}  Files: $dep_files"$'\n'; fi
+    if [ -n "$dep_invariants" ]; then dep_entry="${dep_entry}  Invariants: $dep_invariants"$'\n'; fi
+    if [ -n "$dep_note" ]; then dep_entry="${dep_entry}  Notes: $dep_note"$'\n'; fi
     [ -n "$dep_entry" ] || continue
+    dependency_bundle_json="$(
+      jq -nc \
+        --arg id "$dep_id" \
+        --arg title "$dep_title" \
+        --arg scope "$dep_scope" \
+        --arg files "$dep_files" \
+        --arg invariants "$dep_invariants" \
+        --arg notes "$dep_note" \
+        --argjson current "$dependency_bundle_json" \
+        '$current + [{
+          storyId: $id,
+          title: $title,
+          scope: $scope,
+          files: ($files | split(", ") | map(select(length > 0 and . != "..."))),
+          invariants: $invariants,
+          notes: $notes
+        }]'
+    )"
     dep_context="${dep_context}
 Prior story $dep_id ($dep_title):
 $dep_entry"
   done < <(printf '%s' "$story_meta" | jq -r '.depends_on[]?' 2>/dev/null)
+
+  local command_map_json prep_context_path
+  command_map_json="$(build_project_command_map_json "$WORKSPACE_ROOT")"
+  prep_context_path="$(story_prep_context_path "$story_dir")"
+  local prep_fingerprint existing_fingerprint
+  prep_fingerprint="$(compute_story_prep_fingerprint \
+    "$story_id" \
+    "$sprint" \
+    "$title" \
+    "$goal" \
+    "$prompt_context" \
+    "$repo_briefing_abs" \
+    "$command_map_json" \
+    "$depends_on_arr" \
+    "$story_focus_hints" \
+    "$dep_context")"
+  existing_fingerprint="$(read_story_prep_fingerprint "$prep_context_path")"
 
   if [ "$dry_run" -eq 1 ]; then
     echo "=== DRY RUN: specify for $story_id ==="
@@ -1983,6 +2672,46 @@ $dep_entry"
     echo "Specify dir: $specify_dir"
     echo "Title:       $title"
     echo "Goal:        $goal"
+    echo "Fingerprint: $prep_fingerprint"
+    return 0
+  fi
+
+  local stage_started_at stage_duration_ms
+  stage_started_at="$(epoch_seconds)"
+
+  # Short-circuit if artifacts already exist and prep inputs are unchanged
+  if specify_artifacts_complete "$specify_dir" && [ "$force" -eq 0 ] && [ -n "$existing_fingerprint" ] && [ "$existing_fingerprint" = "$prep_fingerprint" ]; then
+    if [ ! -f "$(story_prep_bundle_context_path "$story_dir")" ] || [ ! -f "$(story_prep_bundle_commands_path "$story_dir")" ] || [ ! -f "$(story_prep_bundle_dependencies_path "$story_dir")" ] || [ ! -f "$(story_prep_bundle_schema_path "$story_dir")" ]; then
+      write_story_prep_bundle \
+        "$story_dir" \
+        "$story_id" \
+        "$sprint" \
+        "$title" \
+        "$goal" \
+        "$prompt_context" \
+        "$repo_briefing_rel" \
+        "$command_map_json" \
+        "$depends_on_arr" \
+        "$(focus_hints_to_json "$story_focus_hints")" \
+        "$(jq -c '.dependencyStories // []' "$prep_context_path" 2>/dev/null || printf '[]')" \
+        "$prep_fingerprint"
+    fi
+    echo "SpecKit artifacts up to date for $story_id (fingerprint match)"
+    prep_record_stage "$story_id" "specify" "skipped" "Artifacts up to date (fingerprint match)" "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" 0
+    if [ "$no_generate" -eq 0 ]; then
+      if [ ! -f "$story_path_abs" ]; then
+        local gen_args=()
+        [ "$dry_run" -eq 1 ] && gen_args+=(--dry-run)
+        cmd_generate "$story_id" "${gen_args[@]}"
+      else
+        if [ "$(read_story_generate_fingerprint "$prep_context_path")" = "$prep_fingerprint" ]; then
+          echo "story.json up to date for $story_id (prep fingerprint match)"
+          prep_record_stage "$story_id" "generate" "skipped" "story.json up to date (prep fingerprint match)" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0
+        else
+          echo "story.json already exists for $story_id — skipping generate."
+        fi
+      fi
+    fi
     return 0
   fi
 
@@ -1993,6 +2722,33 @@ $dep_entry"
   fi
 
   mkdir -p "$specify_dir"
+  write_story_prep_context \
+    "$prep_context_path" \
+    "$story_id" \
+    "$sprint" \
+    "$title" \
+    "$goal" \
+    "$prompt_context" \
+    "$repo_briefing_rel" \
+    "$command_map_json" \
+    "$depends_on_arr" \
+    "$story_focus_hints" \
+    "$dep_context" \
+    "$prep_fingerprint" \
+    "$dependency_bundle_json"
+  write_story_prep_bundle \
+    "$story_dir" \
+    "$story_id" \
+    "$sprint" \
+    "$title" \
+    "$goal" \
+    "$prompt_context" \
+    "$repo_briefing_rel" \
+    "$command_map_json" \
+    "$depends_on_arr" \
+    "$(focus_hints_to_json "$story_focus_hints")" \
+    "$dependency_bundle_json" \
+    "$prep_fingerprint"
 
   # Write SpecKit feature input file
   cat > "$specify_dir/input.md" <<SPECIN
@@ -2011,10 +2767,11 @@ $prompt_context
 - Effort (story points): $effort
 - Depends on: $depends_on_arr
 
-## Default Project Briefing
+## Repo Briefing
 - Start with: $repo_briefing_rel
-- Only inspect additional files that are directly relevant to this story.
-- Avoid broad repo rediscovery unless the briefing is missing essential detail.
+
+## Resolved Verification Commands
+$(format_command_map_for_prompt "$command_map_json")
 SPECIN
 
   if [ -n "$dep_context" ]; then
@@ -2033,35 +2790,36 @@ SPECIN
 
   local speckit_prompt
   speckit_prompt="$(cat <<SKPROMPT
-Run the SpecKit specification workflow for this story. No human approval gates — proceed automatically through all three phases in sequence.
+Run the SpecKit workflow for this story and complete all three phases without pausing.
 
 Feature input file: $specify_dir/input.md
 Repo briefing file: $repo_briefing_rel
+Prep bundle context: $(story_prep_bundle_context_path "$story_dir")
+Prep bundle dependencies: $(story_prep_bundle_dependencies_path "$story_dir")
+Prep bundle commands: $(story_prep_bundle_commands_path "$story_dir")
 
-Context discipline:
-- Read the repo briefing first and treat it as the default source of project setup, tooling, and layout context.
-- Do not broadly reread README, package.json, scaffold files, or unrelated directories unless the story explicitly needs them or the repo briefing is insufficient.
-- Use the "Likely Implementation Files" section in input.md as the first place to inspect implementation/test paths when it is present.
-- If you inspect more files, keep that inspection tightly scoped to the likely implementation area, nearest tests, and directly relevant config.
-- Preserve quality by being concrete about scope, invariants, file decisions, and verification, but avoid unnecessary narrative or repeated repo summary.
+Use the repo briefing, input.md, and prep bundle as the primary context.
+Do not read Ralph framework files such as scripts/ralph/README-local.md, scripts/ralph/doctor.sh, or scripts/ralph/lib/specify.sh unless the prep bundle is missing a required fact.
+Do not reread package.json, jest.config.ts, or tsconfig.json when the repo briefing and prep bundle already provide the needed commands, aliases, or project shape. Only inspect them when this story needs exact config semantics.
+Do not inspect node_modules, bundled framework docs, or generated framework documentation unless local source files and config still leave a required framework rule ambiguous.
+Keep any extra file inspection tightly scoped to the likely implementation area, nearest tests, and directly relevant config.
+Do not narrate your plan, summarize your work, or restate constraints.
 
 Phase 1 — Specify:
-Use the SpecKit specify skill to analyse the feature input and produce a structured specification.
 Write output to: $specify_dir/spec.md
 
 Phase 2 — Plan:
-Use the SpecKit plan skill on spec.md to produce a technical implementation plan with file decisions.
 Write output to: $specify_dir/plan.md
 
 Phase 3 — Tasks:
-Use the SpecKit tasks skill on spec.md and plan.md to produce an executable, phased task list.
 Write output to: $specify_dir/tasks.md
 
-All three files must be written before finishing. Do not commit.
+All three files must be written before finishing. Avoid repeated repo summaries. Do not commit.
 SKPROMPT
 )"
 
   echo "Running SpecKit analysis for $story_id (phases: specify → plan → tasks)..."
+  prep_record_stage "$story_id" "specify" "running" "Running SpecKit workflow" "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" 0
   codex_exec_prompt "$speckit_prompt" "$WORKSPACE_ROOT"
 
   # Validate artifacts
@@ -2074,6 +2832,8 @@ SKPROMPT
     fail "SpecKit did not produce all required artifacts ($missing missing). Check the Codex session log and re-run with --force."
   fi
 
+  stage_duration_ms="$(( ($(epoch_seconds) - stage_started_at) * 1000 ))"
+  prep_record_stage "$story_id" "specify" "passed" "SpecKit artifacts created" "$(jq -nc --arg spec "$specify_dir/spec.md" --arg plan "$specify_dir/plan.md" --arg tasks "$specify_dir/tasks.md" --arg prep "$prep_context_path" '[$spec, $plan, $tasks, $prep]')" "$stage_duration_ms"
   echo "SpecKit artifacts written: $specify_dir/{spec.md,plan.md,tasks.md}"
 
   if [ "$no_generate" -eq 0 ]; then
@@ -2098,6 +2858,10 @@ cmd_specify_all() {
     esac
   done
   [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || fail "--jobs must be a positive integer"
+  local sprint_name
+  sprint_name="$(jq -r '.sprint // empty' "$STORIES_FILE")"
+  require_story_sprint "$sprint_name" "specify-all"
+  ensure_prep_run_dir "$sprint_name" "specify-all" >/dev/null
 
   local force_flag=()
   [ "$force" -eq 1 ] && force_flag+=(--force)
@@ -2110,11 +2874,13 @@ cmd_specify_all() {
     specify_dir="$(dirname "$story_path_abs")/.specify"
     if story_is_unrecovered_migration_placeholder "$story_path_abs"; then
       echo "SKIP $sid: migration placeholder (recover in generate phase)"
+      prep_record_stage "$sid" "specify" "skipped" "Migration placeholder deferred to generate phase" "$(jq -nc --arg dir "$specify_dir" '[$dir]')" 0
       skipped=$((skipped + 1))
       continue
     fi
     if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ]; then
       echo "SKIP $sid: story.json exists"
+      prep_record_stage "$sid" "specify" "skipped" "story.json already exists" "$(jq -nc --arg path "$raw_path" '[$path]')" 0
       skipped=$((skipped + 1))
       continue
     fi
@@ -2134,16 +2900,19 @@ cmd_specify_all() {
 
     if [ "$jobs" -le 1 ]; then
       local sid="${batch[0]}"
+      local logf
+      logf="$(prep_stage_log_path "$sid" "specify")"
       echo "=== specify $sid ==="
-      if cmd_specify "$sid" "${force_flag[@]+"${force_flag[@]}"}"; then
+      if cmd_specify "$sid" "${force_flag[@]+"${force_flag[@]}"}" > "$logf" 2>&1; then
         count=$((count + 1))
       else
         echo "WARN: specify failed for $sid"; failed=$((failed + 1))
       fi
+      cat "$logf"
     else
       local pids=() logs=() sids=()
       for sid in "${batch[@]}"; do
-        local logf; logf="$(mktemp)"
+        local logf; logf="$(prep_stage_log_path "$sid" "specify")"
         ( cmd_specify "$sid" "${force_flag[@]+"${force_flag[@]}"}" ) > "$logf" 2>&1 &
         pids+=($!); logs+=("$logf"); sids+=("$sid")
       done
@@ -2175,25 +2944,39 @@ cmd_generate_all() {
     esac
   done
   [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || fail "--jobs must be a positive integer"
+  local sprint_name
+  sprint_name="$(jq -r '.sprint // empty' "$STORIES_FILE")"
+  require_story_sprint "$sprint_name" "generate-all"
+  ensure_prep_run_dir "$sprint_name" "generate-all" >/dev/null
 
   local force_flag=()
   [ "$force" -eq 1 ] && force_flag+=(--force)
 
   local pending=() placeholder_pending=() skipped=0
   while IFS= read -r sid; do
-    local raw_path story_path_abs specify_dir
+    local raw_path story_path_abs specify_dir prep_context_path prep_fingerprint generate_fingerprint
     raw_path="$(jq -r --arg id "$sid" '.stories[] | select(.id == $id) | .story_path // ""' "$STORIES_FILE")"
     story_path_abs="$(resolve_repo_relative_path "$raw_path")"
     specify_dir="$(dirname "$story_path_abs")/.specify"
+    prep_context_path="$(story_prep_context_path "$(dirname "$story_path_abs")")"
+    prep_fingerprint="$(read_story_prep_fingerprint "$prep_context_path")"
+    generate_fingerprint="$(read_story_generate_fingerprint "$prep_context_path")"
 
     if [ ! -f "$specify_dir/spec.md" ] && ! { [ "$force" -eq 1 ] && story_is_unrecovered_migration_placeholder "$story_path_abs"; }; then
       echo "SKIP $sid: no SpecKit artifacts (run specify-all first)"
+      prep_record_stage "$sid" "generate" "skipped" "No SpecKit artifacts available" "$(jq -nc --arg dir "$specify_dir" '[$dir]')" 0
       skipped=$((skipped + 1))
       continue
     fi
 
     if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ]; then
-      echo "SKIP $sid: story.json exists (use --force to overwrite)"
+      if [ -n "$prep_fingerprint" ] && [ "$prep_fingerprint" = "$generate_fingerprint" ]; then
+        echo "SKIP $sid: story.json up to date (prep fingerprint match)"
+        prep_record_stage "$sid" "generate" "skipped" "story.json up to date (prep fingerprint match)" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0
+      else
+        echo "SKIP $sid: story.json exists (use --force to overwrite)"
+        prep_record_stage "$sid" "generate" "skipped" "story.json already exists" "$(jq -nc --arg path "$raw_path" '[$path]')" 0
+      fi
       skipped=$((skipped + 1))
       continue
     fi
@@ -2215,13 +2998,16 @@ cmd_generate_all() {
     echo "generate-all: processing ${#placeholder_pending[@]} migration placeholder(s) serially to keep stories.json updates safe."
     local sid
     for sid in "${placeholder_pending[@]}"; do
+      local logf
+      logf="$(prep_stage_log_path "$sid" "generate")"
       echo "=== generate $sid ==="
-      if cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}"; then
+      if cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}" > "$logf" 2>&1; then
         count=$((count + 1))
       else
         echo "WARN: generate failed for $sid"
         failed=$((failed + 1))
       fi
+      cat "$logf"
     done
   fi
 
@@ -2241,18 +3027,21 @@ cmd_generate_all() {
 
     if [ "$jobs" -le 1 ]; then
       local sid="${batch[0]}"
+      local logf
+      logf="$(prep_stage_log_path "$sid" "generate")"
       echo "=== generate $sid ==="
-      if cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}"; then
+      if cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}" > "$logf" 2>&1; then
         count=$((count + 1))
       else
         echo "WARN: generate failed for $sid"
         failed=$((failed + 1))
       fi
+      cat "$logf"
     else
       local pids=() logs=() sids=()
       for sid in "${batch[@]}"; do
         local logf
-        logf="$(mktemp)"
+        logf="$(prep_stage_log_path "$sid" "generate")"
         ( cmd_generate "$sid" "${force_flag[@]+"${force_flag[@]}"}" ) > "$logf" 2>&1 &
         pids+=($!)
         logs+=("$logf")
@@ -2292,14 +3081,24 @@ cmd_prepare_all() {
     esac
   done
 
+  resolve_stories_file
+  local sprint_name
+  sprint_name="$(jq -r '.sprint // empty' "$STORIES_FILE")"
+  require_story_sprint "$sprint_name" "prepare-all"
+  ensure_prep_run_dir "$sprint_name" "prepare-all" >/dev/null
+
+  local specify_failed=0 generate_failed=0
   echo "=== prepare-all: specify ==="
-  cmd_specify_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs" || true
+  if ! cmd_specify_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs"; then
+    specify_failed=1
+  fi
   echo ""
   echo "=== prepare-all: generate ==="
-  cmd_generate_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs" || true
+  if ! cmd_generate_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs"; then
+    generate_failed=1
+  fi
   echo ""
   echo "=== prepare-all: health + promote ==="
-  resolve_stories_file
   local promoted=0 health_failed=0
   while IFS= read -r sid; do
     local raw_path story_path_abs
@@ -2326,7 +3125,6 @@ cmd_prepare_all() {
   echo ""
   [ "$promoted" -gt 0 ]      && echo "Promoted $promoted story/stories to ready."
   [ "$health_failed" -gt 0 ] && echo "WARN: $health_failed story/stories have health issues — fix before mark-ready."
-  [ "$health_failed" -eq 0 ] || return 1
 
   # Auto-mark sprint ready when all active stories are ready
   local not_ready_count
@@ -2341,6 +3139,109 @@ cmd_prepare_all() {
     echo "All stories ready — sprint automatically marked ready."
     echo "To activate: ./ralph-sprint.sh use <sprint-name>"
   fi
+
+  local final_status="passed"
+  if [ "$specify_failed" -ne 0 ] || [ "$generate_failed" -ne 0 ] || [ "$health_failed" -ne 0 ]; then
+    final_status="failed"
+  fi
+  prep_finalize_summary "$final_status"
+  echo "Prep summary: $(prep_summary_path)"
+  [ "$final_status" = "passed" ] || return 1
+}
+
+cmd_prep_status() {
+  resolve_stories_file
+  local sprint_name
+  sprint_name="$(jq -r '.sprint // empty' "$STORIES_FILE")"
+
+  local requested_sprint="" story_id="" details=0 story_limit=5
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --sprint)
+        requested_sprint="${2:-}"
+        [ -n "$requested_sprint" ] || fail "Missing value for --sprint"
+        shift 2
+        ;;
+      --story)
+        story_id="${2:-}"
+        [ -n "$story_id" ] || fail "Missing value for --story"
+        shift 2
+        ;;
+      --details)
+        details=1
+        shift
+        ;;
+      --story-limit)
+        story_limit="${2:-}"
+        [ -n "$story_limit" ] || fail "Missing value for --story-limit"
+        [[ "$story_limit" =~ ^[1-9][0-9]*$ ]] || fail "--story-limit must be a positive integer"
+        shift 2
+        ;;
+      *)
+        fail "Unknown prep-status option: $1"
+        ;;
+    esac
+  done
+
+  [ -n "$requested_sprint" ] && sprint_name="$requested_sprint"
+  require_story_sprint "$sprint_name" "prep-status"
+
+  local summary_path
+  summary_path="$(latest_prep_summary_for_sprint "$sprint_name" || true)"
+  [ -n "$summary_path" ] && [ -f "$summary_path" ] || fail "No prep run journal found for sprint '$sprint_name'."
+
+  local mode status started_at finished_at story_count passed_count failed_count skipped_count running_count total_duration_ms
+  mode="$(jq -r '.mode // "prep"' "$summary_path" 2>/dev/null || echo "prep")"
+  status="$(jq -r '.status // "running"' "$summary_path" 2>/dev/null || echo "running")"
+  started_at="$(jq -r '.started_at // ""' "$summary_path" 2>/dev/null || true)"
+  finished_at="$(jq -r '.finished_at // ""' "$summary_path" 2>/dev/null || true)"
+  story_count="$(jq -r '(.stories // {}) | length' "$summary_path" 2>/dev/null || echo 0)"
+  passed_count="$(jq -r '.metrics.passed_stages // 0' "$summary_path" 2>/dev/null || echo 0)"
+  failed_count="$(jq -r '.metrics.failed_stages // 0' "$summary_path" 2>/dev/null || echo 0)"
+  skipped_count="$(jq -r '.metrics.skipped_stages // 0' "$summary_path" 2>/dev/null || echo 0)"
+  running_count="$(jq -r '.metrics.running_stages // 0' "$summary_path" 2>/dev/null || echo 0)"
+  total_duration_ms="$(jq -r '.metrics.total_duration_ms // 0' "$summary_path" 2>/dev/null || echo 0)"
+
+  echo "Prep sprint: $sprint_name"
+  echo "Prep mode: $mode"
+  echo "Prep status: $status"
+  [ -n "$started_at" ] && echo "Prep started: $started_at"
+  [ -n "$finished_at" ] && echo "Prep finished: $finished_at"
+  echo "Prep stories: $story_count"
+  echo "Prep metrics: passed=$passed_count failed=$failed_count skipped=$skipped_count running=$running_count duration-ms=$total_duration_ms"
+  echo "Prep journal: $summary_path"
+
+  local story_filter_json='null'
+  if [ -n "$story_id" ]; then
+    story_filter_json="$(jq -nc --arg story "$story_id" '$story')"
+  fi
+
+  jq -r \
+    --argjson limit "$story_limit" \
+    --argjson details "$details" \
+    --argjson story_filter "$story_filter_json" '
+    def selected_stories:
+      (.stories // {})
+      | to_entries
+      | sort_by(.key)
+      | if $story_filter == null then . else map(select(.key == $story_filter)) end
+      | .[:$limit];
+    selected_stories[]
+    | .key as $story_id
+    | .value as $stages
+    | ($stages | to_entries | sort_by(.key) | map("\(.key)=\(.value.status // "unknown")") | join(", ")) as $compact
+    | "Prep story " + $story_id + ": " + (if $compact == "" then "(no stages recorded)" else $compact end),
+      (if $details == 1 then
+         ($stages
+          | to_entries
+          | sort_by(.key)
+          | .[]
+          | "Prep detail " + $story_id + " " + .key + ": "
+            + (.value.status // "unknown")
+            + (if (.value.detail // "") == "" then "" else " - " + .value.detail end)
+            + " (duration-ms=" + ((.value.duration_ms // 0) | tostring) + ", updated=" + (.value.updated_at // "unknown") + ")")
+       else empty end)
+  ' "$summary_path"
 }
 
 # ---------------------------------------------------------------------------
@@ -2367,6 +3268,7 @@ case "$CMD" in
   generate-all) cmd_generate_all "$@" ;;
   health-all)   cmd_health_all ;;
   prepare-all)  cmd_prepare_all "$@" ;;
+  prep-status)  cmd_prep_status "$@" ;;
   import-prd)   cmd_import_prd "$@" ;;
   import-story) cmd_import_story "$@" ;;
   add)          cmd_add "$@" ;;

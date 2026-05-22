@@ -461,7 +461,7 @@ expected_state="ready"
   "sprint": "sprint-1",
   "priority": 1,
   "depends_on": [],
-  "status": "active",
+  "status": "ready",
   "spec": {
     "scope": "src/messages.ts, tests/messages.test.mjs",
     "preserved_invariants": [
@@ -535,7 +535,7 @@ STORYJSON
   "sprint": "sprint-1",
   "priority": 2,
   "depends_on": [],
-  "status": "active",
+  "status": "ready",
   "spec": {
     "scope": "src/render.ts, tests/render.test.mjs",
     "preserved_invariants": [
@@ -607,7 +607,7 @@ STORYJSON
   "sprint": "sprint-1",
   "priority": 3,
   "depends_on": ["S-002"],
-  "status": "active",
+  "status": "ready",
   "spec": {
     "scope": "tests/ui.spec.mjs, src/render.ts, scripts/browser-check.mjs",
     "preserved_invariants": [
@@ -681,7 +681,10 @@ SPRSH
 
   ./ralph-story.sh health > "$WORK_DIR/story-health.log" 2>&1
   ./ralph-sprint.sh status > "$WORK_DIR/status-sprint-preloop.log" 2>&1 || true
+  ./ralph-sprint.sh restage sprint-1 > "$WORK_DIR/sprint-restage.log" 2>&1
   commit_framework_baseline "$SPRINT_REPO" "chore(worst-ui): pre-loop planning state"
+  ./ralph-sprint.sh mark-ready sprint-1 > "$WORK_DIR/sprint-mark-ready.log" 2>&1
+  ./ralph-sprint.sh use sprint-1 > "$WORK_DIR/sprint-use.log" 2>&1
   sprint_loop_start_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
   run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" ./ralph.sh --max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure
   sprint_loop_end_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
@@ -715,10 +718,15 @@ runtime_loop_log="$(resolve_latest_runtime_sprint_log "$SPRINT_REPO")" || fail "
 
 assert_contains "$WORK_DIR/doctor-sprint.log" "OK: prerequisites present"
 assert_contains "$WORK_DIR/sprint-create-sprint.log" "Created sprint: sprint-1"
+assert_contains "$WORK_DIR/sprint-create-sprint.log" "Active sprint set to: sprint-1"
 assert_contains "$WORK_DIR/story-add-S-001.log" "Added story: S-001"
 assert_contains "$WORK_DIR/story-add-S-002.log" "Added story: S-002"
 assert_contains "$WORK_DIR/story-add-S-003.log" "Added story: S-003"
 assert_contains "$WORK_DIR/story-health.log" "\\[S-001\\]"
+assert_contains "$WORK_DIR/sprint-restage.log" "Sprint 'sprint-1' restaged to planned."
+assert_contains "$WORK_DIR/sprint-mark-ready.log" "Sprint 'sprint-1' marked ready."
+assert_contains "$WORK_DIR/sprint-use.log" "Active sprint set to: sprint-1"
+assert_contains "$WORK_DIR/sprint-use.log" "Checked out sprint branch: ralph/sprint/sprint-1"
 assert_contains "$runtime_loop_log" "Story S-001 COMPLETE"
 assert_contains "$runtime_loop_log" "Story S-002 COMPLETE"
 assert_contains "$runtime_loop_log" "Story S-003 COMPLETE"

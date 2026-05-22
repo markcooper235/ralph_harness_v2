@@ -237,13 +237,13 @@ specify_is_noise_path() {
   [ -n "$candidate" ] || return 0
 
   case "$candidate" in
-    node_modules/*|*/node_modules/*|.next/*|*/.next/*|coverage/*|*/coverage/*|dist/*|*/dist/*|build/*|*/build/*|vendor/*|*/vendor/*|tmp/*|*/tmp/*|temp/*|*/temp/*|output/*|*/output/*|playwright-report/*|*/playwright-report/*|test-results/*|*/test-results/*|scripts/ralph/runtime/*|*/scripts/ralph/runtime/*|.cache/*|*/.cache/*)
+    node_modules/*|*/node_modules/*|.next/*|*/.next/*|coverage/*|*/coverage/*|dist/*|*/dist/*|build/*|*/build/*|vendor/*|*/vendor/*|tmp/*|*/tmp/*|temp/*|*/temp/*|output/*|*/output/*|playwright-report/*|*/playwright-report/*|test-results/*|*/test-results/*|scripts/ralph/runtime/*|*/scripts/ralph/runtime/*|.cache/*|*/.cache/*|.specify/*|*/.specify/*)
       return 0
       ;;
   esac
 
   case "$candidate" in
-    *.log|*.tmp|*.temp|*.cache)
+    *.log|*.tmp|*.temp|*.cache|*.prep-context.json)
       return 0
       ;;
   esac
@@ -385,4 +385,48 @@ collect_story_focus_hints() {
   )"
 
   [ -n "$path_hints" ] && printf '%s\n' "$path_hints"
+}
+
+resolve_project_command() {
+  local workspace_root="${1:-$PWD}"
+  local command_kind="${2:-}"
+  local package_json="$workspace_root/package.json"
+
+  case "$command_kind" in
+    typecheck|lint|test|build) ;;
+    *) return 1 ;;
+  esac
+
+  if [ -f "$package_json" ]; then
+    local script_name script_cmd
+    script_name="$(jq -r --arg key "$command_kind" '.scripts[$key] // empty' "$package_json" 2>/dev/null || true)"
+    if [ -n "$script_name" ]; then
+      printf 'npm run %s\n' "$command_kind"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+build_project_command_map_json() {
+  local workspace_root="${1:-$PWD}"
+  local typecheck_cmd lint_cmd test_cmd build_cmd
+
+  typecheck_cmd="$(resolve_project_command "$workspace_root" typecheck 2>/dev/null || true)"
+  lint_cmd="$(resolve_project_command "$workspace_root" lint 2>/dev/null || true)"
+  test_cmd="$(resolve_project_command "$workspace_root" test 2>/dev/null || true)"
+  build_cmd="$(resolve_project_command "$workspace_root" build 2>/dev/null || true)"
+
+  jq -n \
+    --arg typecheck "${typecheck_cmd:-}" \
+    --arg lint "${lint_cmd:-}" \
+    --arg test "${test_cmd:-}" \
+    --arg build "${build_cmd:-}" \
+    '{
+      typecheck: (if $typecheck == "" then null else $typecheck end),
+      lint: (if $lint == "" then null else $lint end),
+      test: (if $test == "" then null else $test end),
+      build: (if $build == "" then null else $build end)
+    }'
 }
