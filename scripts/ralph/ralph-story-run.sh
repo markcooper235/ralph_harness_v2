@@ -399,6 +399,20 @@ execution_local_prompt_path() {
   printf '%s/prompt.local.md\n' "$SCRIPT_DIR"
 }
 
+detect_execution_repo_profile() {
+  if [ -f "$WORKSPACE_ROOT/angular.json" ]; then
+    printf 'Angular TypeScript app with Jest-style spec tests under src/app/. Prefer local source and test files over framework docs.\n'
+    return 0
+  fi
+
+  if [ -f "$WORKSPACE_ROOT/package.json" ] && jq -e '.dependencies.next // .devDependencies.next' "$WORKSPACE_ROOT/package.json" >/dev/null 2>&1; then
+    printf 'Next.js TypeScript app with Jest tests under __tests__/ and source under lib/, components/, and app/. Prefer local source and tests over Next docs.\n'
+    return 0
+  fi
+
+  printf 'TypeScript workspace. Prefer local source, tests, and config over framework or package docs.\n'
+}
+
 pending_task_ids_json() {
   jq -c --arg target "$TARGET_TASK_ID" '
     [
@@ -532,7 +546,7 @@ write_execution_compat_manifest() {
 }
 
 write_execution_summary() {
-  local mode_line commands_text writable_files_text tests_text pending_tasks_text dependency_text
+  local mode_line commands_text writable_files_text tests_text pending_tasks_text dependency_text repo_profile
   if [ -n "$TARGET_TASK_ID" ]; then
     mode_line="Only execute task $TARGET_TASK_ID and any required supporting edits."
   else
@@ -569,12 +583,14 @@ write_execution_summary() {
       end
     ' "$EXEC_BUNDLE_DEPENDENCIES_PATH"
   )"
+  repo_profile="$(detect_execution_repo_profile)"
 
   cat > "$EXEC_BUNDLE_SUMMARY_PATH" <<EOF
 # Ralph Story Execution Bundle
 
 Story file: $STORY_FILE
 Execution mode: $mode_line
+Repo profile: $repo_profile
 
 Resolved commands:
 $commands_text
@@ -591,15 +607,9 @@ $pending_tasks_text
 Dependency handoff:
 $dependency_text
 
-Authoritative bundle files:
-- Context: $EXEC_BUNDLE_CONTEXT_PATH
-- Commands: $EXEC_BUNDLE_COMMANDS_PATH
-- Files: $EXEC_BUNDLE_FILES_PATH
-- Dependencies: $EXEC_BUNDLE_DEPENDENCIES_PATH
-- Checks: $EXEC_BUNDLE_CHECKS_PATH
-
 Execution rules:
-- Treat the bundle files above as authoritative.
+- Treat this summary as the primary execution brief.
+- Use support JSON bundle files only if a failing check or an ambiguous detail truly requires them.
 - Edit only files listed in \`writable_scope\` unless a failing check requires a minimal expansion.
 - Do not inspect \`node_modules\`, generated trees, or Ralph framework docs/helpers by default.
 - Let shell verification decide pass/fail; do not spend time on bookkeeping narration.
