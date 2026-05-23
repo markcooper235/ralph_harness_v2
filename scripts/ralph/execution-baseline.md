@@ -7,4 +7,5 @@ Ralph story execution baseline:
 - Do not inspect Ralph framework docs or helpers by default.
 - Make the smallest correct change set that satisfies the story checks.
 - Keep output terse. No planning narration, no completion essay, no repeated restatement of constraints.
+- After the scoped work and checks pass, stop. Do not replay large diffs, verification logs, or file-by-file summaries.
 - Leave backlog state updates to the Ralph framework. Edit `story.json` only for meaningful story-local context that shell verification cannot infer.

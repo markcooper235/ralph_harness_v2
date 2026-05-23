@@ -525,7 +525,7 @@ build_execution_checks_json() {
 }
 
 write_execution_compat_manifest() {
-  jq -c \
+  jq -nc \
     --slurpfile context "$EXEC_BUNDLE_CONTEXT_PATH" \
     --slurpfile checks "$EXEC_BUNDLE_CHECKS_PATH" \
     '{
@@ -649,6 +649,7 @@ Rules:
 - Do not inspect node_modules, generated trees, or Ralph framework docs/helpers such as scripts/ralph/README-local.md, scripts/ralph/doctor.sh, or scripts/ralph/lib/specify.sh unless a failing check explicitly requires them.
 - Run the required checks yourself while working. Fix ordinary failures in-session instead of stopping early.
 - Keep output terse. No planning narration, no completion essay, no restating the bundle.
+- After checks pass, do not replay large diffs, verification logs, or file-by-file summaries.
 - The framework will persist pass/fail bookkeeping, fallback handoffs, and final story_handoff from shell verification. Only edit story.json when you need to record meaningful task or story context that shell verification cannot infer.
 - Commit code and story.json changes as needed.
 - Do not update stories.json.
