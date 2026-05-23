@@ -272,45 +272,28 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 
 ---
 
-## Local Extensions
+## Local Behavior
 
-### prompt.local.md
-
-Keep repo-specific Ralph behavior in `scripts/ralph/prompt.local.md`. The framework installer does not overwrite this file.
-
-`ralph.sh` supports marker-based injection:
-
-```
-# In prompt.md:
-<!-- RALPH:LOCAL:ROLE:HELPER -->
-
-# In prompt.local.md:
-<!-- RALPH:LOCAL:ROLE:HELPER -->
-...content injected at the marker location...
-<!-- /RALPH:LOCAL:ROLE:HELPER -->
-```
-
-If no matching marker blocks are found, a non-empty `prompt.local.md` is appended as `## Local Prompt Extensions`.
+Repo-specific Ralph behavior should live in checked-in helper scripts and durable repo docs. The framework no longer supports `prompt.local.md` overlays or marker-based prompt injection.
 
 ### Adding a new local capability
 
 1. Add or update a helper script under `scripts/ralph/`.
    Keep it idempotent, concise, and safe to run repeatedly from prompts.
-2. Add usage instructions to `scripts/ralph/prompt.local.md`.
+2. Add usage instructions to the repo's durable docs such as `AGENTS.md` or a project-specific maintainer note.
 3. Add a one-line note in `AGENTS.md` if policy or process changed.
 4. Run `./scripts/ralph/doctor.sh` and a small Ralph story sanity check.
 
 ### Update-safe rules
 
-- Do not edit `scripts/ralph/prompt.md` for repo-only behavior.
-- Put repo-only instructions in `scripts/ralph/prompt.local.md`.
-- Reference all local helper scripts from `prompt.local.md` so they remain discoverable.
+- Keep repo-only instructions in durable checked-in docs instead of prompt overlay files.
+- Reference local helper scripts from `AGENTS.md` or nearby maintainer docs so they remain discoverable.
 - Keep helper scripts idempotent and safe to run repeatedly.
 - Prefer additive changes; avoid modifying core framework scripts unless needed.
 
 ### Upgrade checklist (framework reinstall)
 
 1. Re-run framework installer.
-2. Confirm `scripts/ralph/prompt.local.md` still exists and marker blocks still inject.
-3. Confirm local helper scripts still exist and are executable.
+2. Confirm local helper scripts still exist and are executable.
+3. Confirm `scripts/ralph/execution-baseline.md` still reflects the intended execution policy.
 4. Re-run one targeted Ralph story workflow to validate behavior.

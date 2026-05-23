@@ -116,11 +116,8 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 
 ## Prompt And Intake Policy
 
-- Keep repo-specific Ralph behavior in `scripts/ralph/prompt.local.md` and optional local helper scripts referenced there so framework updates can refresh core files safely.
-- `ralph.sh` supports marker-based local prompt injection: place `<!-- RALPH:LOCAL:<NAME> -->` in `prompt.md` and matching start/end blocks in `prompt.local.md`.
-- Empty local prompt files are ignored; non-matching legacy local content falls back to append mode.
 - Keep interactive wrappers minimal by default; provide CLI flags for non-interactive runs.
-- Keep `prompt.md` terse because every Ralph iteration pays for it.
+- Keep `scripts/ralph/execution-baseline.md` terse because every Ralph story run includes it.
 - Keep specify prep context terse too: default to the cached repo briefing plus story-local input, and only inspect additional files when they are directly relevant to the story.
 - Prefer path hints and repo briefing summaries over broad repo excerpts. The model should be pointed toward likely implementation files before it is invited to explore.
 

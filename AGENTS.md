@@ -109,8 +109,7 @@ Importing an existing `prd.json`:
 - `scripts/ralph/ralph-sprint-migrate.sh` — Convert sprint from legacy epic/PRD format
 - `scripts/ralph/ralph-cleanup.sh` — Reset local Ralph runtime state without archiving
 - `scripts/ralph/ralph-sprint-test.sh` — Optional project-specific full-regression gate for explicit sprint closeout
-- `scripts/ralph/prompt.md` — Base loop prompt
-- `scripts/ralph/prompt.local.md` — Repo-local prompt extensions (survives framework reinstalls)
+- `scripts/ralph/execution-baseline.md` — Base execution guidance used for every story run
 - `scripts/ralph/story.json` — Task container: title, description, spec, tasks[], checks[], depends_on
 - `scripts/ralph/stories.json` — Sprint story backlog with status and story_path pointers
 
@@ -152,7 +151,6 @@ Transient (untracked):
 - Story health checks in `ralph-story.sh health` validate task count, check syntax, context completeness, dependency integrity, and duplicate detection.
 - `ralph-story.sh prep-status [--details] [--story ID]` inspects the latest prep journal for a sprint without opening raw JSON.
 - `ralph-sprint.sh next` ignores sprints whose remaining stories are all `blocked`.
-- `prompt.local.md` is the right place for repo-specific behavior; marker-based injection is supported.
 - `ralph-sprint-commit.sh` deletes the merged sprint branch by default; pass `--keep` to retain it.
 
 ## When To Use Advanced Helpers

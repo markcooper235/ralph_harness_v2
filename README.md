@@ -200,12 +200,11 @@ Prerequisites:
 - merged sprint branches are deleted by default; pass `--keep` to retain
 - `ralph-sprint-migrate.sh` converts a sprint from the legacy epic/PRD format to story-task format
 
-### Repo-local Extensions
+### Execution Baseline
 
-- keep repo-specific behavior in `scripts/ralph/prompt.local.md`
-- `ralph.sh` supports marker-based prompt injection with `<!-- RALPH:LOCAL:<NAME> -->`
-- empty local prompt files are ignored; non-matching legacy content falls back to append mode
-- framework reinstall does not overwrite `prompt.local.md`
+- keep shared per-story execution guidance in `scripts/ralph/execution-baseline.md`
+- Ralph builds the story-specific execution prompt in `ralph-story-run.sh`
+- repo-specific behavior should live in durable scripts and checked-in docs, not prompt overlay files
 
 See [scripts/ralph/README-local.md](scripts/ralph/README-local.md).
 
@@ -318,8 +317,7 @@ scripts/ralph/
 ├── tasks/
 │   └── archive/
 │       └── sprints/                       # Archived sprint metadata
-├── prompt.md                              # Base loop prompt
-├── prompt.local.md                        # Repo-local extensions (not overwritten on reinstall)
+├── execution-baseline.md                  # Base execution guidance used every story run
 └── ralph-sprint-test.sh                   # Optional project regression gate
 ```
 
@@ -420,8 +418,7 @@ Notes:
 | `ralph-sprint-migrate.sh` | Convert a sprint from legacy epic/PRD format to story-task format |
 | `ralph-cleanup.sh` | Reset local Ralph runtime state without archiving |
 | `ralph-sprint-test.sh` | Optional project-specific regression gate for explicit sprint closeout |
-| `prompt.md` | Base loop prompt used every iteration |
-| `prompt.local.md` | Repo-local prompt extensions |
+| `execution-baseline.md` | Base execution guidance used every story run |
 | `story.json.example` | Example task container format |
 | `stories.json.example` | Example sprint story backlog format |
 
@@ -435,7 +432,7 @@ Notes:
 - SpecKit artifacts (`.specify/`) are committed — they are durable planning outputs, not transient state.
 - `ralph-sprint-test.sh` is optional. Copy from `ralph-sprint-test.sh.example` only when your repo wants an explicit project-specific sprint closeout gate.
 - `ralph-cleanup.sh --force` removes the workflow lock and transient state without archiving.
-- Keep `prompt.md` small because every loop iteration pays for it again.
+- Keep `execution-baseline.md` terse because every story run includes it.
 - Migrating from the old epic/PRD format? Use `ralph-sprint-migrate.sh`.
 
 ---

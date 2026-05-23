@@ -395,10 +395,6 @@ execution_baseline_path() {
   printf '%s/execution-baseline.md\n' "$SCRIPT_DIR"
 }
 
-execution_local_prompt_path() {
-  printf '%s/prompt.local.md\n' "$SCRIPT_DIR"
-}
-
 detect_execution_repo_profile() {
   if [ -f "$WORKSPACE_ROOT/angular.json" ]; then
     printf 'Angular TypeScript app with Jest-style spec tests under src/app/. Prefer local source and test files over framework docs.\n'
@@ -654,14 +650,6 @@ Rules:
 - Commit code and story.json changes as needed.
 - Do not update stories.json.
 PROMPT
-
-  if [ -f "$(execution_local_prompt_path)" ]; then
-    cat <<PROMPT
-
-Local prompt extensions:
-$(execution_local_prompt_path)
-PROMPT
-  fi
 }
 
 run_story_cycle() {
