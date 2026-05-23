@@ -71,8 +71,10 @@ Sprint:
 2. Plan backlog with `./scripts/ralph/ralph-roadmap.sh --vision "..."`
 3. Check readiness with `./scripts/ralph/ralph-sprint.sh status`
 4. Run `./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1` to generate task containers
-5. Run `./scripts/ralph/ralph.sh` — stories execute automatically
-6. Run `./scripts/ralph/ralph-sprint-commit.sh`
+5. Run `./scripts/ralph/ralph-sprint.sh mark-ready sprint-1`
+6. Run `./scripts/ralph/ralph-sprint.sh use sprint-1`
+7. Run `./scripts/ralph/ralph.sh` — stories execute automatically
+8. Run `./scripts/ralph/ralph-sprint-commit.sh`
 
 Repeat for the next sprint:
 
@@ -114,7 +116,7 @@ Importing an existing `prd.json`:
 
 ## Broad Rules
 
-- Each story runs in one primary Codex session with minimal focused context.
+- Each story runs in one primary Codex session with a deterministic execution bundle plus minimal focused repo context.
 - Acceptance checks (`checks[]`) are binary shell expressions — exit 0 = pass, non-zero = fail.
 - Durable planning artifacts belong in git; transient execution state does not.
 - SpecKit artifacts (`.specify/`) are durable and should be committed.
@@ -144,10 +146,11 @@ Transient (untracked):
 ## Current Framework Behaviors
 
 - `ralph.sh` loops: `start-next → ralph-story-run.sh → repeat` until no eligible stories remain.
-- `ralph-story-run.sh` runs one primary Codex cycle per story, then evaluates `checks[]` via shell. Failed checks may trigger targeted remediation up to `--max-retries`.
+- `ralph-story-run.sh` builds a deterministic execution bundle under `scripts/ralph/runtime/`, runs one primary Codex cycle per story, then evaluates `checks[]` via shell. Failed checks may trigger targeted remediation up to `--max-retries`.
 - After all tasks pass, `ralph-story-run.sh` writes compact handoff state, then merges the story branch to the sprint branch and deletes it.
 - `ralph-story.sh start-next` activates the next eligible story (status = ready or planned, all `depends_on` done).
 - Story health checks in `ralph-story.sh health` validate task count, check syntax, context completeness, dependency integrity, and duplicate detection.
+- `ralph-story.sh prep-status [--details] [--story ID]` inspects the latest prep journal for a sprint without opening raw JSON.
 - `ralph-sprint.sh next` ignores sprints whose remaining stories are all `blocked`.
 - `prompt.local.md` is the right place for repo-specific behavior; marker-based injection is supported.
 - `ralph-sprint-commit.sh` deletes the merged sprint branch by default; pass `--keep` to retain it.

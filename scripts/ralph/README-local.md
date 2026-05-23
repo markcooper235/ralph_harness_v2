@@ -46,8 +46,9 @@ This document is the installed reference for a Ralph-enabled project. For framew
 What happens during execution:
 
 - `ralph-story.sh prepare-all --sprint <name>` runs SpecKit analysis for each story (`specify → plan → tasks`), generates `story.json` task containers, validates health, and promotes healthy stories to `ready`
+- `ralph-story.sh prep-status [--details] [--story <ID>]` inspects the latest prep journal and per-story prep stages
 - `ralph.sh` picks up the next eligible story, runs it in one primary Codex cycle via `ralph-story-run.sh`, evaluates binary `checks[]`, uses targeted remediation only when needed, and merges each story branch back to the sprint branch when done
-- `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to pass, archives sprint artifacts, merges the sprint branch, and deletes it
+- `ralph-sprint-commit.sh` runs sprint-scoped verification by default, archives sprint artifacts, merges the sprint branch, and deletes it
 
 ---
 
@@ -59,6 +60,7 @@ A sprint must be closed before the next one is activated.
 # Sprint 1 (after planning with ralph-roadmap.sh)
 ./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
 ./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh use sprint-1
 ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh          # closes sprint-1, merges to main
 
@@ -216,6 +218,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 ./scripts/ralph/ralph-story.sh generate <ID>
 ./scripts/ralph/ralph-story.sh generate-all [--force] [--jobs N]
 ./scripts/ralph/ralph-story.sh prepare-all [--sprint NAME] [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh prep-status [--details] [--story ID]
 ./scripts/ralph/ralph-story.sh health [<ID>]
 ./scripts/ralph/ralph-story.sh health-all
 ./scripts/ralph/ralph-story.sh tasks <ID>

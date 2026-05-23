@@ -57,6 +57,7 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - `ralph-story.sh generate <ID>` detects `.specify/` artifacts and uses the `story-specify` skill when present; it falls back to the `story-generate` skill when artifacts are absent.
 - `ralph-story.sh specify-all` and `generate-all` support `--jobs N` for parallel execution.
 - `ralph-story.sh prepare-all` = specify-all + generate-all + health + promote to ready. It is the recommended single-command story preparation path.
+- `ralph-story.sh prep-status [--details] [--story ID]` is the canonical operator view into the latest prep journal; use it instead of reading raw prep JSON by hand.
 - SpecKit requires the `specify` CLI to be installed. `doctor.sh` checks for it and fails if missing. Install via `--install-speckit`, `uv tool install git+https://github.com/github/spec-kit.git`, or an `npx`-based fallback.
 - When `specify` is absent and cannot be found via `npx`, `ralph-story.sh specify` fails with a clear message — there is no silent fallback for SpecKit phases.
 
@@ -77,6 +78,7 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - `ralph.sh` only operates when on the sprint branch (`ralph/sprint/<sprint-name>`); it fails with a clear message when the working tree is dirty or the branch is wrong.
 - `ralph.sh` warns before the loop when stories have no `story.json`, prompting `prepare-all` first.
 - `ralph-story-run.sh` locks execution via `.workflow-lock`; the lock is shared with `ralph.sh` via `RALPH_LOCK_HELD`.
+- `ralph-story-run.sh` should prefer the deterministic execution bundle (`.exec/summary.md` plus support JSON) over broad repo rediscovery during story execution.
 - Each task's `checks[]` are evaluated by running each shell expression from the workspace root. All checks must exit 0 for the task to pass.
 - The primary story cycle is where ordinary correction should happen. `--max-retries` controls only targeted remediation cycles after the main story cycle exits.
 - `ralph.sh` writes a sprint runtime journal under `scripts/ralph/runtime/sprint-runs/<timestamp>-<sprint>/`, including `sprint.log` and `sprint-run.json`.
@@ -108,7 +110,7 @@ Use `AGENTS.md` for the broad operating model. Use this file when you need deepe
 - Sprint closeout via `ralph-sprint-commit.sh` requires all stories to be `done` or `abandoned`; it will not proceed with `active`, `planned`, or `ready` stories remaining.
 - `ralph-sprint-commit.sh` archives sprint metadata to `tasks/archive/sprints/` before merging.
 - Sprint branches are deleted after merge by default; pass `--keep` to retain.
-- `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to exist and pass before merging. This file is project-specific — copy from `ralph-sprint-test.sh.example`.
+- `ralph-sprint-test.sh` is optional. When a repo chooses to include it, `ralph-sprint-commit.sh` should treat it as the project-specific explicit sprint closeout gate.
 
 ---
 

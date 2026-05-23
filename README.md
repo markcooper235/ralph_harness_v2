@@ -73,6 +73,7 @@ What happens:
 
 - `ralph-roadmap.sh` decomposes a vision into sprint backlogs (`stories.json`)
 - `ralph-story.sh prepare-all --sprint <name>` runs SpecKit analysis and generates `story.json` task containers
+- `ralph-story.sh prep-status [--details] [--story <ID>]` inspects the latest prep journal and per-story prep stages
 - `ralph.sh` picks up the next eligible story, runs it via `ralph-story-run.sh`, validates binary checks, and merges the story branch back to the sprint branch
 - `ralph-sprint-commit.sh` runs sprint-scoped verification by default, archives sprint artifacts, and merges to `main`/`master`
 
@@ -84,6 +85,7 @@ After sprint 1 completes, activate and run subsequent sprints:
 # Sprint 1
 ./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
 ./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh use sprint-1
 ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh          # merges sprint-1 branch to main
 
@@ -162,12 +164,14 @@ Prerequisites:
 - `ralph-story.sh specify <ID>` runs three-phase SpecKit analysis (`specify → plan → tasks`) and writes artifacts to `.specify/`
 - `ralph-story.sh generate <ID>` converts SpecKit artifacts to a `story.json` task container
 - `ralph-story.sh prepare-all` runs both phases for all pending stories, validates health, and promotes healthy stories to `ready`
+- `ralph-story.sh prep-status` surfaces the latest prep journal, stage status, durations, and skip reasons for operators
 - `ralph-story.sh health [ID]` validates task counts, acceptance checks, dependency integrity, and check syntax
 
 ### Execution
 
 - `ralph.sh` loops over eligible stories: `start-next → ralph-story-run.sh → repeat`
 - `ralph-story-run.sh` runs one primary Codex cycle per story; acceptance `checks[]` are evaluated by shell after the cycle
+- `ralph-story-run.sh` builds a deterministic execution bundle per story and uses it as the primary model context instead of broad repo rediscovery
 - sprint and story runtime journals are recorded under `scripts/ralph/runtime/`, kept out of model context by default, and pruned to the most recent 3 run directories
 - targeted remediation retries up to `--max-retries` times only when the primary cycle leaves correctable check failures
 - remediation prompts include compact failed-check summaries only when checks fail; full logs stay on disk
@@ -233,6 +237,7 @@ See [scripts/ralph/README-local.md](scripts/ralph/README-local.md).
 ./scripts/ralph/ralph-story.sh generate S-001
 ./scripts/ralph/ralph-story.sh generate-all [--force] [--jobs N]
 ./scripts/ralph/ralph-story.sh prepare-all [--sprint NAME] [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh prep-status [--details] [--story ID]
 ./scripts/ralph/ralph-story.sh health [S-001]
 ./scripts/ralph/ralph-story.sh health-all
 ./scripts/ralph/ralph-story.sh show S-001
@@ -289,12 +294,20 @@ scripts/ralph/
 ├── roadmap.md                             # Rendered roadmap
 ├── roadmap-source.md                      # Durable roadmap input (committed)
 ├── runtime/                               # Untracked sprint/story execution journals
+│   ├── prep-runs/
+│   │   └── <timestamp>-<sprint>/
+│   │       ├── prepare-run.json
+│   │       └── S-001-specify.log
 │   └── sprint-runs/
 │       └── <timestamp>-<sprint>/
 │           ├── sprint.log
 │           ├── sprint-run.json
 │           └── stories/
 │               └── S-001/
+│                   ├── .exec/
+│                   │   ├── summary.md
+│                   │   ├── files.json
+│                   │   └── commands.json
 │                   ├── primary.log
 │                   ├── remediation-1.log
 │                   ├── story-summary.json
@@ -307,7 +320,7 @@ scripts/ralph/
 │       └── sprints/                       # Archived sprint metadata
 ├── prompt.md                              # Base loop prompt
 ├── prompt.local.md                        # Repo-local extensions (not overwritten on reinstall)
-└── ralph-sprint-test.sh                   # Project regression gate (required for sprint commit)
+└── ralph-sprint-test.sh                   # Optional project regression gate
 ```
 
 ### Durable artifacts (committed)
@@ -406,7 +419,7 @@ Notes:
 | `ralph-sprint-commit.sh` | Archive and merge the completed sprint |
 | `ralph-sprint-migrate.sh` | Convert a sprint from legacy epic/PRD format to story-task format |
 | `ralph-cleanup.sh` | Reset local Ralph runtime state without archiving |
-| `ralph-sprint-test.sh` | Project-specific regression gate (required for sprint commit) |
+| `ralph-sprint-test.sh` | Optional project-specific regression gate for explicit sprint closeout |
 | `prompt.md` | Base loop prompt used every iteration |
 | `prompt.local.md` | Repo-local prompt extensions |
 | `story.json.example` | Example task container format |
@@ -420,7 +433,7 @@ Notes:
 - `ralph-sprint.sh status` reports both `Active story` and `Next story`.
 - `doctor.sh` checks that SpecKit (`specify` CLI) is installed and reachable.
 - SpecKit artifacts (`.specify/`) are committed — they are durable planning outputs, not transient state.
-- `ralph-sprint-commit.sh` requires `ralph-sprint-test.sh` to exist; copy from `ralph-sprint-test.sh.example` and customize for your project.
+- `ralph-sprint-test.sh` is optional. Copy from `ralph-sprint-test.sh.example` only when your repo wants an explicit project-specific sprint closeout gate.
 - `ralph-cleanup.sh --force` removes the workflow lock and transient state without archiving.
 - Keep `prompt.md` small because every loop iteration pays for it again.
 - Migrating from the old epic/PRD format? Use `ralph-sprint-migrate.sh`.
