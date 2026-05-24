@@ -175,6 +175,7 @@ copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-migrate.sh" "$DEST_DIR_REL/ralph-spr
 copy_file "$RUNTIME_SOURCE_DIR/ralph-story.sh" "$DEST_DIR_REL/ralph-story.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-story-run.sh" "$DEST_DIR_REL/ralph-story-run.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-fallow.sh" "$DEST_DIR_REL/ralph-fallow.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-fallow-run.sh" "$DEST_DIR_REL/ralph-fallow-run.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-roadmap.sh" "$DEST_DIR_REL/ralph-roadmap.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-status.sh" "$DEST_DIR_REL/ralph-status.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-cleanup.sh" "$DEST_DIR_REL/ralph-cleanup.sh"
@@ -210,6 +211,7 @@ chmod +x \
   "$DEST_DIR_REL/ralph-story.sh" \
   "$DEST_DIR_REL/ralph-story-run.sh" \
   "$DEST_DIR_REL/ralph-fallow.sh" \
+  "$DEST_DIR_REL/ralph-fallow-run.sh" \
   "$DEST_DIR_REL/ralph-roadmap.sh" \
   "$DEST_DIR_REL/ralph-status.sh" \
   "$DEST_DIR_REL/ralph-cleanup.sh" \

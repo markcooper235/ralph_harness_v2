@@ -233,7 +233,7 @@ ensure_clean_worktree
 
 run_optional_fallow_cleanup() {
   [ "$RUN_FALLOW" = "true" ] || return 0
-  [ -f "$SCRIPT_DIR/ralph-fallow.sh" ] || fail "ralph-fallow.sh not found but --run-fallow was requested."
+  [ -f "$SCRIPT_DIR/ralph-fallow-run.sh" ] || fail "ralph-fallow-run.sh not found but --run-fallow was requested."
 
   local story_paths=()
   while IFS= read -r story_path; do
@@ -263,7 +263,7 @@ run_optional_fallow_cleanup() {
       fallow_env+=(RALPH_FALLOW_EXACT_AUTOFIX=1)
       fallow_env+=(RALPH_FALLOW_CODEX_AUTOFIX=1)
     fi
-    if ! env "${fallow_env[@]}" "$SCRIPT_DIR/ralph-fallow.sh" --story "$story_path"; then
+    if ! env "${fallow_env[@]}" "$SCRIPT_DIR/ralph-fallow-run.sh" --story "$story_path"; then
       fail "Optional fallow cleanup failed for $story_path. Resolve issues or rerun sprint commit without --run-fallow."
     fi
   done
