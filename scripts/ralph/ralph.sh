@@ -91,6 +91,50 @@ get_active_sprint() {
   awk 'NF {print; exit}' "$ACTIVE_SPRINT_FILE"
 }
 
+get_active_story_id() {
+  jq -r '.activeStoryId // empty' "$STORIES_FILE" 2>/dev/null || true
+}
+
+get_story_field() {
+  local story_id="$1"
+  local field="$2"
+  jq -r --arg id "$story_id" --arg field "$field" '
+    .stories[]
+    | select(.id == $id)
+    | .[$field] // empty
+  ' "$STORIES_FILE" 2>/dev/null || true
+}
+
+resolve_story_path_abs() {
+  local story_id="$1"
+  local story_path
+  story_path="$(get_story_field "$story_id" "story_path")"
+  [ -n "$story_path" ] || return 1
+  [[ "$story_path" != /* ]] && story_path="$WORKSPACE_ROOT/$story_path"
+  printf '%s\n' "$story_path"
+}
+
+ensure_active_story_branch() {
+  local story_id="$1"
+  local story_path story_branch current_branch
+  story_path="$(resolve_story_path_abs "$story_id")"
+  [ -f "$story_path" ] || fail "Active story file not found for $story_id: ${story_path:-unknown}"
+
+  story_branch="$(jq -r '.branchName // empty' "$story_path" 2>/dev/null || true)"
+  [ -n "$story_branch" ] || fail "Active story $story_id is missing branchName in $story_path"
+
+  if ! git show-ref --verify --quiet "refs/heads/$story_branch"; then
+    git branch "$story_branch" "$SPRINT_BRANCH"
+    echo "Created missing story branch for active story: $story_branch (from $SPRINT_BRANCH)"
+  fi
+
+  current_branch="$(git branch --show-current)"
+  if [ "$current_branch" != "$story_branch" ]; then
+    git checkout "$story_branch" >/dev/null
+    echo "Checked out active story branch: $story_branch"
+  fi
+}
+
 ACTIVE_SPRINT="$(get_active_sprint || true)"
 
 if [ -z "$ACTIVE_SPRINT" ]; then
@@ -112,8 +156,22 @@ if ! git show-ref --verify --quiet "refs/heads/$SPRINT_BRANCH"; then
 fi
 
 CURRENT_BRANCH="$(git branch --show-current)"
+ACTIVE_STORY_ID_PRECHECK="$(get_active_story_id)"
 if [ "$CURRENT_BRANCH" != "$SPRINT_BRANCH" ]; then
-  fail "Not on sprint branch '$SPRINT_BRANCH'. Currently on: $CURRENT_BRANCH"
+  if [ -n "$ACTIVE_STORY_ID_PRECHECK" ]; then
+    ACTIVE_STORY_PATH_PRECHECK="$(resolve_story_path_abs "$ACTIVE_STORY_ID_PRECHECK" 2>/dev/null || true)"
+    ACTIVE_STORY_BRANCH_PRECHECK=""
+    if [ -n "$ACTIVE_STORY_PATH_PRECHECK" ] && [ -f "$ACTIVE_STORY_PATH_PRECHECK" ]; then
+      ACTIVE_STORY_BRANCH_PRECHECK="$(jq -r '.branchName // empty' "$ACTIVE_STORY_PATH_PRECHECK" 2>/dev/null || true)"
+    fi
+    if [ -n "$ACTIVE_STORY_BRANCH_PRECHECK" ] && [ "$CURRENT_BRANCH" = "$ACTIVE_STORY_BRANCH_PRECHECK" ]; then
+      echo "Resuming from active story branch: $CURRENT_BRANCH"
+    else
+      fail "Not on sprint branch '$SPRINT_BRANCH'. Currently on: $CURRENT_BRANCH"
+    fi
+  else
+    fail "Not on sprint branch '$SPRINT_BRANCH'. Currently on: $CURRENT_BRANCH"
+  fi
 fi
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
@@ -236,7 +294,23 @@ echo ""
 
 while [ "$story_count" -lt "$MAX_STORIES" ]; do
   write_sprint_run_manifest "selecting-story"
-  next_id="$("$SCRIPT_DIR/ralph-story.sh" next-id 2>/dev/null || true)"
+  active_story_id="$(get_active_story_id)"
+  next_id=""
+  story_already_active=false
+
+  if [ -n "$active_story_id" ]; then
+    active_story_status="$(get_story_field "$active_story_id" "status")"
+    if [ "$active_story_status" = "active" ]; then
+      next_id="$active_story_id"
+      story_already_active=true
+      echo "Resuming active story: $next_id"
+      ensure_active_story_branch "$next_id"
+    fi
+  fi
+
+  if [ -z "$next_id" ]; then
+    next_id="$("$SCRIPT_DIR/ralph-story.sh" next-id 2>/dev/null || true)"
+  fi
 
   if [ -z "$next_id" ]; then
     echo "No more eligible stories."
@@ -254,24 +328,32 @@ while [ "$story_count" -lt "$MAX_STORIES" ]; do
   echo "════════════════════════════════════════════════════"
 
   if [ "$DRY_RUN" = "true" ]; then
-    echo "[DRY RUN] Would run: ralph-story.sh start-next && ralph-story-run.sh"
+    if [ "$story_already_active" = "true" ]; then
+      echo "[DRY RUN] Would resume active story: ralph-story-run.sh"
+    else
+      echo "[DRY RUN] Would run: ralph-story.sh start-next && ralph-story-run.sh"
+    fi
     echo "[DRY RUN] Stopping after first story in dry-run mode."
     write_sprint_run_manifest "dry-run"
     break
   fi
 
-  # Activate story and create story branch
-  if ! "$SCRIPT_DIR/ralph-story.sh" start-next; then
-    echo ""
-    echo "ERROR: start-next failed for $next_id"
-    failed_count=$((failed_count + 1))
-    write_sprint_run_manifest "start-next-failed"
-    if [ "$CONTINUE_ON_FAILURE" = "true" ]; then
-      git -C "$WORKSPACE_ROOT" checkout "$SPRINT_BRANCH" 2>/dev/null || true
-      write_sprint_run_manifest "waiting-for-next"
-      continue
+  if [ "$story_already_active" != "true" ]; then
+    # Activate story and create story branch
+    if ! "$SCRIPT_DIR/ralph-story.sh" start-next; then
+      echo ""
+      echo "ERROR: start-next failed for $next_id"
+      failed_count=$((failed_count + 1))
+      write_sprint_run_manifest "start-next-failed"
+      if [ "$CONTINUE_ON_FAILURE" = "true" ]; then
+        git -C "$WORKSPACE_ROOT" checkout "$SPRINT_BRANCH" 2>/dev/null || true
+        write_sprint_run_manifest "waiting-for-next"
+        continue
+      fi
+      break
     fi
-    break
+  else
+    echo "Continuing previously active story without restarting it."
   fi
   write_sprint_run_manifest "running-story"
 
