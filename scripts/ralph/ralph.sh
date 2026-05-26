@@ -148,7 +148,7 @@ if [ -z "$ACTIVE_SPRINT" ]; then
 fi
 
 STORIES_FILE="$SPRINTS_DIR/$ACTIVE_SPRINT/stories.json"
-[ -f "$STORIES_FILE" ] || fail "No stories.json for sprint '$ACTIVE_SPRINT'. Run ralph-sprint.sh create or ralph-sprint-migrate.sh."
+[ -f "$STORIES_FILE" ] || fail "No stories.json for sprint '$ACTIVE_SPRINT'. Run ralph-sprint.sh create or seed the sprint via ralph-roadmap.sh."
 
 SPRINT_BRANCH="ralph/sprint/$ACTIVE_SPRINT"
 if ! git show-ref --verify --quiet "refs/heads/$SPRINT_BRANCH"; then

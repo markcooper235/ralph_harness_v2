@@ -10,7 +10,6 @@ source "$SCRIPT_DIR/lib/specify.sh"
 ROADMAP_FILE="$SCRIPT_DIR/roadmap.json"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
-LEGACY_ARCHIVE_DIR="$SCRIPT_DIR/archive"
 LEGACY_TRANSIENT_FILES=(
   "$SCRIPT_DIR/prd.json"
   "$SCRIPT_DIR/progress.txt"
@@ -25,20 +24,6 @@ fail() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
-}
-
-collect_legacy_sprints() {
-  [ -d "$SPRINTS_DIR" ] || return 0
-  find "$SPRINTS_DIR" -mindepth 2 -maxdepth 2 -type f -name epics.json 2>/dev/null \
-    | while IFS= read -r epics_file; do
-        local sprint_dir sprint_name
-        sprint_dir="$(dirname "$epics_file")"
-        sprint_name="$(basename "$sprint_dir")"
-        if [ ! -f "$sprint_dir/stories.json" ]; then
-          printf '%s\n' "$sprint_name"
-        fi
-      done \
-    | sort -u
 }
 
 echo "Ralph doctor"
@@ -102,26 +87,12 @@ if [ ! -f "$ROADMAP_FILE" ]; then
   echo "      Run: $SCRIPT_DIR/ralph-roadmap.sh to define your product roadmap."
 fi
 
-legacy_sprints=()
-while IFS= read -r sprint_name; do
-  [ -n "$sprint_name" ] || continue
-  legacy_sprints+=("$sprint_name")
-done < <(collect_legacy_sprints)
-
-if [ "${#legacy_sprints[@]}" -gt 0 ]; then
-  echo "WARN: legacy sprint(s) still use epics.json and need migration:"
-  printf '      %s\n' "${legacy_sprints[@]}"
-  echo "      Run: cd $SCRIPT_DIR && ./ralph-sprint-migrate.sh --sprint <sprint-name>"
-fi
-
 if [ -f "$ACTIVE_SPRINT_FILE" ]; then
   ACTIVE_SPRINT="$(awk 'NF {print; exit}' "$ACTIVE_SPRINT_FILE" || true)"
   if [ -n "${ACTIVE_SPRINT:-}" ]; then
     STORIES_FILE="$SPRINTS_DIR/$ACTIVE_SPRINT/stories.json"
     if [ -f "$STORIES_FILE" ]; then
       echo "OK: active sprint '$ACTIVE_SPRINT' has stories.json"
-    elif [ -f "$SPRINTS_DIR/$ACTIVE_SPRINT/epics.json" ]; then
-      echo "WARN: active sprint '$ACTIVE_SPRINT' uses legacy epic format. Run ralph-sprint-migrate.sh to convert."
     else
       echo "WARN: active sprint '$ACTIVE_SPRINT' has no stories.json: $STORIES_FILE"
     fi
@@ -137,11 +108,6 @@ if [ -n "$tracked_legacy" ]; then
   echo "WARN: legacy transient Ralph files are still tracked in git:"
   printf '%s' "$tracked_legacy" | sed 's/^/      /'
   echo "      Remove them from git tracking after migration if they are no longer needed."
-fi
-
-if [ -d "$LEGACY_ARCHIVE_DIR" ] && find "$LEGACY_ARCHIVE_DIR" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
-  echo "WARN: Legacy Ralph archive path still contains files: $LEGACY_ARCHIVE_DIR"
-  echo "      Active sprint archives live under: $SCRIPT_DIR/sprints/archive"
 fi
 
 if ! "$CODEX_BIN" exec --help >/dev/null 2>&1; then

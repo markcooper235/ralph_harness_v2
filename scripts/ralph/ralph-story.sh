@@ -655,7 +655,7 @@ resolve_stories_file() {
   active_sprint="$(get_active_sprint)" || fail "No active sprint. Use ralph-sprint.sh use <sprint-name>."
 
   STORIES_FILE="$SPRINTS_DIR/$active_sprint/stories.json"
-  [ -f "$STORIES_FILE" ] || fail "No stories.json for sprint '$active_sprint'. Run ralph-sprint-migrate.sh or ralph-roadmap.sh first."
+  [ -f "$STORIES_FILE" ] || fail "No stories.json for sprint '$active_sprint'. Run ralph-roadmap.sh or create the sprint backlog first."
 }
 
 usage() {

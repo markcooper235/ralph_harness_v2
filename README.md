@@ -198,7 +198,6 @@ Prerequisites:
 
 - `ralph-sprint-commit.sh` validates all stories are terminal, archives sprint artifacts, and merges the sprint branch
 - merged sprint branches are deleted by default; pass `--keep` to retain
-- `ralph-sprint-migrate.sh` converts a sprint from the legacy epic/PRD format to story-task format
 
 ### Execution Baseline
 
@@ -259,9 +258,6 @@ See [scripts/ralph/README-local.md](scripts/ralph/README-local.md).
 
 # Sprint closeout
 ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression]
-
-# Migration from legacy epic/PRD format
-./scripts/ralph/ralph-sprint-migrate.sh [--sprint NAME] [--dry-run] [--force]
 
 # Recovery
 ./scripts/ralph/ralph-cleanup.sh --force
@@ -415,7 +411,6 @@ Notes:
 | `ralph-verify.sh` | Run typecheck + lint + tests (--targeted or --full) |
 | `ralph-fallow.sh` | Code-quality gate: dead code, duplication, lint |
 | `ralph-sprint-commit.sh` | Archive and merge the completed sprint |
-| `ralph-sprint-migrate.sh` | Convert a sprint from legacy epic/PRD format to story-task format |
 | `ralph-cleanup.sh` | Reset local Ralph runtime state without archiving |
 | `ralph-sprint-test.sh` | Optional project-specific regression gate for explicit sprint closeout |
 | `execution-baseline.md` | Base execution guidance used every story run |
@@ -433,7 +428,6 @@ Notes:
 - `ralph-sprint-test.sh` is optional. Copy from `ralph-sprint-test.sh.example` only when your repo wants an explicit project-specific sprint closeout gate.
 - `ralph-cleanup.sh --force` removes the workflow lock and transient state without archiving.
 - Keep `execution-baseline.md` terse because every story run includes it.
-- Migrating from the old epic/PRD format? Use `ralph-sprint-migrate.sh`.
 
 ---
 

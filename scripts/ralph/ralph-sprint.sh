@@ -11,7 +11,6 @@ SPRINTS_DIR="$SCRIPT_DIR/sprints"
 ARCHIVE_ROOT="$SPRINTS_DIR/archive"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINT_BRANCH_PREFIX="ralph/sprint"
-LEGACY_ARCHIVE_DIR="$SCRIPT_DIR/archive"
 
 usage() {
   cat <<'USAGE'
@@ -38,8 +37,6 @@ Remove options:
 To add stories to a sprint:
   ./ralph-story.sh add --title '<title>' [options]
 
-To migrate a sprint from the legacy epic/PRD format:
-  ./ralph-sprint-migrate.sh [--sprint NAME] [--dry-run]
 USAGE
 }
 
@@ -191,11 +188,6 @@ get_active_sprint() {
     return 0
   fi
   return 1
-}
-
-legacy_archive_has_entries() {
-  [ -d "$LEGACY_ARCHIVE_DIR" ] || return 1
-  find "$LEGACY_ARCHIVE_DIR" -mindepth 1 -print -quit 2>/dev/null | grep -q .
 }
 
 set_active_sprint() {
@@ -377,10 +369,6 @@ readiness_status() {
     echo "Sprint branch:   $sprint_branch (missing — run: ralph-sprint.sh branch $sprint)"
   fi
   echo "Current branch:  $current_branch"
-
-  if legacy_archive_has_entries; then
-    echo "Legacy archive:  drift detected at $LEGACY_ARCHIVE_DIR"
-  fi
 
   local active_id
   active_id="$(jq -r '.activeStoryId // empty' "$stories_file")"
@@ -689,13 +677,11 @@ main() {
     add-epic|add-epics)
       echo "ralph-sprint.sh: '$cmd' is removed. Use ralph-story.sh to manage stories." >&2
       echo "  ./ralph-story.sh add --title '<title>' [options]" >&2
-      echo "  To migrate existing epics: ./ralph-sprint-migrate.sh [--dry-run]" >&2
       exit 1
       ;;
     bootstrap-current)
       echo "ralph-sprint.sh: 'bootstrap-current' is removed." >&2
-      echo "  To migrate a sprint from epic/PRD format to stories:" >&2
-      echo "  ./ralph-sprint-migrate.sh [--sprint NAME] [--dry-run]" >&2
+      echo "  Sprint planning now starts from stories.json and story.json artifacts." >&2
       exit 1
       ;;
     -h|--help|help|"")

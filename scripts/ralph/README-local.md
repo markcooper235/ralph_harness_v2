@@ -263,11 +263,10 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression]
 ```
 
-### Recovery and migration
+### Recovery
 
 ```bash
 ./scripts/ralph/ralph-cleanup.sh --force
-./scripts/ralph/ralph-sprint-migrate.sh [--sprint NAME] [--dry-run] [--force]
 ```
 
 ---
