@@ -141,7 +141,7 @@ fi
 
 if [ -d "$LEGACY_ARCHIVE_DIR" ] && find "$LEGACY_ARCHIVE_DIR" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
   echo "WARN: Legacy Ralph archive path still contains files: $LEGACY_ARCHIVE_DIR"
-  echo "      Canonical archive path is: $SCRIPT_DIR/tasks/archive"
+  echo "      Active sprint archives live under: $SCRIPT_DIR/sprints/archive"
 fi
 
 if ! "$CODEX_BIN" exec --help >/dev/null 2>&1; then

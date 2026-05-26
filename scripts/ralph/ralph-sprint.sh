@@ -8,8 +8,7 @@ if [ -z "$WORKSPACE_ROOT" ]; then
   WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 fi
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
-TASKS_ROOT="$SCRIPT_DIR/tasks"
-ARCHIVE_ROOT="$TASKS_ROOT/archive"
+ARCHIVE_ROOT="$SPRINTS_DIR/archive"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINT_BRANCH_PREFIX="ralph/sprint"
 LEGACY_ARCHIVE_DIR="$SCRIPT_DIR/archive"
@@ -147,7 +146,7 @@ ensure_sprint_structure() {
   stories_file="$(sprint_stories_file "$sprint")"
   stories_dir="$SPRINTS_DIR/$sprint/stories"
 
-  mkdir -p "$SPRINTS_DIR/$sprint" "$stories_dir" "$TASKS_ROOT/$sprint" "$ARCHIVE_ROOT/$sprint"
+  mkdir -p "$SPRINTS_DIR/$sprint" "$stories_dir"
 
   if [ ! -f "$stories_file" ]; then
     jq -n \
@@ -543,7 +542,7 @@ remove_sprint() {
   local sprint_raw="$1"
   shift
   local sprint hard_delete assume_yes drop_branch
-  local stories_file sprint_dir tasks_dir archive_dir stamp sprint_branch parent_branch active
+  local stories_file sprint_dir archive_dir stamp sprint_branch parent_branch active
 
   sprint="$(normalize_sprint_name "$sprint_raw")"
   [ -n "$sprint" ] || fail "Invalid sprint name."
@@ -563,7 +562,6 @@ remove_sprint() {
 
   stories_file="$(sprint_stories_file "$sprint")"
   sprint_dir="$SPRINTS_DIR/$sprint"
-  tasks_dir="$TASKS_ROOT/$sprint"
   [ -f "$stories_file" ] || fail "Sprint does not exist: $sprint"
 
   active="$(get_active_sprint || true)"
@@ -579,23 +577,21 @@ remove_sprint() {
   fi
 
   if [ "$hard_delete" -eq 1 ]; then
-    rm -rf "$sprint_dir" "$tasks_dir"
-    echo "Removed sprint directories permanently: $sprint"
+    rm -rf "$sprint_dir"
+    echo "Removed sprint permanently: $sprint"
   else
     stamp="$(date +%F)-${sprint}-removed"
-    archive_dir="$ARCHIVE_ROOT/sprints/$stamp"
+    archive_dir="$ARCHIVE_ROOT/$stamp"
     if [ -e "$archive_dir" ]; then
       archive_dir="${archive_dir}-$(date +%H%M%S)"
     fi
     mkdir -p "$archive_dir"
-    [ -d "$sprint_dir" ] && mv "$sprint_dir" "$archive_dir/sprint-def"
-    [ -d "$tasks_dir" ] && mv "$tasks_dir" "$archive_dir/sprint-tasks"
+    [ -d "$sprint_dir" ] && mv "$sprint_dir" "$archive_dir/sprint"
     cat > "$archive_dir/archive-manifest.txt" <<EOF
 action=remove-sprint
 sprint=$sprint
 removed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 source_sprint_dir=$sprint_dir
-source_tasks_dir=$tasks_dir
 EOF
     echo "Archived sprint to: $archive_dir"
   fi

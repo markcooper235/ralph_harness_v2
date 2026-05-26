@@ -400,7 +400,7 @@ reset_seed_example_backlog() {
 ensure_sprint_structure_local() {
   local sprint="$1"
   local stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
-  mkdir -p "$SCRIPT_DIR/sprints/$sprint/stories" "$SCRIPT_DIR/tasks/$sprint" "$SCRIPT_DIR/tasks/archive/$sprint"
+  mkdir -p "$SCRIPT_DIR/sprints/$sprint/stories"
   if [ ! -f "$stories_file" ]; then
     jq -n \
       --arg project "$(basename "$WORKSPACE_ROOT")" \

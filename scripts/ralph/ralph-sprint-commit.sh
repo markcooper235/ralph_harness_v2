@@ -5,8 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
-TASKS_DIR="$SCRIPT_DIR/tasks"
-ARCHIVE_DIR="$TASKS_DIR/archive/sprints"
+ARCHIVE_DIR="$SPRINTS_DIR/archive"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 ACTIVE_PRD_FILE="$SCRIPT_DIR/.active-prd"
 PRD_FILE="$SCRIPT_DIR/prd.json"
@@ -30,7 +29,7 @@ Behavior:
   2. Optionally runs fallow cleanup across completed stories
   3. Runs sprint-scoped verification by default, or full regression when requested
   4. Ensures sprint branch exists (ralph/sprint/<active-sprint>)
-  5. Archives sprint-level artifacts to scripts/ralph/tasks/archive/sprints/
+  5. Archives sprint-level artifacts to scripts/ralph/sprints/archive/
   6. Merges sprint branch into its recorded parent branch (or explicit target)
   7. Clears active Ralph sprint/prd state for next sprint/standalone run
 
