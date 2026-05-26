@@ -8,17 +8,23 @@ extract_tokens_from_log() {
   }
 
   awk '
-    function add_tokens_from_line(lower_line,    m) {
-      if (match(lower_line, /tokens used[[:space:]]*[:=]?[[:space:]]*([0-9]+)/, m)) {
-        sum += m[1]
+    function add_tokens_from_line(lower_line,    sub_str) {
+      if (match(lower_line, /tokens used[[:space:]]*[:=]?[[:space:]]*[0-9]+/)) {
+        sub_str = substr(lower_line, RSTART, RLENGTH)
+        match(sub_str, /[0-9]+$/)
+        sum += substr(sub_str, RSTART, RLENGTH) + 0
         return 1
       }
-      if (match(lower_line, /"total_tokens"[[:space:]]*:[[:space:]]*([0-9]+)/, m)) {
-        sum += m[1]
+      if (match(lower_line, /"total_tokens"[[:space:]]*:[[:space:]]*[0-9]+/)) {
+        sub_str = substr(lower_line, RSTART, RLENGTH)
+        match(sub_str, /[0-9]+$/)
+        sum += substr(sub_str, RSTART, RLENGTH) + 0
         return 1
       }
-      if (match(lower_line, /total tokens[[:space:]]*[:=]?[[:space:]]*([0-9]+)/, m)) {
-        sum += m[1]
+      if (match(lower_line, /total tokens[[:space:]]*[:=]?[[:space:]]*[0-9]+/)) {
+        sub_str = substr(lower_line, RSTART, RLENGTH)
+        match(sub_str, /[0-9]+$/)
+        sum += substr(sub_str, RSTART, RLENGTH) + 0
         return 1
       }
       return 0
@@ -28,8 +34,8 @@ extract_tokens_from_log() {
       gsub(/,/, "", lower)
 
       if (pending_tokens_used == 1) {
-        if (match(lower, /([0-9]+)/, m)) {
-          sum += m[1]
+        if (match(lower, /[0-9]+/)) {
+          sum += substr(lower, RSTART, RLENGTH) + 0
         }
         pending_tokens_used = 0
         next
@@ -57,17 +63,23 @@ extract_preloop_tokens_from_log() {
   }
 
   awk '
-    function add_tokens_from_line(lower_line,    m) {
-      if (match(lower_line, /tokens used[[:space:]]*[:=]?[[:space:]]*([0-9]+)/, m)) {
-        sum += m[1]
+    function add_tokens_from_line(lower_line,    sub_str) {
+      if (match(lower_line, /tokens used[[:space:]]*[:=]?[[:space:]]*[0-9]+/)) {
+        sub_str = substr(lower_line, RSTART, RLENGTH)
+        match(sub_str, /[0-9]+$/)
+        sum += substr(sub_str, RSTART, RLENGTH) + 0
         return 1
       }
-      if (match(lower_line, /"total_tokens"[[:space:]]*:[[:space:]]*([0-9]+)/, m)) {
-        sum += m[1]
+      if (match(lower_line, /"total_tokens"[[:space:]]*:[[:space:]]*[0-9]+/)) {
+        sub_str = substr(lower_line, RSTART, RLENGTH)
+        match(sub_str, /[0-9]+$/)
+        sum += substr(sub_str, RSTART, RLENGTH) + 0
         return 1
       }
-      if (match(lower_line, /total tokens[[:space:]]*[:=]?[[:space:]]*([0-9]+)/, m)) {
-        sum += m[1]
+      if (match(lower_line, /total tokens[[:space:]]*[:=]?[[:space:]]*[0-9]+/)) {
+        sub_str = substr(lower_line, RSTART, RLENGTH)
+        match(sub_str, /[0-9]+$/)
+        sum += substr(sub_str, RSTART, RLENGTH) + 0
         return 1
       }
       return 0
@@ -78,8 +90,8 @@ extract_preloop_tokens_from_log() {
       gsub(/,/, "", lower)
 
       if (pending_tokens_used == 1) {
-        if (match(lower, /([0-9]+)/, m)) {
-          sum += m[1]
+        if (match(lower, /[0-9]+/)) {
+          sum += substr(lower, RSTART, RLENGTH) + 0
         }
         pending_tokens_used = 0
         next

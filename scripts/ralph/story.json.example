@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "project": "MyApp",
+  "storyId": "S-001",
+  "title": "Add priority field to tasks",
+  "description": "Deliver a complete priority system: schema change, UI indicator, edit control, and filter — as a single independently shippable story.",
+  "branchName": "ralph/sprint-1/task-priority",
+  "sprint": "sprint-1",
+  "priority": 1,
+  "depends_on": [],
+  "status": "active",
+  "spec": {
+    "scope": "Add a priority column to the tasks table and surface it in the task card, edit modal, and filter bar.",
+    "out_of_scope": [
+      "Priority-based sorting or ranking algorithms",
+      "Bulk priority editing",
+      "Priority notification or alerting"
+    ],
+    "first_slice": {
+      "source": "db/schema.sql",
+      "destination": "src/components/TaskCard.tsx",
+      "entrypoint": "migrations/001_add_priority.sql"
+    },
+    "preserved_invariants": [
+      "Existing tasks default to 'medium' priority — no data loss or null values",
+      "Task list render performance is unchanged — no additional queries per card"
+    ],
+    "supporting_files": [
+      "package.json",
+      "tsconfig.json",
+      "db/schema.sql"
+    ],
+    "verification": [
+      "Typecheck passes",
+      "All existing tests pass",
+      "Priority badge visible on task cards in browser"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "T-01",
+      "title": "Add priority column to database schema",
+      "context": "Add a 'priority' column to the tasks table. Allowed values: 'high', 'medium', 'low'. Default: 'medium'. Create migration file at migrations/001_add_priority.sql. Update db/schema.sql to reflect the new column.",
+      "scope": [
+        "db/schema.sql",
+        "migrations/001_add_priority.sql"
+      ],
+      "acceptance": "Migration file exists, schema reflects priority column with correct default, typecheck passes.",
+      "checks": [
+        "test -f migrations/001_add_priority.sql",
+        "grep -q 'priority' db/schema.sql",
+        "npm run typecheck"
+      ],
+      "depends_on": [],
+      "status": "pending",
+      "passes": false
+    },
+    {
+      "id": "T-02",
+      "title": "Display priority badge on task cards",
+      "context": "Add a colored priority badge to TaskCard.tsx. Red=high, yellow=medium, gray=low. Badge must be visible without hover. Use existing CSS variables for colors. Add styles to src/styles/task-card.css.",
+      "scope": [
+        "src/components/TaskCard.tsx",
+        "src/styles/task-card.css"
+      ],
+      "acceptance": "Priority badge renders on each card with correct color. Typecheck passes. Existing card tests pass.",
+      "checks": [
+        "npm run typecheck",
+        "npm test -- --testPathPattern=TaskCard"
+      ],
+      "depends_on": ["T-01"],
+      "status": "pending",
+      "passes": false
+    },
+    {
+      "id": "T-03",
+      "title": "Add priority selector to task edit modal",
+      "context": "Add a priority dropdown to TaskEditModal.tsx. Show current priority as selected value. Save immediately on selection change via existing task update handler. Values: high, medium, low.",
+      "scope": [
+        "src/components/TaskEditModal.tsx"
+      ],
+      "acceptance": "Dropdown present in edit modal. Selection updates task priority. Typecheck passes.",
+      "checks": [
+        "npm run typecheck",
+        "npm test -- --testPathPattern=TaskEditModal"
+      ],
+      "depends_on": ["T-01"],
+      "status": "pending",
+      "passes": false
+    },
+    {
+      "id": "T-04",
+      "title": "Add priority filter to task list",
+      "context": "Add priority filter dropdown to TaskFilter.tsx with options: All, High, Medium, Low. Persist selection in URL params. Filter tasks in src/routes/tasks.tsx. Show empty state when no tasks match.",
+      "scope": [
+        "src/components/TaskFilter.tsx",
+        "src/routes/tasks.tsx"
+      ],
+      "acceptance": "Filter dropdown present. URL param preserved on reload. Empty state shown when no match. Typecheck passes.",
+      "checks": [
+        "npm run typecheck",
+        "npm test -- --testPathPattern=TaskFilter"
+      ],
+      "depends_on": ["T-02", "T-03"],
+      "status": "pending",
+      "passes": false
+    }
+  ],
+  "passes": false
+}

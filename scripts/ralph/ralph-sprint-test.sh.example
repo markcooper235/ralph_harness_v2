@@ -1,0 +1,15 @@
+#!/bin/bash
+# ralph-sprint-test.sh — Sprint regression gate.
+#
+# Called automatically by ralph-sprint-commit.sh before merging the sprint branch.
+# Exit 0 = sprint is clean and ready to merge.
+# Exit non-zero = regression found — fix before committing.
+#
+# Copy this file to ralph-sprint-test.sh and customize for your project.
+# This file is not run directly — only ralph-sprint-test.sh is.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# Replace with your project's full regression commands:
+npm run build && npm run lint && npm test

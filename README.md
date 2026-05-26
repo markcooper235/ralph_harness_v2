@@ -2,86 +2,125 @@
 
 ![Ralph](ralph.webp)
 
-Ralph is a Codex-native autonomous loop that keeps running `codex exec` in fresh context until a planned task is complete. Durable planning artifacts stay in git, while loop runtime state stays transient and gets archived at closeout.
+Ralph is a Codex-native autonomous loop that executes sprint stories as focused story-level Codex cycles. Planning artifacts are durable and committed; execution state stays transient.
 
-This repo is the current Ralph-for-Codex framework:
+Ralph uses story-local SpecKit artifacts under each story directory's `.specify/` folder. A repo-wide `specify init` step is optional and not required for normal Ralph workflows.
 
-- simpler operator flow: install, plan, run, commit
-- two real working modes: `standalone` and `sprint`
-- roadmap planning for multi-sprint work
-- automatic epic priming in sprint mode
-- handoff-driven completion and archive validation
-- light scope enforcement for explicitly file-scoped tasks
-- repo-local prompt extensions that survive framework reinstalls
+Framework source of truth:
 
-## What Changed
+- `scripts/ralph/` is the canonical runtime payload that gets installed into target repos
+- `install.sh` copies from `scripts/ralph/` into the target project's `scripts/ralph/`
+- repo-root files are installer, tests, skills, and maintainer assets only
 
-The framework is simpler than earlier Ralph variants:
+This repo is the Ralph-for-Codex framework — **story-task architecture**:
 
-- You do not manually stitch together the loop from separate low-level steps.
-- `ralph.sh` now handles normal sprint startup by auto-calling `ralph-prime.sh`.
-- Completion is wrapper-driven and canonicalized in `scripts/ralph/.completion-state.json`.
-- Per-iteration state is captured in structured `.iteration-handoff*.json` files, with transcripts preserved separately.
-- PRD markdown is durable and committed; `scripts/ralph/prd.json` and `scripts/ralph/progress.txt` are runtime-only and should remain untracked.
-- Sprint planning now has a first-class roadmap tool instead of relying on ad hoc manual backlog setup.
+- stories replace epics as the sprint-level planning unit
+- each story is a self-contained task container (`story.json`) with binary acceptance checks
+- SpecKit integration produces specifications and implementation plans before execution
+- each story runs in one primary Codex session, with shell verification after the cycle
+- acceptance checks are validated by shell, not AI
+- merged story branches are cleaned up automatically after each story passes
+
+## Table of Contents
+
+- [Current Process](#current-process)
+  - [Sprint Workflow](#sprint-workflow)
+  - [Multi-Sprint Workflow](#multi-sprint-workflow)
+  - [Standalone (PRD Import)](#standalone-prd-import)
+- [Quick Start](#quick-start)
+- [Core Capabilities](#core-capabilities)
+- [Command Surface](#command-surface)
+- [Runtime Model](#runtime-model)
+- [Smoke Testing](#smoke-testing-the-framework)
+- [Key Files](#key-files)
+- [Notes](#notes)
+- [References](#references)
+
+---
 
 ## Current Process
 
-Ralph has two operator-facing workflows.
+Ralph has one primary workflow: **sprint mode**. A standalone PRD can be imported into sprint format when needed.
 
-### 1. Standalone
-
-Use this when the task is a single bounded piece of work.
+### Sprint Workflow
 
 ```bash
+# 1. Install and validate
 bash /path/to/ralph/install.sh
 ./scripts/ralph/doctor.sh
-./scripts/ralph/ralph-prd.sh --feature "Describe the task"
-./scripts/ralph/ralph.sh 10
-./scripts/ralph/ralph-commit.sh
-```
 
-What happens:
+# 2. Plan a roadmap (creates sprints and stories.json backlog)
+./scripts/ralph/ralph-roadmap.sh --vision "Describe the target state"
 
-- `ralph-prd.sh` generates durable PRD markdown and transient `prd.json`
-- `ralph.sh` runs one story at a time with fresh Codex context
-- targeted verification runs each iteration
-- full verification runs before completion
-- `ralph-commit.sh` archives the run, merges to the base branch, and resets runtime state
-
-### 2. Sprint
-
-Use this when the work needs an ordered backlog of epics.
-
-```bash
-bash /path/to/ralph/install.sh
-./scripts/ralph/doctor.sh
-./scripts/ralph/ralph-roadmap.sh --vision "Describe the future-state roadmap"
+# 3. Check sprint readiness
 ./scripts/ralph/ralph-sprint.sh status
-./scripts/ralph/ralph.sh 10
-./scripts/ralph/ralph-commit.sh
-```
 
-Then repeat:
+# 4. Prepare story task containers
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
 
-```bash
-./scripts/ralph/ralph.sh 10
-./scripts/ralph/ralph-commit.sh
-```
+# 5. Mark the sprint ready, then activate it
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh use sprint-1
 
-When the sprint backlog is done:
+# 6. Execute the sprint
+./scripts/ralph/ralph.sh
 
-```bash
+# 7. Close the sprint
 ./scripts/ralph/ralph-sprint-commit.sh
 ```
 
 What happens:
 
-- `ralph-roadmap.sh` creates or refines sprint backlogs from a broad vision
-- `ralph.sh` auto-primes the next eligible epic through `ralph-prime.sh`
-- epic PRD markdown can be generated from `promptContext` when needed
-- each completed epic is archived and merged into the sprint branch
-- sprint closeout merges the sprint branch into `main` or `master`
+- `ralph-roadmap.sh` decomposes a vision into sprint backlogs (`stories.json`)
+- `ralph-story.sh prepare-all --sprint <name>` runs SpecKit analysis and generates `story.json` task containers
+- `ralph-story.sh prep-status [--details] [--story <ID>]` inspects the latest prep journal and per-story prep stages
+- `ralph.sh` picks up the next eligible story, runs it via `ralph-story-run.sh`, validates binary checks, and merges the story branch back to the sprint branch
+- `ralph-sprint-commit.sh` runs sprint-scoped verification by default, archives sprint artifacts, and merges to `main`/`master`
+
+### Multi-Sprint Workflow
+
+After sprint 1 completes, activate and run subsequent sprints:
+
+```bash
+# Sprint 1
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh use sprint-1
+./scripts/ralph/ralph.sh
+./scripts/ralph/ralph-sprint-commit.sh          # merges sprint-1 branch to main
+
+# Sprint 2
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-2
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-2
+./scripts/ralph/ralph-sprint.sh use sprint-2    # activate the next sprint
+./scripts/ralph/ralph.sh                        # execute sprint-2
+./scripts/ralph/ralph-sprint-commit.sh          # merges sprint-2 branch to main
+```
+
+Or use `next --activate` to automatically select the next ready sprint:
+
+```bash
+./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-3
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-3
+./scripts/ralph/ralph-sprint.sh next --activate
+./scripts/ralph/ralph.sh
+./scripts/ralph/ralph-sprint-commit.sh
+```
+
+`ralph-sprint-commit.sh` closes the sprint branch and merges it to `main`/`master`. The previous sprint must be closed before a new one can be activated.
+
+### Standalone (PRD Import)
+
+For single-feature work using an existing `prd.json`:
+
+```bash
+./scripts/ralph/ralph-story.sh import-prd scripts/ralph/prd.json
+./scripts/ralph/ralph-story.sh prepare-all
+./scripts/ralph/ralph.sh
+./scripts/ralph/ralph-sprint-commit.sh
+```
+
+---
 
 ## Quick Start
 
@@ -99,6 +138,7 @@ Optional global installs:
 ```bash
 bash /path/to/ralph/install.sh --install-skills
 bash /path/to/ralph/install.sh --install-prompts
+bash /path/to/ralph/install.sh
 ```
 
 Prerequisites:
@@ -106,139 +146,259 @@ Prerequisites:
 - [Codex CLI](https://github.com/openai/codex) installed and authenticated
 - `jq`
 - a git repository
+- SpecKit CLI (`specify`) — required for story preparation (bootstrapped repo-locally during install)
+
+---
 
 ## Core Capabilities
 
 ### Planning
 
-- `ralph-prd.sh` creates standalone PRDs with an editor-first or CLI-first intake flow
-- optional compact planning mode exists for truly tiny, tightly scoped tasks: `--compact` or `RALPH_PRD_COMPACT=1`
-- compact mode auto-selection is intentionally conservative
-- `ralph-roadmap.sh` creates or refines a durable roadmap in `scripts/ralph/roadmap-source.md`
-- roadmap planning decomposes work into sprint-safe epics with effort scores `1`, `2`, `3`, or `5`
+- `ralph-roadmap.sh` creates or refines a durable roadmap and seeds sprint `stories.json` backlogs
+- roadmap planning decomposes work into sprint-safe stories with effort scores `1`, `2`, `3`, or `5`
 - sprint backlogs carry `capacityTarget` and `capacityCeiling`
-- roadmap-managed epics and local ad hoc epics are tracked separately so refinement is additive by default
+- roadmap-managed stories and local ad hoc stories are tracked separately so refinement is additive
+
+### Story Preparation
+
+- `ralph-story.sh specify <ID>` runs three-phase SpecKit analysis (`specify → plan → tasks`) and writes artifacts to `.specify/`
+- `ralph-story.sh generate <ID>` converts SpecKit artifacts to a `story.json` task container
+- `ralph-story.sh prepare-all` runs both phases for all pending stories, validates health, and promotes healthy stories to `ready`
+- `ralph-story.sh prep-status` surfaces the latest prep journal, stage status, durations, and skip reasons for operators
+- `ralph-story.sh health [ID]` validates task counts, acceptance checks, dependency integrity, and check syntax
 
 ### Execution
 
-- every Ralph iteration is a fresh Codex run with clean context
-- `ralph.sh` works story-by-story, not task-batch-by-task-batch
-- sprint mode normally needs no manual `ralph-prime.sh` or `start-next`
-- completion is based on observable state, not fragile final-message wording
-- Ralph writes `.completion-state.json` itself when completion is stable
-- loop state is handoff-driven via `.iteration-handoff-iter-*.json` and `.iteration-handoff-latest.json`
+- `ralph.sh` loops over eligible stories: `start-next → ralph-story-run.sh → repeat`
+- `ralph-story-run.sh` runs one primary Codex cycle per story; acceptance `checks[]` are evaluated by shell after the cycle
+- `ralph-story-run.sh` builds a deterministic execution bundle per story and uses it as the primary model context instead of broad repo rediscovery
+- sprint and story runtime journals are recorded under `scripts/ralph/runtime/`, kept out of model context by default, and pruned to the most recent 3 run directories
+- targeted remediation retries up to `--max-retries` times only when the primary cycle leaves correctable check failures
+- remediation prompts include compact failed-check summaries only when checks fail; full logs stay on disk
+- when all tasks pass, the story branch is merged to the sprint branch and deleted automatically
+- `ralph-fallow.sh` provides a scoped code-quality gate (dead code, duplication, lint) that can be run explicitly or during sprint closeout
 
 ### Verification
 
-- `ralph-verify.sh --targeted` runs typecheck, lint, and related tests for changed files
-- targeted verification falls back to the full suite when source changed but no related tests can be inferred
-- `ralph-verify.sh --full` is the final regression gate
-- known unrelated baseline failures can be listed in `scripts/ralph/known-test-baseline-failures.txt`
-- UI work can include browser/runtime verification without widening the requested source-edit scope
+- each task's `checks[]` are binary shell expressions (exit 0 = pass)
+- the fallow gate is available as an explicit quality pass and can be run during sprint closeout
+- `ralph-sprint-commit.sh` uses sprint-scoped verification by default and supports `--full-regression` for repo-wide closeout
+- `ralph-verify.sh --task`, `--story-scope`, and `--sprint` scope verification to the current Ralph surface
+- `ralph-verify.sh --full-regression` runs the full suite with known baseline failures filtered out
 
-### Scope Control
+### Sprint Management
 
-- if the PRD clearly says a task is limited to named files, Ralph enforces that scope at loop time
-- structured `scopePaths` in `prd.json` take priority over text inference
-- verification and test files may expand outside source scope when that expansion is only for verification
-- helper scripts, config files, fixtures, and package metadata should not be placed in `scopePaths` unless the task explicitly requires them
+- `ralph-sprint.sh create <name>` creates a new sprint scaffold
+- `ralph-sprint.sh status` shows active sprint, story readiness, and active story
+- `ralph-sprint.sh mark-ready <name>` promotes a sprint once all stories are ready
+- `ralph-sprint.sh use <name>` activates a sprint (previous sprint must be closed)
+- `ralph-sprint.sh next [--activate]` selects and optionally activates the next ready sprint
 
 ### Closeout
 
-- `ralph-commit.sh` validates completion, archives artifacts, merges, and syncs epic status in sprint mode
-- `ralph-sprint-commit.sh` closes the sprint and merges the sprint branch
-- `ralph-archive.sh` stores runtime evidence under `scripts/ralph/tasks/archive/...`
-- merged source branches are deleted by default; pass `--keep` to retain them
+- `ralph-sprint-commit.sh` validates all stories are terminal, archives sprint artifacts, and merges the sprint branch
+- merged sprint branches are deleted by default; pass `--keep` to retain
+- `ralph-sprint-migrate.sh` converts a sprint from the legacy epic/PRD format to story-task format
 
-### Repo-local Extensions
+### Execution Baseline
 
-- keep repo-specific behavior in `scripts/ralph/prompt.local.md`
-- `ralph.sh` supports marker-based prompt injection with `<!-- RALPH:LOCAL:<NAME> -->`
-- empty local prompt files are ignored
-- legacy non-marker local prompt content falls back to append mode
-- framework reinstall does not overwrite `prompt.local.md`
+- keep shared per-story execution guidance in `scripts/ralph/execution-baseline.md`
+- Ralph builds the story-specific execution prompt in `ralph-story-run.sh`
+- repo-specific behavior should live in durable scripts and checked-in docs, not prompt overlay files
 
-See [README-local.md](README-local.md).
+See [scripts/ralph/README-local.md](scripts/ralph/README-local.md).
+
+---
 
 ## Command Surface
 
 ```bash
 # Install / validate
-./install.sh --project /path/to/project
-./doctor.sh
-
-# Standalone planning
-./ralph-prd.sh
-./ralph-prd.sh --feature "Add saved filters" --constraints "Use existing schema" --no-questions
+./install.sh [--project PATH] [--dest RELDIR] [--force] [--install-skills] [--install-prompts] [--install-speckit] [--skip-git-check]
+./scripts/ralph/doctor.sh
 
 # Roadmap / sprint planning
-./ralph-roadmap.sh --vision "Roadmap from current state to target state"
-./ralph-roadmap.sh --refine --revision-note "Adjust after new findings"
-./ralph-sprint.sh status
-./ralph-sprint.sh next
-./ralph-sprint.sh next --activate
-./ralph-sprint.sh create sprint-2
-./ralph-sprint.sh use sprint-1
+./scripts/ralph/ralph-roadmap.sh --vision "Roadmap from current state to target state"
+./scripts/ralph/ralph-roadmap.sh --refine --revision-note "Adjust after new findings"
+./scripts/ralph/ralph-sprint.sh list
+./scripts/ralph/ralph-sprint.sh create sprint-2
+./scripts/ralph/ralph-sprint.sh status
+./scripts/ralph/ralph-sprint.sh use sprint-1
+./scripts/ralph/ralph-sprint.sh mark-ready sprint-1
+./scripts/ralph/ralph-sprint.sh next [--activate]
+./scripts/ralph/ralph-sprint.sh branch sprint-1
 
-# Epic helpers
-./ralph-epic.sh list
-./ralph-epic.sh next
-./ralph-epic.sh start-next
-./ralph-epic.sh add --title "My Epic" --effort 3 --prompt-context "Planning context"
+# Story management
+./scripts/ralph/ralph-story.sh list
+./scripts/ralph/ralph-story.sh add --title "My Story" --goal "..." --prompt-context "..."
+./scripts/ralph/ralph-story.sh specify S-001
+./scripts/ralph/ralph-story.sh specify-all [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh generate S-001
+./scripts/ralph/ralph-story.sh generate-all [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh prepare-all [--sprint NAME] [--force] [--jobs N]
+./scripts/ralph/ralph-story.sh prep-status [--details] [--story ID]
+./scripts/ralph/ralph-story.sh health [S-001]
+./scripts/ralph/ralph-story.sh health-all
+./scripts/ralph/ralph-story.sh show S-001
+./scripts/ralph/ralph-story.sh tasks S-001
+./scripts/ralph/ralph-story.sh set-status S-001 planned
+./scripts/ralph/ralph-story.sh abandon S-001 [reason]
+./scripts/ralph/ralph-story.sh import-prd [PATH]
+./scripts/ralph/ralph-story.sh start-next
 
-# Spec helpers
-./ralph-spec-check.sh scripts/ralph/tasks/prds/my-prd.md
-./ralph-spec-strengthen.sh scripts/ralph/tasks/prds/my-prd.md
+# Loop / execution
+./scripts/ralph/ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
+./scripts/ralph/ralph-story-run.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
+./scripts/ralph/ralph-status.sh
 
-# Loop / verification / closeout
-./ralph.sh 10
-./ralph-verify.sh --targeted
-./ralph-verify.sh --full
-./ralph-commit.sh
-./ralph-sprint-commit.sh
-./ralph-archive.sh
-./ralph-cleanup.sh --force
+# Verification
+./scripts/ralph/ralph-verify.sh [--targeted|--task|--story-scope|--sprint|--full-regression]
+
+# Code quality
+./scripts/ralph/ralph-fallow.sh [--story PATH] [--dry-run] [--no-autofix]
+
+# Sprint closeout
+./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression]
+
+# Migration from legacy epic/PRD format
+./scripts/ralph/ralph-sprint-migrate.sh [--sprint NAME] [--dry-run] [--force]
+
+# Recovery
+./scripts/ralph/ralph-cleanup.sh --force
 ```
+
+---
 
 ## Runtime Model
 
-Durable artifacts:
+### File structure
 
-- PRD markdown under `scripts/ralph/tasks/...`
-- roadmap source and sprint backlog files
+```
+scripts/ralph/
+├── sprints/
+│   └── sprint-1/
+│       ├── stories.json                   # Sprint story backlog
+│       └── stories/
+│           └── S-001/
+│               ├── story.json             # Task container (committed)
+│               └── .specify/              # SpecKit artifacts (committed)
+│                   ├── input.md
+│                   ├── spec.md
+│                   ├── plan.md
+│                   └── tasks.md
+├── .cache/
+│   └── specify/
+│       └── repo-briefing.md               # Cached project briefing for SpecKit prep (untracked in the framework repo)
+├── roadmap.json                           # Structured roadmap data
+├── roadmap.md                             # Rendered roadmap
+├── roadmap-source.md                      # Durable roadmap input (committed)
+├── runtime/                               # Untracked sprint/story execution journals
+│   ├── prep-runs/
+│   │   └── <timestamp>-<sprint>/
+│   │       ├── prepare-run.json
+│   │       └── S-001-specify.log
+│   └── sprint-runs/
+│       └── <timestamp>-<sprint>/
+│           ├── sprint.log
+│           ├── sprint-run.json
+│           └── stories/
+│               └── S-001/
+│                   ├── .exec/
+│                   │   ├── summary.md
+│                   │   ├── files.json
+│                   │   └── commands.json
+│                   ├── primary.log
+│                   ├── remediation-1.log
+│                   ├── story-summary.json
+│                   └── checks/
+│                       ├── T-01-check-1.stderr.txt
+│                       ├── T-01-check-1.stdout.txt
+│                       └── T-01-failing-checks.json
+├── tasks/
+│   └── archive/
+│       └── sprints/                       # Archived sprint metadata
+├── execution-baseline.md                  # Base execution guidance used every story run
+└── ralph-sprint-test.sh                   # Optional project regression gate
+```
+
+### Durable artifacts (committed)
+
+- `stories.json` — sprint story backlog
+- `story.json` — task container with acceptance checks
+- `.specify/` — SpecKit artifacts (spec.md, plan.md, tasks.md)
+- `roadmap-source.md`, `roadmap.json`, `roadmap.md`
 - git history
-- archived run evidence under `scripts/ralph/tasks/archive/...`
+- archived sprint artifacts under `tasks/archive/sprints/`
 
-Transient runtime artifacts:
+### Transient artifacts (untracked)
 
-- `scripts/ralph/prd.json`
+- `scripts/ralph/.active-sprint`
+- `scripts/ralph/.workflow-lock`
+- `scripts/ralph/prd.json` (when used via import-prd)
 - `scripts/ralph/progress.txt`
-- `scripts/ralph/.completion-state.json`
 - `scripts/ralph/.active-prd`
-- `scripts/ralph/.iteration-log*.txt`
-- `scripts/ralph/.iteration-handoff*.json`
-- `.playwright-cli/`
+- `scripts/ralph/.cache/` cached SpecKit preparation briefings in installed repos
+- `.cache/specify/` cached SpecKit preparation briefings in the framework repo
+- `scripts/ralph/runtime/` sprint and story journals (retained for the most recent 3 runs)
+- per-story `.task-log-*.txt`, `.fallow-report.json`, `.fallow-autofix.txt`
 
-Transient runtime files should stay untracked. Ralph will fail or clean up when they drift into git tracking.
+Transient files must stay untracked. Ralph will fail or clean up when they drift into git.
+
+### Branch model
+
+- sprint branches: `ralph/sprint/<sprint-name>` — lives until `ralph-sprint-commit.sh`
+- story branches: `ralph/<sprint>/story-<S-XXX>` — merged and deleted after each story completes
+
+---
 
 ## Smoke Testing The Framework
 
-Run the install-repo E2E smoke suite in disposable repos:
+The primary end-to-end smoke test is `scripts/smoke/e2e-calendar.sh`. It exercises a complete two-sprint lifecycle across two real framework projects (NextJS and Angular), validating multi-sprint operation end-to-end.
+
+### e2e-calendar.sh
+
+Runs a Calendar + Todo app across two sprints and two project types:
+
+- **nextjs-calendar** — Real Next.js project scaffolded with `create-next-app` + Jest
+  - Sprint 1: domain layer (types, calendar service, todo service, barrel/module + integration test)
+  - Sprint 2: React components (CalendarView, TodoList, EventForm, AppComponent)
+- **angular-calendar** — Real Angular project scaffolded with `ng new` + Jest via ts-jest
+  - Sprint 1: domain services in `src/app/services/`, tested as `*.spec.ts`
+  - Sprint 2: standalone Angular components in `src/app/components/`
+
+Each project runs the full lifecycle:
+
+```
+install.sh → doctor.sh → ralph-sprint.sh create → ralph-story.sh add →
+story.json (framework-imported or --generated) → ralph-story.sh prepare-all →
+ralph-sprint.sh use → ralph.sh → ralph-status.sh → ralph-sprint-commit.sh →
+[sprint 2 setup] → ralph.sh → ralph-sprint-commit.sh → ralph-verify.sh
+```
+
+Sprint 2 is skipped for a project if sprint 1 did not commit successfully.
 
 ```bash
-bash scripts/smoke/e2e-sanity.sh --ci
-bash scripts/smoke/e2e-sanity.sh --with-loop
-bash scripts/smoke/e2e-sanity.sh --with-loop-standalone
-bash scripts/smoke/e2e-sanity.sh --with-loop-epic
-bash scripts/smoke/e2e-sanity.sh --with-loop --app-mode ui
+# Basic run (framework-imported story.json files, uses real Codex)
+bash scripts/smoke/e2e-calendar.sh
+
+# Keep work directory after run (always kept on failure)
+bash scripts/smoke/e2e-calendar.sh --keep
+
+# Override targeted remediation cycle count
+bash scripts/smoke/e2e-calendar.sh --max-retries 3
+
+# Use ralph-story.sh generate for story.json instead of framework-imported files
+# Exercises the full story generation pipeline; adds ~8 Codex sessions
+bash scripts/smoke/e2e-calendar.sh --generated
 ```
 
 Notes:
 
-- local runs default to real `codex`
-- `--ci` uses the mock Codex harness for deterministic checks
+- smoke tests run against real Codex by default; a `CODEX_BIN` override or mock harness can be used for CI
 - smoke telemetry reports token totals and iteration counts
 - benchmark history is stored under `scripts/smoke/.benchmarks/`
+
+---
 
 ## Key Files
 
@@ -246,34 +406,36 @@ Notes:
 |------|---------|
 | `install.sh` | Install Ralph into a target repo |
 | `doctor.sh` | Sanity-check a Ralph-enabled repo |
-| `ralph-prd.sh` | Create standalone PRD markdown and transient `prd.json` |
 | `ralph-roadmap.sh` | Create or refine the durable roadmap and seed sprint backlogs |
 | `ralph-sprint.sh` | Manage sprint containers and sprint readiness |
-| `ralph-epic.sh` | Inspect and adjust epic backlog sequencing |
-| `ralph-prime.sh` | Prime `prd.json` from sprint backlog state |
-| `ralph-spec-check.sh` | Check whether a PRD markdown file is loop-ready for Ralph |
-| `ralph-spec-strengthen.sh` | Strengthen a PRD markdown file in place until it is loop-ready |
-| `ralph.sh` | Run the clean-context Codex loop |
-| `ralph-verify.sh` | Run targeted or full verification |
-| `ralph-commit.sh` | Archive and merge one completed PRD run |
+| `ralph-story.sh` | Manage stories: specify, generate, health, start-next, and more |
+| `ralph-story-run.sh` | Execute the active story in one primary Codex cycle with shell verification |
+| `ralph.sh` | Sprint execution loop: start-next → ralph-story-run.sh → repeat |
+| `ralph-status.sh` | Show current sprint, story, branch, and loop state |
+| `ralph-verify.sh` | Run typecheck + lint + tests (--targeted or --full) |
+| `ralph-fallow.sh` | Code-quality gate: dead code, duplication, lint |
 | `ralph-sprint-commit.sh` | Archive and merge the completed sprint |
-| `ralph-archive.sh` | Archive current runtime artifacts |
-| `ralph-cleanup.sh` | Reset local Ralph runtime artifacts without archiving |
-| `prompt.md` | Shared base prompt used every iteration |
-| `prompt.standalone.md` | Standalone-mode overlay |
-| `prompt.sprint.md` | Sprint-mode overlay |
-| `prompt.local.md` | Repo-local prompt extensions |
-| `prd.json.example` | Example PRD format |
-| `epics.json.example` | Example sprint epic backlog format |
+| `ralph-sprint-migrate.sh` | Convert a sprint from legacy epic/PRD format to story-task format |
+| `ralph-cleanup.sh` | Reset local Ralph runtime state without archiving |
+| `ralph-sprint-test.sh` | Optional project-specific regression gate for explicit sprint closeout |
+| `execution-baseline.md` | Base execution guidance used every story run |
+| `story.json.example` | Example task container format |
+| `stories.json.example` | Example sprint story backlog format |
+
+---
 
 ## Notes
 
 - Fresh installs seed `sprint-1`; create more sprints only when needed.
-- `ralph-sprint.sh status` reports both `Active epic` and `Next epic`.
-- `ralph-sprint.sh next` skips pre-baseline roadmap sprints when their only remaining epics are `blocked`, so stale historic work does not outrank the current roadmap sprint.
-- `ralph-archive.sh` has no `--help`; invoking it performs an archive run.
-- OpenSpec conversion is optional and does not change core Ralph loop behavior.
-- Keep `prompt.md` small because every loop iteration pays for it again.
+- `ralph-sprint.sh status` reports both `Active story` and `Next story`.
+- `doctor.sh` checks that SpecKit (`specify` CLI) is installed and reachable.
+- SpecKit artifacts (`.specify/`) are committed — they are durable planning outputs, not transient state.
+- `ralph-sprint-test.sh` is optional. Copy from `ralph-sprint-test.sh.example` only when your repo wants an explicit project-specific sprint closeout gate.
+- `ralph-cleanup.sh --force` removes the workflow lock and transient state without archiving.
+- Keep `execution-baseline.md` terse because every story run includes it.
+- Migrating from the old epic/PRD format? Use `ralph-sprint-migrate.sh`.
+
+---
 
 ## References
 

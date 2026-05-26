@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Optional repo-local Ralph verification adapter.
+#
+# Copy this file to scripts/ralph/verify.local.sh and customize it for your repo.
+# Ralph will source it before running verification.
+#
+# Available hooks:
+#   ralph_verify_adapter_name
+#   ralph_verify_run_base_checks
+#   ralph_verify_discover_targeted_tests
+#   ralph_verify_run_targeted_tests
+#   ralph_verify_run_full_suite
+#
+# Helpful core helpers exposed by ralph-verify.sh:
+#   collect_changed_files
+#   collect_scope_files
+#   list_repo_test_files
+#
+# Example Node/TypeScript adapter:
+#
+# ralph_verify_adapter_name() {
+#   printf 'node\n'
+# }
+#
+# ralph_verify_run_base_checks() {
+#   echo "[ralph-verify] running typecheck"
+#   npm run typecheck
+#   QUALITY_CHECKS_RAN=1
+#
+#   echo "[ralph-verify] running lint"
+#   npm run lint
+#   QUALITY_CHECKS_RAN=1
+#
+#   TEST_SCRIPT="test"
+#   TEST_SCRIPT_SUPPORTS_TARGETING=1
+# }
+#
+# ralph_verify_run_targeted_tests() {
+#   echo "[ralph-verify] running targeted tests:"
+#   printf '%s\n' "$@" | sed 's/^/  - /'
+#   npm test -- --runInBand --runTestsByPath "$@"
+# }
+#
+# ralph_verify_run_full_suite() {
+#   echo "[ralph-verify] running full test suite"
+#   npm test -- --runInBand
+# }

@@ -10,15 +10,20 @@
 set -euo pipefail
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_SOURCE_DIR="$SOURCE_DIR/scripts/ralph"
+source "$RUNTIME_SOURCE_DIR/lib/codex-exec.sh"
 
 PROJECT_DIR="$(pwd)"
 DEST_DIR_REL="scripts/ralph"
 DEST_PARENT_REL="$(dirname "$DEST_DIR_REL")"
 FORCE=0
-WITH_EXAMPLE_PRD=1
 INSTALL_SKILLS=0
 INSTALL_PROMPTS=0
+INSTALL_SPECKIT=1
+MIGRATE_LEGACY=1
 SKIP_GIT_CHECK=0
+VERIFY_SETUP_MODE="auto"
+CODEX_BIN="${CODEX_BIN:-codex}"
 
 usage() {
   cat <<'EOF'
@@ -27,10 +32,14 @@ Install Ralph into a target project.
 Options:
   --project DIR         Project directory (default: current directory)
   --dest RELDIR         Install path relative to project (default: scripts/ralph)
-  --force               Overwrite existing prd.json and progress.txt (runner files always overwritten)
-  --no-example-prd      Do not create prd.json if missing
+  --force               Force overwrite of existing files
   --install-skills      Copy skills into ~/.codex/skills
   --install-prompts     Copy /command prompts to Global prompts directory
+  --install-speckit     Ensure the repo-local SpecKit CLI (specify) is installed
+  --no-install-speckit  Skip SpecKit bootstrap during install
+  --migrate-legacy      Migrate any legacy epics.json sprints to stories.json (default)
+  --no-migrate-legacy   Skip automatic legacy sprint migration during install
+  --verify-setup MODE   Configure verify.local.sh: auto|detect-only|ai|skip (default: auto)
   --skip-git-check      Allow installing outside a git repo
   -h, --help            Show help
 
@@ -60,12 +69,20 @@ while [[ $# -gt 0 ]]; do
       ;;
     --force)
       FORCE=1; shift;;
-    --no-example-prd)
-      WITH_EXAMPLE_PRD=0; shift;;
     --install-skills)
       INSTALL_SKILLS=1; shift;;
       --install-prompts)
       INSTALL_PROMPTS=1; shift;;
+    --install-speckit)
+      INSTALL_SPECKIT=1; shift;;
+    --no-install-speckit)
+      INSTALL_SPECKIT=0; shift;;
+    --migrate-legacy)
+      MIGRATE_LEGACY=1; shift;;
+    --no-migrate-legacy)
+      MIGRATE_LEGACY=0; shift;;
+    --verify-setup)
+      VERIFY_SETUP_MODE="${2:-}"; shift 2;;
     --skip-git-check)
       SKIP_GIT_CHECK=1; shift;;
     -h|--help)
@@ -81,6 +98,11 @@ require_cmd grep
 require_cmd mkdir
 require_cmd cat
 require_cmd find
+
+case "$VERIFY_SETUP_MODE" in
+  auto|detect-only|ai|skip) ;;
+  *) fail "--verify-setup must be one of: auto, detect-only, ai, skip" ;;
+esac
 
 if [ -z "$PROJECT_DIR" ]; then
   fail "--project requires a directory"
@@ -108,7 +130,7 @@ if [ "$SKIP_GIT_CHECK" -ne 1 ]; then
 fi
 
 mkdir -p "$DEST_DIR_REL"
-mkdir -p "$DEST_DIR_REL/lib" "$DEST_DIR_REL/templates"
+mkdir -p "$DEST_DIR_REL/bin" "$DEST_DIR_REL/lib" "$DEST_DIR_REL/templates"
 
 copy_file() {
   local src="$1"
@@ -130,101 +152,996 @@ copy_file_if_missing() {
   copy_file "$src" "$dst"
 }
 
-copy_file "$SOURCE_DIR/ralph.sh" "$DEST_DIR_REL/ralph.sh"
-copy_file "$SOURCE_DIR/ralph-prd.sh" "$DEST_DIR_REL/ralph-prd.sh"
-copy_file "$SOURCE_DIR/doctor.sh" "$DEST_DIR_REL/doctor.sh"
-copy_file "$SOURCE_DIR/ralph-archive.sh" "$DEST_DIR_REL/ralph-archive.sh"
-copy_file "$SOURCE_DIR/ralph-cleanup.sh" "$DEST_DIR_REL/ralph-cleanup.sh"
-copy_file "$SOURCE_DIR/ralph-commit.sh" "$DEST_DIR_REL/ralph-commit.sh"
-copy_file "$SOURCE_DIR/ralph-epic.sh" "$DEST_DIR_REL/ralph-epic.sh"
-copy_file "$SOURCE_DIR/ralph-roadmap.sh" "$DEST_DIR_REL/ralph-roadmap.sh"
-copy_file "$SOURCE_DIR/ralph-prime.sh" "$DEST_DIR_REL/ralph-prime.sh"
-copy_file "$SOURCE_DIR/ralph-spec-check.sh" "$DEST_DIR_REL/ralph-spec-check.sh"
-copy_file "$SOURCE_DIR/ralph-spec-strengthen.sh" "$DEST_DIR_REL/ralph-spec-strengthen.sh"
-copy_file "$SOURCE_DIR/ralph-sprint.sh" "$DEST_DIR_REL/ralph-sprint.sh"
-copy_file "$SOURCE_DIR/ralph-sprint-commit.sh" "$DEST_DIR_REL/ralph-sprint-commit.sh"
-copy_file "$SOURCE_DIR/ralph-verify.sh" "$DEST_DIR_REL/ralph-verify.sh"
-copy_file "$SOURCE_DIR/lib/editor-intake.sh" "$DEST_DIR_REL/lib/editor-intake.sh"
-copy_file "$SOURCE_DIR/templates/epic-intake.md" "$DEST_DIR_REL/templates/epic-intake.md"
-copy_file "$SOURCE_DIR/templates/prd-intake.md" "$DEST_DIR_REL/templates/prd-intake.md"
-copy_file "$SOURCE_DIR/prompt.md" "$DEST_DIR_REL/prompt.md"
-copy_file "$SOURCE_DIR/prompt.standalone.md" "$DEST_DIR_REL/prompt.standalone.md"
-copy_file "$SOURCE_DIR/prompt.sprint.md" "$DEST_DIR_REL/prompt.sprint.md"
-copy_file "$SOURCE_DIR/README-local.md" "$DEST_DIR_REL/README-local.md"
-copy_file "$SOURCE_DIR/new-local-extension.sh.example" "$DEST_DIR_REL/new-local-extension.sh.example"
-copy_file_if_missing "$SOURCE_DIR/prompt.local.md" "$DEST_DIR_REL/prompt.local.md"
-copy_file "$SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-test-baseline-failures.txt"
-copy_file "$SOURCE_DIR/prd.json.example" "$DEST_DIR_REL/prd.json.example"
-copy_file "$SOURCE_DIR/epics.json.example" "$DEST_DIR_REL/epics.json.example"
+collect_legacy_sprints() {
+  [ -d "$DEST_DIR_REL/sprints" ] || return 0
+  find "$DEST_DIR_REL/sprints" -mindepth 2 -maxdepth 2 -type f -name epics.json 2>/dev/null \
+    | while IFS= read -r epics_file; do
+        local sprint_dir sprint_name
+        sprint_dir="$(dirname "$epics_file")"
+        sprint_name="$(basename "$sprint_dir")"
+        if [ ! -f "$sprint_dir/stories.json" ]; then
+          printf '%s\n' "$sprint_name"
+        fi
+      done \
+    | sort -u
+}
+
+# Core story-task workflow
+copy_file "$RUNTIME_SOURCE_DIR/ralph.sh" "$DEST_DIR_REL/ralph.sh"
+copy_file "$RUNTIME_SOURCE_DIR/doctor.sh" "$DEST_DIR_REL/doctor.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint.sh" "$DEST_DIR_REL/ralph-sprint.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-commit.sh" "$DEST_DIR_REL/ralph-sprint-commit.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-migrate.sh" "$DEST_DIR_REL/ralph-sprint-migrate.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-story.sh" "$DEST_DIR_REL/ralph-story.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-story-run.sh" "$DEST_DIR_REL/ralph-story-run.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-fallow.sh" "$DEST_DIR_REL/ralph-fallow.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-fallow-run.sh" "$DEST_DIR_REL/ralph-fallow-run.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-roadmap.sh" "$DEST_DIR_REL/ralph-roadmap.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-status.sh" "$DEST_DIR_REL/ralph-status.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-cleanup.sh" "$DEST_DIR_REL/ralph-cleanup.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-verify.sh" "$DEST_DIR_REL/ralph-verify.sh"
+copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralph-sprint-test.sh.example"
+copy_file "$RUNTIME_SOURCE_DIR/execution-baseline.md" "$DEST_DIR_REL/execution-baseline.md"
+copy_file "$RUNTIME_SOURCE_DIR/lib/codex-exec.sh" "$DEST_DIR_REL/lib/codex-exec.sh"
+copy_file "$RUNTIME_SOURCE_DIR/lib/editor-intake.sh" "$DEST_DIR_REL/lib/editor-intake.sh"
+copy_file "$RUNTIME_SOURCE_DIR/lib/search.sh" "$DEST_DIR_REL/lib/search.sh"
+copy_file "$RUNTIME_SOURCE_DIR/lib/specify.sh" "$DEST_DIR_REL/lib/specify.sh"
+copy_file "$RUNTIME_SOURCE_DIR/bin/specify" "$DEST_DIR_REL/bin/specify"
+copy_file "$RUNTIME_SOURCE_DIR/templates/prd-intake.md" "$DEST_DIR_REL/templates/prd-intake.md"
+copy_file "$RUNTIME_SOURCE_DIR/README-local.md" "$DEST_DIR_REL/README-local.md"
+copy_file "$RUNTIME_SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/known-test-baseline-failures.txt"
+copy_file "$RUNTIME_SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
+copy_file "$RUNTIME_SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
+copy_file "$RUNTIME_SOURCE_DIR/verify.local.sh.example" "$DEST_DIR_REL/verify.local.sh.example"
+rm -f \
+  "$DEST_DIR_REL/ralph-task.sh" \
+  "$DEST_DIR_REL/ralph-prd.sh" \
+  "$DEST_DIR_REL/ralph-prime.sh" \
+  "$DEST_DIR_REL/ralph-epic.sh" \
+  "$DEST_DIR_REL/ralph-commit.sh" \
+  "$DEST_DIR_REL/ralph-archive.sh" \
+  "$DEST_DIR_REL/ralph-spec-check.sh" \
+  "$DEST_DIR_REL/ralph-spec-strengthen.sh"
 chmod +x \
   "$DEST_DIR_REL/ralph.sh" \
-  "$DEST_DIR_REL/ralph-prd.sh" \
   "$DEST_DIR_REL/doctor.sh" \
-  "$DEST_DIR_REL/ralph-archive.sh" \
-  "$DEST_DIR_REL/ralph-cleanup.sh" \
-  "$DEST_DIR_REL/ralph-commit.sh" \
-  "$DEST_DIR_REL/ralph-epic.sh" \
-  "$DEST_DIR_REL/ralph-roadmap.sh" \
-  "$DEST_DIR_REL/ralph-prime.sh" \
-  "$DEST_DIR_REL/ralph-spec-check.sh" \
-  "$DEST_DIR_REL/ralph-spec-strengthen.sh" \
   "$DEST_DIR_REL/ralph-sprint.sh" \
   "$DEST_DIR_REL/ralph-sprint-commit.sh" \
+  "$DEST_DIR_REL/ralph-sprint-migrate.sh" \
+  "$DEST_DIR_REL/ralph-story.sh" \
+  "$DEST_DIR_REL/ralph-story-run.sh" \
+  "$DEST_DIR_REL/ralph-fallow.sh" \
+  "$DEST_DIR_REL/ralph-fallow-run.sh" \
+  "$DEST_DIR_REL/ralph-roadmap.sh" \
+  "$DEST_DIR_REL/ralph-status.sh" \
+  "$DEST_DIR_REL/ralph-cleanup.sh" \
   "$DEST_DIR_REL/ralph-verify.sh" \
-  "$DEST_DIR_REL/lib/editor-intake.sh"
+  "$DEST_DIR_REL/lib/editor-intake.sh" \
+  "$DEST_DIR_REL/bin/specify"
 
-if [ "$WITH_EXAMPLE_PRD" -eq 1 ]; then
-  if [ ! -f "$DEST_DIR_REL/prd.json" ] || [ "$FORCE" -eq 1 ]; then
-    cat > "$DEST_DIR_REL/prd.json" <<'JSON'
-{
-  "project": "YourProject",
-  "branchName": "ralph/smoke",
-  "description": "Smoke test - verify Ralph + Codex loop works end-to-end",
-  "userStories": [
-    {
-      "id": "US-001",
-      "title": "Create smoke marker file",
-      "description": "As a developer, I want a smoke marker file so I can confirm Ralph executed.",
-      "acceptanceCriteria": [
-        "Create a new file at repo root named RALPH_SMOKE.txt with exactly: ok\\n",
-        "Commit the change",
-        "Update scripts/ralph/prd.json to set passes: true for US-001",
-        "Append a short entry to scripts/ralph/progress.txt",
-        "Typecheck passes"
-      ],
-      "priority": 1,
-      "passes": false,
-      "notes": "If this repo has no typecheck, treat this as: no build errors, and keep git status clean after commit."
-    }
+repo_has_files() {
+  local pattern="$1"
+  find . \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -path "./.next" -prune -o \
+    -path "./dist" -prune -o \
+    -path "./build" -prune -o \
+    -path "./coverage" -prune -o \
+    -path "./vendor" -prune -o \
+    -type f -name "$pattern" -print -quit 2>/dev/null | grep -q .
+}
+
+repo_has_nx_workspace() {
+  [ -f nx.json ] || return 1
+  find . \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -type f -name project.json -print -quit 2>/dev/null | grep -q .
+}
+
+select_json_runtime() {
+  if command -v python3 >/dev/null 2>&1; then
+    printf 'python3\n'
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    printf 'python\n'
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    printf 'node\n'
+    return 0
+  fi
+  return 1
+}
+
+json_relpath() {
+  local from_dir="$1"
+  local to_path="$2"
+  local runtime=""
+  runtime="$(select_json_runtime)" || return 1
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$from_dir" "$to_path" <<'PY'
+import os
+import sys
+print(os.path.relpath(sys.argv[2], sys.argv[1]))
+PY
+      ;;
+    node)
+      "$runtime" -e 'const path = require("node:path"); console.log(path.relative(process.argv[1], process.argv[2]));' "$from_dir" "$to_path"
+      ;;
+  esac
+}
+
+nx_typecheck_target_exists() {
+  local project_json="$1"
+  local runtime=""
+  runtime="$(select_json_runtime)" || return 1
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$project_json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], 'r', encoding='utf8') as handle:
+    data = json.load(handle)
+sys.exit(0 if isinstance(data.get('targets', {}).get('typecheck'), dict) else 1)
+PY
+      ;;
+    node)
+      "$runtime" -e 'const fs=require("node:fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(data.targets && data.targets.typecheck ? 0 : 1);' "$project_json"
+      ;;
+  esac
+}
+
+nx_project_root_from_config() {
+  local project_json="$1"
+  local runtime=""
+  runtime="$(select_json_runtime)" || return 1
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$project_json" <<'PY'
+import json
+import os
+import sys
+project_json = sys.argv[1]
+with open(project_json, 'r', encoding='utf8') as handle:
+    data = json.load(handle)
+root = data.get('root') or os.path.dirname(project_json)
+print(root)
+PY
+      ;;
+    node)
+      "$runtime" -e 'const fs=require("node:fs"); const path=require("node:path"); const file=process.argv[1]; const data=JSON.parse(fs.readFileSync(file, "utf8")); console.log(data.root || path.dirname(file));' "$project_json"
+      ;;
+  esac
+}
+
+write_nx_typecheck_tsconfig() {
+  local project_root="$1"
+  local tsconfig_target="$PROJECT_DIR/$project_root/tsconfig.typecheck.json"
+  local base_config=""
+  local next_env=""
+  local project_dir_abs="$PROJECT_DIR/$project_root"
+  local extend_rel=""
+  local next_env_rel=""
+  local src_types_rel=""
+
+  [ -f "$tsconfig_target" ] && return 0
+
+  if [ -f "$PROJECT_DIR/tsconfig.json" ]; then
+    base_config="$PROJECT_DIR/tsconfig.json"
+  elif [ -f "$PROJECT_DIR/tsconfig.base.json" ]; then
+    base_config="$PROJECT_DIR/tsconfig.base.json"
+  else
+    echo "WARN: Skipping Nx typecheck tsconfig for $project_root (no root tsconfig found)"
+    return 0
+  fi
+
+  extend_rel="$(json_relpath "$project_dir_abs" "$base_config")" || {
+    echo "WARN: Skipping Nx typecheck tsconfig for $project_root (could not compute relative path)"
+    return 0
+  }
+
+  if [ -f "$PROJECT_DIR/next-env.d.ts" ]; then
+    next_env="$PROJECT_DIR/next-env.d.ts"
+    next_env_rel="$(json_relpath "$project_dir_abs" "$next_env")"
+  fi
+
+  if [ -d "$PROJECT_DIR/src/types" ]; then
+    src_types_rel="$(json_relpath "$project_dir_abs" "$PROJECT_DIR/src/types")"
+  fi
+
+  mkdir -p "$project_dir_abs"
+  {
+    echo '{'
+    printf '  "extends": "%s",\n' "$extend_rel"
+    echo '  "include": ['
+    local first_entry=1
+    if [ -n "$next_env_rel" ]; then
+      printf '    "%s"' "$next_env_rel"
+      first_entry=0
+    fi
+    if [ -n "$src_types_rel" ]; then
+      if [ "$first_entry" -eq 0 ]; then
+        echo ','
+      fi
+      printf '    "%s/**/*.d.ts"' "$src_types_rel"
+      first_entry=0
+    fi
+    if [ "$first_entry" -eq 0 ]; then
+      echo ','
+    fi
+    cat <<'EOF'
+    "./**/*.ts",
+    "./**/*.tsx"
+  ],
+  "exclude": [
+    "./node_modules",
+    "./**/__tests__/**",
+    "./**/*.test.ts",
+    "./**/*.test.tsx",
+    "./**/*.spec.ts",
+    "./**/*.spec.tsx",
+    "./utility-tests/**"
   ]
 }
-JSON
-  fi
-fi
-
-if [ ! -f "$DEST_DIR_REL/progress.txt" ] || [ "$FORCE" -eq 1 ]; then
-  cat > "$DEST_DIR_REL/progress.txt" <<EOF
-# Ralph Progress Log
-Started: $(date)
----
 EOF
-fi
+  } > "$tsconfig_target"
+}
 
-# Sprint-aware bootstrap directories and default active sprint.
+add_nx_typecheck_target() {
+  local project_json="$1"
+  local project_root="$2"
+  local runtime=""
+  runtime="$(select_json_runtime)" || {
+    echo "WARN: Skipping Nx typecheck target for $project_json (no JSON runtime available)"
+    return 0
+  }
+
+  case "$runtime" in
+    python3|python)
+      "$runtime" - "$project_json" "$project_root" <<'PY'
+import json
+import sys
+project_json = sys.argv[1]
+project_root = sys.argv[2]
+with open(project_json, 'r', encoding='utf8') as handle:
+    data = json.load(handle)
+targets = data.setdefault('targets', {})
+if 'typecheck' not in targets:
+    targets['typecheck'] = {
+        'executor': 'nx:run-commands',
+        'options': {
+            'command': f'tsc -p {project_root}/tsconfig.typecheck.json --noEmit'
+        }
+    }
+with open(project_json, 'w', encoding='utf8') as handle:
+    json.dump(data, handle, indent=2)
+    handle.write('\n')
+PY
+      ;;
+    node)
+      "$runtime" -e 'const fs=require("node:fs"); const file=process.argv[1]; const root=process.argv[2]; const data=JSON.parse(fs.readFileSync(file, "utf8")); data.targets ||= {}; if (!data.targets.typecheck) { data.targets.typecheck = { executor: "nx:run-commands", options: { command: `tsc -p ${root}/tsconfig.typecheck.json --noEmit` } }; } fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");' "$project_json" "$project_root"
+      ;;
+  esac
+}
+
+configure_nx_typecheck_support() {
+  local runtime=""
+  local project_json=""
+  local project_root=""
+
+  repo_has_nx_workspace || return 0
+  runtime="$(select_json_runtime)" || {
+    echo "WARN: Nx workspace detected, but no Python/Node JSON runtime is available for typecheck scaffolding."
+    return 0
+  }
+
+  while IFS= read -r project_json; do
+    [ -n "$project_json" ] || continue
+    project_root="$(nx_project_root_from_config "$project_json" 2>/dev/null || true)"
+    [ -n "$project_root" ] || continue
+    [ "$project_root" = "." ] && continue
+
+    if nx_typecheck_target_exists "$project_json"; then
+      continue
+    fi
+
+    write_nx_typecheck_tsconfig "$project_root"
+    add_nx_typecheck_target "$project_json" "$project_root"
+    echo "Scaffolded Nx typecheck target for $project_root"
+  done < <(
+    find . \
+      -path "./.git" -prune -o \
+      -path "./node_modules" -prune -o \
+      -type f -name project.json -print 2>/dev/null \
+      | sed 's#^\./##' \
+      | sort
+  )
+}
+
+detect_repo_verification_profile() {
+  local node_score=0 python_score=0 go_score=0 rust_score=0 max_score=0 max_kind="" tie=0
+
+  [ -f package.json ] && node_score=$((node_score + 4))
+  repo_has_nx_workspace && node_score=$((node_score + 2))
+  [ -f tsconfig.json ] && node_score=$((node_score + 2))
+  repo_has_files "*.ts" && node_score=$((node_score + 1))
+  repo_has_files "*.tsx" && node_score=$((node_score + 1))
+  repo_has_files "*.js" && node_score=$((node_score + 1))
+
+  [ -f pyproject.toml ] && python_score=$((python_score + 4))
+  [ -f requirements.txt ] && python_score=$((python_score + 2))
+  [ -f setup.py ] && python_score=$((python_score + 2))
+  [ -f setup.cfg ] && python_score=$((python_score + 1))
+  repo_has_files "*.py" && python_score=$((python_score + 1))
+
+  [ -f go.mod ] && go_score=$((go_score + 4))
+  repo_has_files "*.go" && go_score=$((go_score + 1))
+
+  [ -f Cargo.toml ] && rust_score=$((rust_score + 4))
+  repo_has_files "*.rs" && rust_score=$((rust_score + 1))
+
+  for kind in node python go rust; do
+    local score=0
+    case "$kind" in
+      node) score="$node_score" ;;
+      python) score="$python_score" ;;
+      go) score="$go_score" ;;
+      rust) score="$rust_score" ;;
+    esac
+    if [ "$score" -gt "$max_score" ]; then
+      max_score="$score"
+      max_kind="$kind"
+      tie=0
+    elif [ "$score" -gt 0 ] && [ "$score" -eq "$max_score" ]; then
+      tie=1
+    fi
+  done
+
+  if [ "$max_score" -eq 0 ] || [ "$tie" -eq 1 ]; then
+    return 1
+  fi
+
+  printf '%s\n' "$max_kind"
+}
+
+write_verify_local_profile() {
+  local profile="$1"
+  local target="$2"
+
+  case "$profile" in
+    node)
+      cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf 'node\n'
+}
+
+ralph_verify_scope_files() {
+  collect_scope_files \
+    | sed '/^$/d' \
+    | sort -u
+}
+
+ralph_verify_code_files() {
+  ralph_verify_scope_files \
+    | awk '/\.(js|jsx|ts|tsx)$/'
+}
+
+ralph_verify_has_code_scope() {
+  [ -n "$(ralph_verify_code_files)" ]
+}
+
+ralph_verify_repo_has_eslint_config() {
+  find . \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -maxdepth 2 \
+    -type f \
+    \( -name "eslint.config.js" -o -name "eslint.config.mjs" -o -name "eslint.config.cjs" -o -name ".eslintrc" -o -name ".eslintrc.js" -o -name ".eslintrc.cjs" -o -name ".eslintrc.json" -o -name ".eslintrc.yaml" -o -name ".eslintrc.yml" \) \
+    -print -quit 2>/dev/null | grep -q .
+}
+
+ralph_verify_repo_has_nx_workspace() {
+  [ -f nx.json ]
+}
+
+ralph_verify_resolve_scoped_typecheck_projects() {
+  local code_files
+  code_files="$(ralph_verify_code_files)"
+  [ -n "$code_files" ] || return 0
+  ralph_verify_repo_has_nx_workspace || return 0
+  command -v node >/dev/null 2>&1 || return 0
+
+  mapfile -t project_configs < <(
+    find . \
+      -path "./.git" -prune -o \
+      -path "./node_modules" -prune -o \
+      -type f -name project.json -print 2>/dev/null \
+      | sed 's#^\./##' \
+      | sort
+  )
+  [ "${#project_configs[@]}" -gt 0 ] || return 0
+
+  printf '%s\n' "$code_files" \
+    | node - "${project_configs[@]}" <<'NODE'
+const fs = require('node:fs')
+const path = require('node:path')
+
+const configs = process.argv.slice(2)
+const scopedFiles = fs.readFileSync(0, 'utf8')
+  .split(/\r?\n/)
+  .map((entry) => entry.trim())
+  .filter(Boolean)
+  .map((entry) => entry.replace(/^\.\//, ''))
+
+const projects = configs
+  .map((configPath) => {
+    try {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      const name = data.name
+      const root = String(data.root || path.dirname(configPath)).replace(/^\.\//, '').replace(/\/$/, '')
+      const hasTypecheck = !!(data.targets && data.targets.typecheck)
+      return name && root && hasTypecheck ? { name, root } : null
+    } catch {
+      return null
+    }
+  })
+  .filter(Boolean)
+  .sort((left, right) => right.root.length - left.root.length)
+
+const matched = new Set()
+for (const file of scopedFiles) {
+  for (const project of projects) {
+    if (file === project.root || file.startsWith(`${project.root}/`)) {
+      matched.add(project.name)
+      break
+    }
+  }
+}
+
+process.stdout.write([...matched].sort().join('\n'))
+NODE
+}
+
+ralph_verify_resolve_nx_affected_typecheck_projects() {
+  local code_files files_csv raw_projects
+  [ "$MODE" = "sprint" ] || return 0
+  ralph_verify_repo_has_nx_workspace || return 0
+
+  code_files="$(ralph_verify_code_files)"
+  [ -n "$code_files" ] || return 0
+
+  files_csv="$(printf '%s\n' "$code_files" | paste -sd, -)"
+  [ -n "$files_csv" ] || return 0
+
+  if ! raw_projects="$(npx nx show projects --affected --withTarget=typecheck --files="$files_csv" --json 2>/dev/null)"; then
+    return 0
+  fi
+
+  printf '%s\n' "$raw_projects" \
+    | node -e 'const fs=require("node:fs"); const data=JSON.parse(fs.readFileSync(0, "utf8")); if (Array.isArray(data)) { process.stdout.write(data.filter((entry) => typeof entry === "string").sort().join("\n")); }'
+}
+
+ralph_verify_intersect_project_lists() {
+  local first_list="$1"
+  local second_list="$2"
+  [ -n "$first_list" ] || return 0
+  [ -n "$second_list" ] || return 0
+
+  comm -12 \
+    <(printf '%s\n' "$first_list" | sed '/^$/d' | sort -u) \
+    <(printf '%s\n' "$second_list" | sed '/^$/d' | sort -u)
+}
+
+ralph_verify_run_scoped_typecheck_or_workspace_fallback() {
+  local projects affected_projects filtered_affected_projects
+  if ! ralph_verify_has_code_scope; then
+    echo "[ralph-verify] skipping typecheck (no JS/TS scope files)"
+    return 0
+  fi
+
+  projects="$(ralph_verify_resolve_scoped_typecheck_projects)"
+  affected_projects="$(ralph_verify_resolve_nx_affected_typecheck_projects)"
+  filtered_affected_projects="$(ralph_verify_intersect_project_lists "$affected_projects" "$projects")"
+  if [ -n "$filtered_affected_projects" ]; then
+    echo "[ralph-verify] running Nx affected typecheck for projects:"
+    printf '%s\n' "$filtered_affected_projects" | sed 's/^/  - /'
+    npx nx run-many -t typecheck --projects="$(printf '%s' "$filtered_affected_projects" | paste -sd, -)"
+    QUALITY_CHECKS_RAN=1
+    return 0
+  fi
+
+  if [ -n "$affected_projects" ]; then
+    echo "[ralph-verify] running Nx affected typecheck for projects:"
+    printf '%s\n' "$affected_projects" | sed 's/^/  - /'
+    npx nx run-many -t typecheck --projects="$(printf '%s' "$affected_projects" | paste -sd, -)"
+    QUALITY_CHECKS_RAN=1
+    return 0
+  fi
+
+  if [ -n "$projects" ]; then
+    echo "[ralph-verify] running scoped Nx typecheck for projects:"
+    printf '%s\n' "$projects" | sed 's/^/  - /'
+    npx nx run-many -t typecheck --projects="$(printf '%s' "$projects" | paste -sd, -)"
+    QUALITY_CHECKS_RAN=1
+    return 0
+  fi
+
+  echo "[ralph-verify] scoped Nx typecheck unavailable for this scope; running workspace typecheck"
+  npm run typecheck
+  QUALITY_CHECKS_RAN=1
+}
+
+ralph_verify_run_scoped_lint() {
+  local code_files
+  code_files="$(ralph_verify_code_files)"
+  if [ -z "$code_files" ]; then
+    echo "[ralph-verify] skipping lint (no JS/TS scope files)"
+    return 0
+  fi
+
+  if ! ralph_verify_repo_has_eslint_config; then
+    echo "[ralph-verify] scoped ESLint unavailable (no ESLint config); running workspace lint"
+    npm run lint
+    QUALITY_CHECKS_RAN=1
+    return 0
+  fi
+
+  echo "[ralph-verify] running scoped lint:"
+  printf '%s\n' "$code_files" | sed 's/^/  - /'
+  mapfile -t lint_args < <(printf '%s\n' "$code_files")
+  npx eslint --ext .js,.jsx,.ts,.tsx "${lint_args[@]}"
+  QUALITY_CHECKS_RAN=1
+}
+
+ralph_verify_run_scope_guard_if_needed() {
+  case "$MODE" in
+    sprint|full-regression)
+      if npm_has_script "guard:legacy-runtime"; then
+        echo "[ralph-verify] running guard:legacy-runtime"
+        npm run guard:legacy-runtime
+        QUALITY_CHECKS_RAN=1
+      else
+        echo "[ralph-verify] skipping guard:legacy-runtime (script not defined)"
+      fi
+      ;;
+  esac
+}
+
+ralph_verify_discover_targeted_tests() {
+  local scoped tests tmp_tests source_path base stem dirname
+  scoped="$(ralph_verify_scope_files)"
+  [ -n "$scoped" ] || return 0
+
+  tests=""
+  tmp_tests="/tmp/ralph-local-targeted-tests.$$"
+  : > "$tmp_tests"
+
+  while IFS= read -r source_path; do
+    [ -n "$source_path" ] || continue
+    case "$source_path" in
+      *test.ts|*test.tsx|*test.js|*test.jsx|*spec.ts|*spec.tsx|*spec.js|*spec.jsx)
+        [ -f "$source_path" ] && tests+="$source_path"$'\n'
+        continue
+        ;;
+    esac
+
+    dirname="$(dirname "$source_path")"
+    base="$(basename "$source_path")"
+    stem="${base%.*}"
+
+    case "$source_path" in
+      src/app/*/page.tsx|src/app/*/page.ts|src/app/page.tsx|src/app/page.ts)
+        find "$dirname/__tests__" -maxdepth 1 -type f \( -name 'page.test.*' -o -name 'page.spec.*' \) 2>/dev/null || true
+        ;;
+      src/app/api/*/route.ts|src/app/api/*/route.tsx)
+        find "$dirname/__tests__" -maxdepth 1 -type f \( -name 'route.test.*' -o -name 'route.spec.*' \) 2>/dev/null || true
+        ;;
+      *)
+        list_repo_test_files | while IFS= read -r candidate; do
+          [ -n "$candidate" ] || continue
+          case "$candidate" in
+            *"/${stem}.test."*|*"/${stem}.spec."*)
+              printf '%s\n' "$candidate"
+              ;;
+          esac
+        done
+        ;;
+    esac >> "$tmp_tests"
+  done <<< "$scoped"
+
+  if [ -s "$tmp_tests" ]; then
+    tests+="$(sort -u "$tmp_tests")"$'\n'
+  fi
+  rm -f "$tmp_tests" || true
+
+  printf '%s' "$tests" | sed '/^$/d' | sort -u
+}
+
+ralph_verify_run_base_checks() {
+  TEST_SCRIPT="test"
+  TEST_SCRIPT_SUPPORTS_TARGETING=1
+
+  case "$MODE" in
+    task|story|sprint)
+      ralph_verify_run_scoped_typecheck_or_workspace_fallback
+      ralph_verify_run_scoped_lint
+      ralph_verify_run_scope_guard_if_needed
+      ;;
+    full-regression)
+      echo "[ralph-verify] running workspace typecheck"
+      npm run typecheck
+      QUALITY_CHECKS_RAN=1
+
+      echo "[ralph-verify] running full lint"
+      npm run lint
+      QUALITY_CHECKS_RAN=1
+
+      ralph_verify_run_scope_guard_if_needed
+      ;;
+    *)
+      echo "[ralph-verify] running workspace typecheck"
+      npm run typecheck
+      QUALITY_CHECKS_RAN=1
+
+      echo "[ralph-verify] running full lint"
+      npm run lint
+      QUALITY_CHECKS_RAN=1
+      ;;
+  esac
+}
+
+ralph_verify_run_targeted_tests() {
+  echo "[ralph-verify] running targeted tests:"
+  printf '%s\n' "$@" | sed 's/^/  - /'
+  npm test -- --runInBand --runTestsByPath "$@"
+}
+
+ralph_verify_run_full_suite() {
+  local ignore_re
+  echo "[ralph-verify] running full test suite"
+  ignore_re="$(build_ignore_regex || true)"
+  if [ -n "$ignore_re" ]; then
+    echo "[ralph-verify] applying known baseline ignore patterns from $IGNORE_FILE"
+    npm test -- --runInBand --testPathIgnorePatterns "$ignore_re"
+  else
+    npm test -- --runInBand
+  fi
+}
+EOF
+      ;;
+    python)
+      cat > "$target" <<EOF
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf '$profile\n'
+}
+
+ralph_verify_run_base_checks() {
+  default_run_base_checks
+}
+
+ralph_verify_discover_targeted_tests() {
+  default_discover_targeted_tests
+}
+
+ralph_verify_run_targeted_tests() {
+  default_run_targeted_tests "\$@"
+}
+
+ralph_verify_run_full_suite() {
+  default_run_full_suite
+}
+EOF
+      ;;
+    go)
+      cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf 'go\n'
+}
+
+ralph_verify_run_base_checks() {
+  if command -v golangci-lint >/dev/null 2>&1; then
+    echo "[ralph-verify] running golangci-lint"
+    golangci-lint run ./...
+    QUALITY_CHECKS_RAN=1
+  else
+    echo "[ralph-verify] skipping golangci-lint (tool not available)"
+  fi
+}
+
+ralph_verify_discover_targeted_tests() {
+  local changed_file packages=()
+
+  while IFS= read -r changed_file; do
+    [ -n "$changed_file" ] || continue
+    case "$changed_file" in
+      *.go)
+        packages+=("./$(dirname "$changed_file")")
+        ;;
+    esac
+  done < <(collect_changed_files)
+
+  if [ "${#packages[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  printf '%s\n' "${packages[@]}" | sed 's#/\.$#.#' | sort -u
+}
+
+ralph_verify_run_targeted_tests() {
+  if [ "$#" -eq 0 ]; then
+    ralph_verify_run_full_suite
+    return 0
+  fi
+
+  echo "[ralph-verify] running targeted tests:"
+  printf '%s\n' "$@" | sed 's/^/  - /'
+  go test "$@"
+}
+
+ralph_verify_run_full_suite() {
+  echo "[ralph-verify] running full test suite"
+  go test ./...
+}
+EOF
+      ;;
+    rust)
+      cat > "$target" <<'EOF'
+#!/usr/bin/env bash
+
+ralph_verify_adapter_name() {
+  printf 'rust\n'
+}
+
+ralph_verify_run_base_checks() {
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "[ralph-verify] skipping cargo base checks (cargo not available)"
+    return 0
+  fi
+
+  echo "[ralph-verify] running cargo fmt --check"
+  cargo fmt --check
+  QUALITY_CHECKS_RAN=1
+
+  echo "[ralph-verify] running cargo clippy"
+  cargo clippy --all-targets --all-features -- -D warnings
+  QUALITY_CHECKS_RAN=1
+}
+
+ralph_verify_discover_targeted_tests() {
+  return 0
+}
+
+ralph_verify_run_targeted_tests() {
+  echo "[ralph-verify] targeted Rust selection is not configured; falling back to full suite"
+  ralph_verify_run_full_suite
+}
+
+ralph_verify_run_full_suite() {
+  echo "[ralph-verify] running full test suite"
+  cargo test --all-features
+}
+EOF
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  chmod +x "$target"
+}
+
+render_verify_ai_prompt() {
+  local target="$1"
+  local top_level=""
+
+  top_level="$(find . \
+    -maxdepth 2 \
+    -path "./.git" -prune -o \
+    -path "./node_modules" -prune -o \
+    -path "./.next" -prune -o \
+    -path "./dist" -prune -o \
+    -path "./build" -prune -o \
+    -type f -print 2>/dev/null | sort | sed 's#^\./##' | head -n 120)"
+
+  cat <<EOF
+Create a Ralph verification adapter for this repository.
+
+Write ONLY the raw shell contents for:
+$target
+
+Requirements:
+- Output shell only. No markdown fences.
+- Define these functions:
+  - ralph_verify_adapter_name
+  - ralph_verify_run_base_checks
+  - ralph_verify_discover_targeted_tests
+  - ralph_verify_run_targeted_tests
+  - ralph_verify_run_full_suite
+- Use the repo's standard verification tools and existing scripts when possible.
+- Prefer stable project commands already implied by manifests and config files.
+- Use helpers already provided by scripts/ralph/ralph-verify.sh when helpful:
+  collect_changed_files, collect_scope_files, list_repo_test_files, default_run_base_checks,
+  default_discover_targeted_tests, default_run_targeted_tests, default_run_full_suite,
+  build_ignore_regex, npm_has_script, select_node_test_script, run_selected_node_test_script,
+  detect_python_bin, python_has_module, run_python_module_or_cmd.
+- Keep targeted verification conservative. If precise targeting is unclear, fall back to the full suite.
+
+Repository file sample:
+$top_level
+EOF
+}
+
+strip_markdown_fences() {
+  local source_file="$1"
+  local target_file="$2"
+
+  if head -n 1 "$source_file" | grep -q '^```'; then
+    sed '/^```/d' "$source_file" > "$target_file"
+  else
+    cp "$source_file" "$target_file"
+  fi
+}
+
+generate_verify_local_with_ai() {
+  local target="$1"
+  local raw_tmp cleaned_tmp prompt
+
+  command -v "$CODEX_BIN" >/dev/null 2>&1 || return 1
+  raw_tmp="$(mktemp)"
+  cleaned_tmp="$(mktemp)"
+  prompt="$(render_verify_ai_prompt "$target")"
+
+  if ! codex_exec_prompt "$prompt" "$PROJECT_DIR" > "$raw_tmp"; then
+    rm -f "$raw_tmp" "$cleaned_tmp"
+    return 1
+  fi
+
+  strip_markdown_fences "$raw_tmp" "$cleaned_tmp"
+  if ! grep -q 'ralph_verify_run_full_suite' "$cleaned_tmp"; then
+    rm -f "$raw_tmp" "$cleaned_tmp"
+    return 1
+  fi
+
+  mv "$cleaned_tmp" "$target"
+  chmod +x "$target"
+  rm -f "$raw_tmp"
+  return 0
+}
+
+configure_verify_local() {
+  local target="$PROJECT_DIR/$DEST_DIR_REL/verify.local.sh"
+  local profile=""
+
+  if [ "$VERIFY_SETUP_MODE" = "skip" ]; then
+    if [ ! -f "$target" ]; then
+      copy_file "$RUNTIME_SOURCE_DIR/verify.local.sh.example" "$target"
+      chmod +x "$target"
+      echo "Installed generic verify.local.sh example (verify setup skipped)."
+    fi
+    return 0
+  fi
+
+  if [ -f "$target" ] && [ "$FORCE" -ne 1 ]; then
+    echo "Keeping existing verify.local.sh"
+    return 0
+  fi
+
+  if [ "$VERIFY_SETUP_MODE" = "ai" ]; then
+    if generate_verify_local_with_ai "$target"; then
+      echo "Configured verify.local.sh via AI-assisted repo inspection."
+      return 0
+    fi
+    fail "AI verification setup failed. Ensure CODEX_BIN is available or use --verify-setup detect-only."
+  fi
+
+  if profile="$(detect_repo_verification_profile)"; then
+    if [ "$profile" = "node" ]; then
+      configure_nx_typecheck_support
+    fi
+    write_verify_local_profile "$profile" "$target"
+    echo "Configured verify.local.sh for detected repo profile: $profile"
+    return 0
+  fi
+
+  if [ "$VERIFY_SETUP_MODE" = "auto" ] && generate_verify_local_with_ai "$target"; then
+    echo "Configured verify.local.sh via AI-assisted repo inspection."
+    return 0
+  fi
+
+  copy_file "$RUNTIME_SOURCE_DIR/verify.local.sh.example" "$target"
+  chmod +x "$target"
+  echo "Installed generic verify.local.sh example (repo profile unknown)."
+}
+
+ensure_repo_local_speckit() {
+  local repo_specify="$PROJECT_DIR/$DEST_DIR_REL/bin/specify"
+  local repo_venv="$PROJECT_DIR/$DEST_DIR_REL/.venv-specify"
+  local repo_pip="$repo_venv/bin/pip"
+  local python_bin=""
+  local venv_warned=0
+
+  if [ -x "$repo_venv/bin/specify" ] && "$repo_venv/bin/specify" version >/dev/null 2>&1; then
+    echo "SpecKit already installed in repo: $repo_venv"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python_bin="python3"
+  elif command -v python >/dev/null 2>&1; then
+    python_bin="python"
+  fi
+
+  if [ -n "$python_bin" ]; then
+    echo "Bootstrapping repo-local SpecKit into $DEST_DIR_REL/.venv-specify..."
+    rm -rf "$repo_venv"
+    if "$python_bin" -m venv "$repo_venv"; then
+      if "$repo_pip" install "git+https://github.com/github/spec-kit.git"; then
+        if [ -x "$repo_venv/bin/specify" ] && "$repo_venv/bin/specify" version >/dev/null 2>&1; then
+          echo "Installed repo-local SpecKit: $DEST_DIR_REL/.venv-specify"
+          return 0
+        fi
+      else
+        echo "WARN: Repo-local SpecKit pip install failed; falling back to wrapper resolution."
+      fi
+    else
+      echo "WARN: Could not create repo-local SpecKit virtualenv; falling back to wrapper resolution."
+      echo "      If this is Debian/Ubuntu, you may need: apt install python3-venv"
+      venv_warned=1
+    fi
+  else
+    echo "WARN: No Python interpreter found for repo-local SpecKit bootstrap."
+  fi
+
+  if "$repo_specify" version >/dev/null 2>&1; then
+    if [ -x "$repo_venv/bin/specify" ]; then
+      echo "SpecKit ready: durable repo-local install at $DEST_DIR_REL/.venv-specify"
+    else
+      echo "SpecKit available in repo via $DEST_DIR_REL/bin/specify"
+      echo "      This is a wrapper-based fallback, not a durable repo-local install."
+    fi
+    return 0
+  fi
+
+  if command -v specify >/dev/null 2>&1; then
+    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to global specify."
+    echo "      The repo is usable, but SpecKit is not installed persistently inside the repo."
+    return 0
+  fi
+
+  if command -v uvx >/dev/null 2>&1; then
+    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to uvx."
+    echo "      This works, but may depend on network/tooling at runtime instead of a durable repo-local install."
+    return 0
+  fi
+
+  echo "WARN: Could not bootstrap repo-local SpecKit and no wrapper fallback is available."
+  if [ "$venv_warned" -eq 0 ]; then
+    echo "      Install Python 3.11+ with venv support or install uv, then re-run: bash install.sh --project $PROJECT_DIR"
+  else
+    echo "      Install Python venv support or uv, then re-run: bash install.sh --project $PROJECT_DIR"
+  fi
+}
+
+
+# Sprint-aware bootstrap directories (sprints and tasks created by ralph-roadmap.sh).
 mkdir -p \
-  "$DEST_DIR_REL/sprints/sprint-1" \
-  "$DEST_DIR_REL/tasks/sprint-1" \
-  "$DEST_DIR_REL/tasks/prds" \
-  "$DEST_DIR_REL/tasks/archive/sprint-1" \
+  "$DEST_DIR_REL/sprints" \
+  "$DEST_DIR_REL/tasks" \
+  "$DEST_DIR_REL/tasks/archive/sprints" \
   "$DEST_DIR_REL/tasks/archive/prds"
-
-if [ ! -f "$DEST_DIR_REL/sprints/sprint-1/epics.json" ] || [ "$FORCE" -eq 1 ]; then
-  cp "$DEST_DIR_REL/epics.json.example" "$DEST_DIR_REL/sprints/sprint-1/epics.json"
-fi
-
-if [ ! -f "$DEST_DIR_REL/.active-sprint" ] || [ "$FORCE" -eq 1 ]; then
-  printf 'sprint-1\n' > "$DEST_DIR_REL/.active-sprint"
-fi
 
 # Keep generated files out of git noise.
 GITIGNORE_SOURCE="$SOURCE_DIR/.gitignore"
@@ -273,17 +1190,68 @@ if [ "$INSTALL_PROMPTS" -eq 1 ]; then
   done < <(find "$SOURCE_DIR/prompts" -type f -print0)
 fi
 
+if [ "$INSTALL_SPECKIT" -eq 1 ]; then
+  ensure_repo_local_speckit
+fi
+
+configure_verify_local
+
+legacy_sprints=()
+while IFS= read -r sprint_name; do
+  [ -n "$sprint_name" ] || continue
+  legacy_sprints+=("$sprint_name")
+done < <(collect_legacy_sprints)
+
+if [ "${#legacy_sprints[@]}" -gt 0 ]; then
+  echo "Detected legacy Ralph sprint(s) that still use epics.json:"
+  printf '  %s\n' "${legacy_sprints[@]}"
+  if [ "$MIGRATE_LEGACY" -eq 1 ]; then
+    require_cmd jq
+    for sprint_name in "${legacy_sprints[@]}"; do
+      echo "Migrating legacy sprint: $sprint_name"
+      (
+        cd "$DEST_DIR_REL"
+        ./ralph-sprint-migrate.sh --sprint "$sprint_name"
+      )
+    done
+  else
+    echo "Re-run with default migration enabled, or migrate manually with:"
+    echo "  cd $DEST_DIR_REL && ./ralph-sprint-migrate.sh --sprint <sprint-name>"
+  fi
+fi
+
+# Commit installed files into the target repo so they are versioned from day one.
+if [ "$SKIP_GIT_CHECK" -ne 1 ]; then
+  git add -A "$DEST_DIR_REL" "$GITIGNORE_DEST"
+  if ! git diff --cached --quiet; then
+    git commit -m "chore: install Ralph workflow tooling into $DEST_DIR_REL"
+    echo "Committed Ralph scripts to git."
+  else
+    echo "(No git changes — files already up to date.)"
+  fi
+fi
+
 echo "Installed Ralph into: $PROJECT_DIR/$DEST_DIR_REL"
 echo "Next:"
 echo "  1) ./$DEST_DIR_REL/doctor.sh"
-echo "  Standalone:"
-echo "    ./$DEST_DIR_REL/ralph-prd.sh"
-echo "    ./$DEST_DIR_REL/ralph.sh 10"
-echo "    ./$DEST_DIR_REL/ralph-commit.sh"
-echo "  Sprint:"
-echo "    ./$DEST_DIR_REL/ralph-roadmap.sh --vision \"Baseline to target-state roadmap\""
-echo "    ./$DEST_DIR_REL/ralph-sprint.sh status"
-echo "    ./$DEST_DIR_REL/ralph.sh 10"
-echo "    ./$DEST_DIR_REL/ralph-commit.sh"
-echo "  Sprint closeout:"
+echo ""
+echo "  Define your product roadmap (creates sprints + stories):"
+echo "    ./$DEST_DIR_REL/ralph-roadmap.sh"
+echo ""
+echo "  Per-sprint preparation (after roadmap creates a sprint):"
+echo "    ./$DEST_DIR_REL/ralph-story.sh prepare-all --jobs 2"
+echo "    ./$DEST_DIR_REL/ralph-sprint.sh mark-ready <sprint-name>"
+if [ "${#legacy_sprints[@]}" -gt 0 ] && [ "$MIGRATE_LEGACY" -eq 0 ]; then
+echo ""
+echo "  Legacy sprint upgrade detected:"
+echo "    bash install.sh --project $PROJECT_DIR --migrate-legacy"
+fi
+echo ""
+echo "  Sprint activation (previous sprint must be closed):"
+echo "    ./$DEST_DIR_REL/ralph-sprint.sh use <sprint-name>"
+echo ""
+echo "  Sprint execution (runs all stories automatically):"
+echo "    ./$DEST_DIR_REL/ralph.sh"
+echo ""
+echo "  Sprint closeout (after all stories done):"
 echo "    ./$DEST_DIR_REL/ralph-sprint-commit.sh"

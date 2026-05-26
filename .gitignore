@@ -1,14 +1,22 @@
-# Ralph working files (generated during runs)
-scripts/ralph/.active-prd
+# Ralph runtime state (local machine pointer — not sprint data)
 scripts/ralph/.active-sprint
-scripts/ralph/.last-branch
-scripts/ralph/.iteration-log*.txt
-scripts/ralph/.iteration-handoff*.json
-scripts/ralph/.completion-state.json
+
+# Ralph transient run artifacts (cleaned after successful story merge;
+# left in place on failure so the story branch can be inspected)
+scripts/ralph/.workflow-lock/
+.cache/specify/
+scripts/ralph/.cache/
+scripts/ralph/runtime/
+scripts/ralph/sprints/**/.task-log-*.txt
+scripts/ralph/sprints/**/.fallow-report.json
+scripts/ralph/sprints/**/.fallow-autofix.txt
+.fallow/
+
+# prd.json only if import-prd is used to seed a sprint
 scripts/ralph/prd.json
-scripts/ralph/progress.txt
-prd.json
-progress.txt
+
+# Dependencies
+node_modules/
 
 # Temporary folders
 tmp/
@@ -38,8 +46,6 @@ lerna-debug.log*
 *.swo
 *~
 
-# Archive is optional to commit
-# archive/
-
 # OS files
 .DS_Store
+.claude/

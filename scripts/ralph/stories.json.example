@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "project": "YourProject",
+  "sprint": "sprint-1",
+  "capacityTarget": 8,
+  "capacityCeiling": 10,
+  "activeStoryId": null,
+  "stories": [
+    {
+      "id": "S-001",
+      "title": "Foundation Story",
+      "priority": 1,
+      "effort": 3,
+      "planningSource": "roadmap",
+      "status": "ready",
+      "depends_on": [],
+      "story_path": "scripts/ralph/sprints/sprint-1/stories/S-001/story.json",
+      "goal": "Define and deliver the first production-ready slice of work.",
+      "promptContext": "Product: Ralph workflow bootstrap for a new repository. Users need a first iteration they can run immediately after install. Constraints: keep tasks small and atomic, include setup validation and one meaningful vertical slice, require checks that are machine-executable shell commands."
+    },
+    {
+      "id": "S-002",
+      "title": "Follow-on Story",
+      "priority": 2,
+      "effort": 2,
+      "planningSource": "roadmap",
+      "status": "planned",
+      "depends_on": ["S-001"],
+      "story_path": "scripts/ralph/sprints/sprint-1/stories/S-002/story.json",
+      "goal": "Build on foundational capabilities after S-001 is done.",
+      "promptContext": "Follow-on planning context: define the second implementation slice that depends on S-001 output. Extend real functionality, preserve backward compatibility with the first slice, include explicit regression safeguards."
+    }
+  ]
+}
