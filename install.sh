@@ -217,6 +217,17 @@ chmod +x \
   "$DEST_DIR_REL/lib/editor-intake.sh" \
   "$DEST_DIR_REL/bin/specify"
 
+# Prevent rg from scanning node_modules and .next during Codex sessions.
+# Without this, rg scans node_modules/next/dist/docs and inflates
+# session size 3-4x.
+if [ ! -f ".rgignore" ] || [ "$FORCE" -eq 1 ]; then
+  cat > .rgignore << 'EOF'
+node_modules/
+.next/
+EOF
+  echo "Created .rgignore (node_modules/, .next/)"
+fi
+
 repo_has_files() {
   local pattern="$1"
   find . \
