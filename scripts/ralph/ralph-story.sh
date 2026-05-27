@@ -2303,16 +2303,10 @@ Use the story-generate skill for schema and task design rules."
   prompt="$(cat <<GENPROMPT
 Generate story.json for $story_id.
 
-Backlog entry:
-- Project: $project_name
-- ID: $story_id
-- Title: $title
-- Sprint: $sprint
-- Priority: $priority
-- Effort: $effort
-- Goal: $goal
-- Planning context: $prompt_context
-- depends_on: $depends_on_arr
+Backlog: $project_name / $story_id / $title / sprint=$sprint / priority=$priority / effort=$effort
+Goal: $goal
+Context: $prompt_context
+Depends on: $depends_on_arr
 
 $dep_section
 $placeholder_section
@@ -2325,21 +2319,18 @@ Prep bundle dependencies: $(story_prep_bundle_dependencies_path "$story_dir")
 Prep bundle commands: $(story_prep_bundle_commands_path "$story_dir")
 Prep bundle schema: $(story_prep_bundle_schema_path "$story_dir")
 
-Resolved verification commands:
+Verification commands:
 $command_map_text
 
 Requirements:
-1. Use the resolved verification commands above; do not rediscover them.
-2. Use the canonical Ralph story container from the prep bundle schema. Keep the exact top-level shape used there.
-3. Set project from the repo package name, sprint to $sprint, priority to $priority, depends_on to $depends_on_arr, status to planned, and passes to false.
-4. spec.scope is a concise string summary. Task scope[] must contain repo-relative real file paths.
-5. Task acceptance is a single string summary, not an array.
-6. context must be self-contained for a fresh isolated Codex session.
-7. branchName: $branch_name
-8. Create the parent directory if needed. Do not commit.
-9. The prep bundle schema file is authoritative for story.json shape. Do not read Ralph framework docs or scripts for schema unless that file is missing a required fact.
-10. Do not read .prep-context.json, package.json, jest.config.ts, or tsconfig.json when the prep bundle and SpecKit artifacts already provide the needed schema, commands, and dependency handoff.
-11. Do not narrate your plan or summarize your work.
+1. Use verification commands above; do not rediscover.
+2. Prep bundle schema is authoritative for story.json shape. Keep exact top-level shape.
+3. Set project=$project_name, sprint=$sprint, priority=$priority, depends_on=$depends_on_arr, status=planned, passes=false, branchName=$branch_name.
+4. spec.scope is concise string. Task scope[] has repo-relative file paths. Task acceptance is single string. context is self-contained for fresh Codex session.
+5. Create parent directory if needed. Do not commit.
+6. Do not read Ralph framework docs or scripts for schema unless prep bundle schema is missing a required fact.
+7. Do not read .prep-context.json, package.json, jest.config.ts, or tsconfig.json when prep bundle and SpecKit artifacts already provide schema, commands, and dependency handoff.
+8. Do not narrate your plan or summarize your work.
 GENPROMPT
 )"
 
