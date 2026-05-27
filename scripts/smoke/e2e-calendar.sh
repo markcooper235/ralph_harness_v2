@@ -831,15 +831,6 @@ STORYJSON
 
 fi  # end GENERATED guard for nextjs story.json
 
-# Write ralph-sprint-test.sh for nextjs-calendar
-cat > "$NEXTJS_DIR/scripts/ralph/ralph-sprint-test.sh" <<'SH'
-#!/bin/bash
-set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
-npm run build && npm run typecheck && npm test
-SH
-chmod +x "$NEXTJS_DIR/scripts/ralph/ralph-sprint-test.sh"
-
 commit_baseline "$NEXTJS_DIR" "chore(smoke): nextjs-calendar sprint plan"
 
 
@@ -1248,15 +1239,6 @@ mkdir -p "$ANGULAR_DIR/scripts/ralph/sprints/sprint-1/stories/S-004"
 STORYJSON
 
 fi  # end GENERATED guard for angular story.json
-
-# Write ralph-sprint-test.sh for angular-calendar
-cat > "$ANGULAR_DIR/scripts/ralph/ralph-sprint-test.sh" <<'SH'
-#!/bin/bash
-set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
-npm run build && npm run typecheck && npm test
-SH
-chmod +x "$ANGULAR_DIR/scripts/ralph/ralph-sprint-test.sh"
 
 commit_baseline "$ANGULAR_DIR" "chore(smoke): angular-calendar sprint plan"
 

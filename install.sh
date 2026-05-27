@@ -228,6 +228,13 @@ EOF
   echo "Created .rgignore (node_modules/, .next/)"
 fi
 
+# Create ralph-sprint-test.sh from example if missing. This is the regression
+# gate that ralph-sprint-commit.sh runs before merging a sprint branch.
+if [ ! -f "$DEST_DIR_REL/ralph-sprint-test.sh" ] || [ "$FORCE" -eq 1 ]; then
+  cp "$DEST_DIR_REL/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralph-sprint-test.sh"
+  echo "Created ralph-sprint-test.sh from example (customize for your project)"
+fi
+
 repo_has_files() {
   local pattern="$1"
   find . \

@@ -671,14 +671,6 @@ STORYJSON
 }
 STORYJSON
 
-  cat > "ralph-sprint-test.sh" <<SPRSH
-#!/bin/bash
-set -euo pipefail
-cd "\$(git rev-parse --show-toplevel)"
-npm run build && npm run lint && npm test && npm run -s browser:check -- '$expected_headline' '$expected_status' '$expected_cta' '$expected_state'
-SPRSH
-  chmod +x "ralph-sprint-test.sh"
-
   ./ralph-story.sh health > "$WORK_DIR/story-health.log" 2>&1
   ./ralph-sprint.sh status > "$WORK_DIR/status-sprint-preloop.log" 2>&1 || true
   ./ralph-sprint.sh restage sprint-1 > "$WORK_DIR/sprint-restage.log" 2>&1

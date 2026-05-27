@@ -598,15 +598,6 @@ assert_file_exists "$PROJ_DIR/scripts/ralph/ralph-sprint.sh"
 assert_file_exists "$PROJ_DIR/scripts/ralph/ralph-sprint-commit.sh"
 assert_file_exists "$PROJ_DIR/scripts/ralph/doctor.sh"
 
-# Write ralph-sprint-test.sh — required regression gate for sprint-commit
-cat > "$PROJ_DIR/scripts/ralph/ralph-sprint-test.sh" <<'SH'
-#!/bin/bash
-set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
-npm run build && npm run typecheck && npm test
-SH
-chmod +x "$PROJ_DIR/scripts/ralph/ralph-sprint-test.sh"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 4: Doctor check (specify CLI required)
 # ─────────────────────────────────────────────────────────────────────────────

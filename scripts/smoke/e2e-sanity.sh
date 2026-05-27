@@ -914,14 +914,6 @@ STORYJSON
 STORYJSON
     fi
 
-    cat > "ralph-sprint-test.sh" <<'SPRSH'
-#!/bin/bash
-set -euo pipefail
-cd "$(git rev-parse --show-toplevel)"
-npm run build && npm run lint && npm test
-SPRSH
-    chmod +x "ralph-sprint-test.sh"
-
     ./ralph-story.sh health > "$WORK_DIR/story-health.log" 2>&1
     ./ralph-sprint.sh restage sprint-1 > "$WORK_DIR/sprint-restage.log" 2>&1
     commit_framework_baseline "$SPRINT_REPO" "chore(smoke): pre-loop planning state (sprint)"
