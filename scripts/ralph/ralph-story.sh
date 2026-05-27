@@ -1856,19 +1856,36 @@ _health_story() {
     fi
   done < <(jq -r '.tasks[].id' "$story_path")
 
-  # Tasks with identical check sets (likely redundant)
+  # Tasks with identical check sets — only flag when titles are also similar
+  # (same checks + similar titles = likely copy-paste error)
   local dup_task_sets
   dup_task_sets="$(jq -r '
     .tasks |
-    map({id: .id, checks: (.checks // [] | sort)}) |
+    map({id: .id, title: (.title // ""), checks: (.checks // [] | sort)}) |
     group_by(.checks) |
-    map(select(length > 1) | map(.id) | join(", ")) |
+    map(select(length > 1)) |
+    map(
+      . as $group |
+      [
+        range($group | length) as $i |
+        range($i + 1; $group | length) as $j |
+        [$group[$i], $group[$j]] |
+        select(
+          (.[0].title | ascii_downcase) == (.[1].title | ascii_downcase)
+          or (.[0].title | ascii_downcase | contains(.[1].title | ascii_downcase))
+          or (.[1].title | ascii_downcase | contains(.[0].title | ascii_downcase))
+        ) |
+        "\(.[0].id), \(.[1].id)"
+      ] |
+      unique |
+      .[]
+    ) |
     .[]
   ' "$story_path" 2>/dev/null || true)"
   if [ -n "$dup_task_sets" ]; then
     while IFS= read -r set; do
       [ -z "$set" ] && continue
-      echo "  [DUP]  Tasks share identical check sets: $set"
+      echo "  [DUP]  Tasks share identical check sets and similar titles: $set"
       issues=$((issues + 1))
     done <<< "$dup_task_sets"
   fi
@@ -2286,43 +2303,26 @@ Use the story-generate skill for schema and task design rules."
   prompt="$(cat <<GENPROMPT
 Generate story.json for $story_id.
 
-Backlog entry:
-- Project: $project_name
-- ID: $story_id
-- Title: $title
-- Sprint: $sprint
-- Priority: $priority
-- Effort: $effort
-- Goal: $goal
-- Planning context: $prompt_context
-- depends_on: $depends_on_arr
+Backlog: $project_name / $story_id / $title / sprint=$sprint / priority=$priority / effort=$effort
+Goal: $goal
+Context: $prompt_context
+Depends on: $depends_on_arr
 
 $dep_section
 $placeholder_section
 $skill_instruction
 
 Write the completed story.json to: $story_path_abs
-Prep context: $prep_context_path
-Prep bundle context: $(story_prep_bundle_context_path "$story_dir")
-Prep bundle dependencies: $(story_prep_bundle_dependencies_path "$story_dir")
-Prep bundle commands: $(story_prep_bundle_commands_path "$story_dir")
-Prep bundle schema: $(story_prep_bundle_schema_path "$story_dir")
-
-Resolved verification commands:
-$command_map_text
+Prep bundle: $(story_prep_bundle_dir "$story_dir")
+Commands: $command_map_text
 
 Requirements:
-1. Use the resolved verification commands above; do not rediscover them.
-2. Use the canonical Ralph story container from the prep bundle schema. Keep the exact top-level shape used there.
-3. Set project from the repo package name, sprint to $sprint, priority to $priority, depends_on to $depends_on_arr, status to planned, and passes to false.
-4. spec.scope is a concise string summary. Task scope[] must contain repo-relative real file paths.
-5. Task acceptance is a single string summary, not an array.
-6. context must be self-contained for a fresh isolated Codex session.
-7. branchName: $branch_name
-8. Create the parent directory if needed. Do not commit.
-9. The prep bundle schema file is authoritative for story.json shape. Do not read Ralph framework docs or scripts for schema unless that file is missing a required fact.
-10. Do not read .prep-context.json, package.json, jest.config.ts, or tsconfig.json when the prep bundle and SpecKit artifacts already provide the needed schema, commands, and dependency handoff.
-11. Do not narrate your plan or summarize your work.
+1. Use resolved verification commands above; do not rediscover.
+2. Prep bundle schema is authoritative for story.json shape.
+3. Set project=$project_name, sprint=$sprint, priority=$priority, depends_on=$depends_on_arr, status=planned, passes=false, branchName=$branch_name.
+4. spec.scope is a concise string. Task scope[] has repo-relative file paths. Task acceptance is a single string. context is self-contained for a fresh Codex session.
+5. Do not read Ralph framework docs, .prep-context.json, package.json, tsconfig, or jest.config when prep bundle and SpecKit artifacts already have what's needed.
+6. Create parent directory if needed. No narration. Do not commit.
 GENPROMPT
 )"
 
@@ -2788,22 +2788,26 @@ SPECIN
     echo "WARN: input.md is thin ($word_count words) — consider adding more detail to story goal and promptContext."
   fi
 
+  # Trim dep_context to avoid unbounded prep bundle growth
+  local trimmed_dep_context="$dep_context"
+  if [ "${#trimmed_dep_context}" -gt 1800 ]; then
+    trimmed_dep_context="$(printf '%s' "$trimmed_dep_context" | head -c 1800)"
+    trimmed_dep_context="$trimmed_dep_context"$'\n... (truncated)'
+  fi
+
   local speckit_prompt
   speckit_prompt="$(cat <<SKPROMPT
-Run the SpecKit workflow for this story and complete all three phases without pausing.
+Run SpecKit for this story — all three phases without pausing.
 
-Feature input file: $specify_dir/input.md
-Repo briefing file: $repo_briefing_rel
-Prep bundle context: $(story_prep_bundle_context_path "$story_dir")
-Prep bundle dependencies: $(story_prep_bundle_dependencies_path "$story_dir")
-Prep bundle commands: $(story_prep_bundle_commands_path "$story_dir")
+Input: $specify_dir/input.md
+Briefing: $repo_briefing_rel
+Prep bundle: $(story_prep_bundle_dir "$story_dir")
 
-Use the repo briefing, input.md, and prep bundle as the primary context.
-Do not read Ralph framework files such as scripts/ralph/README-local.md, scripts/ralph/doctor.sh, or scripts/ralph/lib/specify.sh unless the prep bundle is missing a required fact.
-Do not reread package.json, jest.config.ts, or tsconfig.json when the repo briefing and prep bundle already provide the needed commands, aliases, or project shape. Only inspect them when this story needs exact config semantics.
-Do not inspect node_modules, bundled framework docs, or generated framework documentation unless local source files and config still leave a required framework rule ambiguous.
-Keep any extra file inspection tightly scoped to the likely implementation area, nearest tests, and directly relevant config.
-Do not narrate your plan, summarize your work, or restate constraints.
+Rules:
+- Use repo briefing, input.md, and prep bundle as primary context.
+- Do not read Ralph framework files, package.json, tsconfig, or jest.config unless prep bundle is missing a required fact.
+- No node_modules or bundled docs. Tight scope: implementation area + nearest tests + relevant config only.
+- No narration, no summaries, no constraint restatement.
 
 Phase 1 — Specify:
 Write output to: $specify_dir/spec.md
@@ -2814,7 +2818,7 @@ Write output to: $specify_dir/plan.md
 Phase 3 — Tasks:
 Write output to: $specify_dir/tasks.md
 
-All three files must be written before finishing. Avoid repeated repo summaries. Do not commit.
+All three files before finishing. Avoid repeated repo summaries. Do not commit.
 SKPROMPT
 )"
 
