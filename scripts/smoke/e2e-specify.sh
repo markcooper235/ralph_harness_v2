@@ -562,14 +562,6 @@ TS
 
 mkdir -p lib components __tests__
 
-# Prevent rg from scanning node_modules and .next during specify/generate
-# Codex sessions — without this, rg scans node_modules/next/dist/docs and
-# inflates session size 3-4x.
-cat > .rgignore << 'EOF'
-node_modules/
-.next/
-EOF
-
 cat > lib/index.ts <<'TS'
 export const APP_NAME = "nextjs-phone-validator"
 export const APP_VERSION = "0.1.0"
