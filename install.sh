@@ -171,7 +171,6 @@ copy_file "$RUNTIME_SOURCE_DIR/ralph.sh" "$DEST_DIR_REL/ralph.sh"
 copy_file "$RUNTIME_SOURCE_DIR/doctor.sh" "$DEST_DIR_REL/doctor.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint.sh" "$DEST_DIR_REL/ralph-sprint.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-commit.sh" "$DEST_DIR_REL/ralph-sprint-commit.sh"
-copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-migrate.sh" "$DEST_DIR_REL/ralph-sprint-migrate.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-story.sh" "$DEST_DIR_REL/ralph-story.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-story-run.sh" "$DEST_DIR_REL/ralph-story-run.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-fallow.sh" "$DEST_DIR_REL/ralph-fallow.sh"
@@ -207,7 +206,6 @@ chmod +x \
   "$DEST_DIR_REL/doctor.sh" \
   "$DEST_DIR_REL/ralph-sprint.sh" \
   "$DEST_DIR_REL/ralph-sprint-commit.sh" \
-  "$DEST_DIR_REL/ralph-sprint-migrate.sh" \
   "$DEST_DIR_REL/ralph-story.sh" \
   "$DEST_DIR_REL/ralph-story-run.sh" \
   "$DEST_DIR_REL/ralph-fallow.sh" \
