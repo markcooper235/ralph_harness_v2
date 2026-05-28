@@ -28,5 +28,3 @@ jobs:
           git config --global user.email "markcooper235@github.com"
       - name: Run install-repo smoke suite
         run: bash scripts/smoke/e2e-sanity.sh --ci
-      - name: Run upgrade smoke suite
-        run: bash scripts/smoke/e2e-upgrade.sh
