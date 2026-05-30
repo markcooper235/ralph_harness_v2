@@ -1,0 +1,67 @@
+{
+  "harnesses": {
+    "codex": {
+      "name": "OpenAI Codex",
+      "provider": "openai",
+      "access_method": "api",
+      "supports_model_selection": true,
+      "supports_agent_selection": true,
+      "default_model": "gpt-3.5-turbo",
+      "available_models": [
+        "gpt-3.5-turbo",
+        "gpt-4",
+        "gpt-4-turbo",
+        "gpt-4o"
+      ],
+      "model_parameter": "--model",
+      "agent_parameter": "--agent"
+    },
+    "opencode": {
+      "name": "OpenCode",
+      "provider": "opencode",
+      "access_method": "api",
+      "supports_model_selection": true,
+      "supports_agent_selection": true,
+      "default_model": "gpt-3.5-turbo",
+      "available_models": [
+        "gpt-3.5-turbo",
+        "gpt-4",
+        "gpt-4-turbo",
+        "claude-3-opus",
+        "claude-3-sonnet"
+      ],
+      "model_parameter": "--model",
+      "agent_parameter": "--agent"
+    },
+    "piagent": {
+      "name": "PI Agent",
+      "provider": "pi",
+      "access_method": "api",
+      "supports_model_selection": true,
+      "supports_agent_selection": false,
+      "default_model": "gpt-3.5-turbo",
+      "available_models": [
+        "gpt-3.5-turbo",
+        "gpt-4",
+        "gpt-4-turbo"
+      ],
+      "model_parameter": "--model",
+      "agent_parameter": null
+    },
+    "claude_code": {
+      "name": "Anthropic Claude Code",
+      "provider": "anthropic",
+      "access_method": "api",
+      "supports_model_selection": true,
+      "supports_agent_selection": false,
+      "default_model": "claude-3-haiku",
+      "available_models": [
+        "claude-3-haiku",
+        "claude-3-sonnet",
+        "claude-3-opus"
+      ],
+      "model_parameter": "--model",
+      "agent_parameter": null
+    }
+  }
+}
