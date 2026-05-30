@@ -19,6 +19,20 @@ elif [ -f "${SCRIPT_DIR}/.ralph-env" ]; then
     . "${SCRIPT_DIR}/.ralph-env"
 fi
 
+# Fallback to native base URLs and API keys if native variables are set
+if [ -n "${OPENAI_API_BASE_NATIVE:-}" ]; then
+    OPENAI_BASE_URL="${OPENAI_API_BASE_NATIVE}"
+fi
+if [ -n "${ANTHROPIC_API_BASE_NATIVE:-}" ]; then
+    ANTHROPIC_BASE_URL="${ANTHROPIC_API_BASE_NATIVE}"
+fi
+if [ -n "${OPENAI_API_KEY_NATIVE:-}" ]; then
+    OPENAI_API_KEY="${OPENAI_API_KEY_NATIVE}"
+fi
+if [ -n "${ANTHROPIC_API_KEY_NATIVE:-}" ]; then
+    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY_NATIVE}"
+fi
+
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 source "$SCRIPT_DIR/lib/codex-exec.sh"
@@ -75,6 +89,84 @@ done
 
 # Export for subprocesses (especially harness-exec.sh)
 export RALPH_HARNESS RALPH_MODEL RALPH_AGENT
+
+# Function to wrap harness execution with automatic fallback to native providers on failure
+harness_exec_prompt_with_fallback() {
+    local prompt="$1"
+    local workspace="${2:-$PWD}"
+    shift 2 || true
+    local attempt=0
+    local max_attempts=2
+    local exit_code=0
+
+    # Save the current environment variables for the four we care about
+    local saved_OPENAI_BASE_URL="${OPENAI_BASE_URL:-}"
+    local saved_ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}"
+    local saved_OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+    local saved_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+
+    while [ $attempt -lt $max_attempts ]; do
+        harness_exec_prompt "$prompt" "$workspace" "$@"
+        exit_code=$?
+        if [ $exit_code -eq 0 ]; then
+            break
+        fi
+        attempt=$((attempt+1))
+        if [ $attempt -lt $max_attempts ]; then
+            # Set to native if the native variable is non-empty, otherwise unset
+            if [ -n "${OPENAI_API_BASE_NATIVE:-}" ]; then
+                OPENAI_BASE_URL="${OPENAI_API_BASE_NATIVE}"
+            else
+                unset OPENAI_BASE_URL
+            fi
+            if [ -n "${ANTHROPIC_BASE_URL_NATIVE:-}" ]; then
+                ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL_NATIVE}"
+            else
+                unset ANTHROPIC_BASE_URL
+            fi
+            if [ -n "${OPENAI_API_KEY_NATIVE:-}" ]; then
+                OPENAI_API_KEY="${OPENAI_API_KEY_NATIVE}"
+            else
+                unset OPENAI_API_KEY
+            fi
+            if [ -n "${ANTHROPIC_API_KEY_NATIVE:-}" ]; then
+                ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY_NATIVE}"
+            else
+                unset ANTHROPIC_API_KEY
+            fi
+            # Export them
+            export OPENAI_BASE_URL ANTHROPIC_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY
+        fi
+    done
+
+    # Restore the original environment variables
+    if [ -n "${saved_OPENAI_BASE_URL:-}" ]; then
+        OPENAI_BASE_URL="${saved_OPENAI_BASE_URL}"
+        export OPENAI_BASE_URL
+    else
+        unset OPENAI_BASE_URL
+    fi
+    if [ -n "${saved_ANTHROPIC_BASE_URL:-}" ]; then
+        ANTHROPIC_BASE_URL="${saved_ANTHROPIC_BASE_URL}"
+        export ANTHROPIC_BASE_URL
+    else
+        unset ANTHROPIC_BASE_URL
+    fi
+    if [ -n "${saved_OPENAI_API_KEY:-}" ]; then
+        OPENAI_API_KEY="${saved_OPENAI_API_KEY}"
+        export OPENAI_API_KEY
+    else
+        unset OPENAI_API_KEY
+    fi
+    if [ -n "${saved_ANTHROPIC_API_KEY:-}" ]; then
+        ANTHROPIC_API_KEY="${saved_ANTHROPIC_API_KEY}"
+        export ANTHROPIC_API_KEY
+    else
+        unset ANTHROPIC_API_KEY
+    fi
+
+    return $exit_code
+}
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"; }
 require_cmd jq
@@ -694,10 +786,10 @@ run_story_cycle() {
   fi
 
 log "Running story cycle via $(_get_harness): $cycle_kind"
-   set +e
-   harness_exec_prompt "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file"
-   cycle_exit=${PIPESTATUS[0]}
-   set -e
+    set +e
+    harness_exec_prompt_with_fallback "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file"
+    cycle_exit=${PIPESTATUS[0]}
+    set -e
 
    if [ "$cycle_exit" -eq 124 ]; then
      log "WARN: Story cycle timed out; continuing with shell verification of any completed edits."

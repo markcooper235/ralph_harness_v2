@@ -2,16 +2,22 @@
 # Copy this file to $HOME/.ralph-env or scripts/ralph/.ralph-env and fill in your values.
 # This file is NOT tracked by git.
 
-# --- Consolidated Provider (e.g., OpenRouter) ---
-# Uncomment to use OpenRouter as a unified provider for all harnesses.
+# --- To use a consolidated provider (e.g., OpenRouter) ---
+# Uncomment the following lines to route all harnesses through OpenRouter.
+# This provides a single API key to access multiple model providers.
 # export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
 # export OPENAI_API_KEY="sk-or-..."   # Your OpenRouter API key
 # export ANTHROPIC_BASE_URL="https://openrouter.ai/api/v1"
 # export ANTHROPIC_API_KEY="sk-or-..." # Same key works for Anthropic-compatible endpoint
 
-# --- Native Provider API Keys (used when base URLs are unset) ---
-# export OPENAI_API_KEY="sk-..."       # Your OpenAI API key (for Codex, Opencode if compatible)
-# export ANTHROPIC_API_KEY="sk-ant-..." # Your Anthropic API key (for Claude Code)
+# --- To use native providers (automatic fallback on failure) ---
+# Alternatively, you can set the following *_NATIVE variables to enable automatic fallback to native providers
+# if the consolidated provider fails (e.g., due to quota exhaustion or errors).
+# If set, these variables will be used on the second attempt if the first attempt fails.
+# export OPENAI_API_BASE_NATIVE=""        # Empty string means use harness default (or set to explicit URL if needed)
+# export OPENAI_API_KEY_NATIVE="sk-..."   # Your native OpenAI API key
+# export ANTHROPIC_API_BASE_NATIVE=""     # Empty string means use harness default
+# export ANTHROPIC_API_KEY_NATIVE="sk-ant-..." # Your native Anthropic API key
 
 # --- Optional: Provider-specific overrides per harness ---
 # If a harness requires different variables, set them here.
@@ -23,6 +29,9 @@
 # export PI_API_KEY="sk-or-..."
 
 # --- Fallback Note ---
-# Leave the *_BASE_URL variables unset to let each harness use its default native endpoints.
-# To switch to OpenRouter globally, uncomment and set the base URLs above.
-# To fallback manually, comment out the base URL lines or set them to empty strings.
+# The system will automatically fall back to the native API keys and base URLs (if the corresponding *_NATIVE variables are set)
+# when the first attempt to execute a story with the configured harness (e.g., pointing to OpenRouter) fails.
+# To enable this feature, set the *_NATIVE variables as described above.
+# If you do not set the *_NATIVE variables, no automatic fallback will occur.
+# You can also manage fallback manually by unsetting the base URL variables (OPENAI_BASE_URL, ANTHROPIC_BASE_URL) 
+# and ensuring your native API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY) are set in the environment.
