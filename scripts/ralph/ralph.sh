@@ -9,9 +9,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load environment variables from .ralph-env files
+# Priority: $HOME/.ralph-env (user-specific) then scripts/ralph/.ralph-env (project-specific fallback)
+if [ -f "${HOME}/.ralph-env" ]; then
+    # shellcheck source=/dev/null
+    . "${HOME}/.ralph-env"
+elif [ -f "${SCRIPT_DIR}/.ralph-env" ]; then
+    # shellcheck source=/dev/null
+    . "${SCRIPT_DIR}/.ralph-env"
+fi
+
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 LOCK_DIR="$SCRIPT_DIR/.workflow-lock"
+RALPH_HARNESS="${RALPH_HARNESS:-codex}"
+RALPH_MODEL="${RALPH_MODEL:-}"
+RALPH_AGENT="${RALPH_AGENT:-}"
+export RALPH_HARNESS RALPH_MODEL RALPH_AGENT
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
 RUNTIME_ROOT="$SCRIPT_DIR/runtime"
@@ -29,21 +44,27 @@ usage() {
 Usage: ./scripts/ralph/ralph.sh [options]
 
 Runs all eligible stories in the active sprint:
-  start-next → ralph-story-run.sh → repeat until no eligible stories remain.
+   start-next → ralph-story-run.sh → repeat until no eligible stories remain.
 
 Does NOT run ralph-sprint-commit.sh — that merge step is intentionally manual.
 
 Options:
-  --continue-on-failure   Continue to next story when a story fails (default: stop)
-  --max-stories N         Safety ceiling on stories executed (default: 50)
-  --max-retries N         Max targeted remediation cycles after the main story cycle (default: 1)
-  --skip-fallow           Deprecated compatibility flag; no effect
-  --dry-run               Print plan without executing
-  -h, --help              Show this help
+   --continue-on-failure   Continue to next story when a story fails (default: stop)
+   --max-stories N         Safety ceiling on stories executed (default: 50)
+   --max-retries N         Max targeted remediation cycles after the main story cycle (default: 1)
+   --skip-fallow           Deprecated compatibility flag; no effect
+   --dry-run               Print plan without executing
+   --harness HARNESS       Specify harness to use (codex|opencode|piagent|claude_code) (default: codex)
+   --model MODEL           Specify model to use with the harness (default: harness-specific)
+   --agent AGENT           Specify agent/subagent type to use (default: harness-specific)
+   -h, --help              Show this help
 
 Environment:
-  CODEX_BIN               Codex binary path (default: codex)
-  RALPH_CODEX_PROFILE     Profile passed to codex exec
+   CODEX_BIN               Codex binary path (default: codex)
+   RALPH_CODEX_PROFILE     Profile passed to codex exec
+   RALPH_HARNESS           Harness to use (overridden by --harness)
+   RALPH_MODEL             Model to use (overridden by --model)
+   RALPH_AGENT             Agent to use (overridden by --agent)
 EOF
 }
 
@@ -56,6 +77,9 @@ while [[ $# -gt 0 ]]; do
     --max-retries)         MAX_RETRIES="${2:-2}"; shift 2 ;;
     --skip-fallow)         SKIP_FALLOW=true; shift ;;
     --dry-run)             DRY_RUN=true; shift ;;
+    --harness)             RALPH_HARNESS="${2:-}"; shift 2 ;;
+    --model)               RALPH_MODEL="${2:-}"; shift 2 ;;
+    --agent)               RALPH_AGENT="${2:-}"; shift 2 ;;
     -h|--help)             usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac

@@ -8,6 +8,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load environment variables from .ralph-env files
+# Priority: $HOME/.ralph-env (user-specific) then scripts/ralph/.ralph-env (project-specific fallback)
+if [ -f "${HOME}/.ralph-env" ]; then
+    # shellcheck source=/dev/null
+    . "${HOME}/.ralph-env"
+elif [ -f "${SCRIPT_DIR}/.ralph-env" ]; then
+    # shellcheck source=/dev/null
+    . "${SCRIPT_DIR}/.ralph-env"
+fi
+
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 source "$SCRIPT_DIR/lib/codex-exec.sh"
@@ -53,11 +64,17 @@ while [[ $# -gt 0 ]]; do
     --max-retries) MAX_RETRIES="${2:-1}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
     --quiet)       QUIET=1; shift ;;
+    --harness)     RALPH_HARNESS="${2:-}"; shift 2 ;;
+    --model)       RALPH_MODEL="${2:-}"; shift 2 ;;
+    --agent)       RALPH_AGENT="${2:-}"; shift 2 ;;
     --skip-fallow) shift ;; # deprecated compatibility flag
     -h|--help)     usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac
 done
+
+# Export for subprocesses (especially harness-exec.sh)
+export RALPH_HARNESS RALPH_MODEL RALPH_AGENT
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"; }
 require_cmd jq
@@ -625,10 +642,20 @@ build_execution_bundle() {
 }
 
 build_story_prompt() {
+  # Determine effective agent and apply profile settings (model, etc.)
+  local effective_agent
+  effective_agent="$(_get_effective_agent "$STORY_FILE")"
+  _apply_agent_profile "$effective_agent"
+  
   build_execution_bundle
-
+  
+  # Build system prompt addition from agent profile if available
+  local agent_system_prompt_addition=""
+  agent_system_prompt_addition="$(_get_agent_profile "$effective_agent" '.system_prompt_addition // empty')"
+  
   cat <<PROMPT
 Execute this Ralph story.
+${agent_system_prompt_addition:+$agent_system_prompt_addition}
 
 Read these files in order:
 1. $(execution_baseline_path)
@@ -666,17 +693,17 @@ run_story_cycle() {
     return 0
   fi
 
-  log "Running Codex story cycle: $cycle_kind"
-  set +e
-  codex_exec_prompt "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file"
-  cycle_exit=${PIPESTATUS[0]}
-  set -e
+log "Running story cycle via $(_get_harness): $cycle_kind"
+   set +e
+   harness_exec_prompt "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file"
+   cycle_exit=${PIPESTATUS[0]}
+   set -e
 
-  if [ "$cycle_exit" -eq 124 ]; then
-    log "WARN: Codex story cycle timed out; continuing with shell verification of any completed edits."
-  elif [ "$cycle_exit" -ne 0 ]; then
-    log "WARN: Codex story cycle exited non-zero ($cycle_exit); continuing with shell verification of any completed edits."
-  fi
+   if [ "$cycle_exit" -eq 124 ]; then
+     log "WARN: Story cycle timed out; continuing with shell verification of any completed edits."
+   elif [ "$cycle_exit" -ne 0 ]; then
+     log "WARN: Story cycle exited non-zero ($cycle_exit); continuing with shell verification of any completed edits."
+   fi
 
   return 0
 }

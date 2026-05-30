@@ -24,6 +24,9 @@ MIGRATE_LEGACY=1
 SKIP_GIT_CHECK=0
 VERIFY_SETUP_MODE="auto"
 CODEX_BIN="${CODEX_BIN:-codex}"
+RALPH_HARNISH="${RALPH_HARNISH:-codex}"
+RALPH_MODEL="${RALPH_MODEL:-}"
+RALPH_AGENT="${RALPH_AGENT:-}"
 
 usage() {
   cat <<'EOF'
@@ -33,14 +36,17 @@ Options:
   --project DIR         Project directory (default: current directory)
   --dest RELDIR         Install path relative to project (default: scripts/ralph)
   --force               Force overwrite of existing files
-  --install-skills      Copy skills into ~/.codex/skills
-  --install-prompts     Copy /command prompts to Global prompts directory
-  --install-speckit     Ensure the repo-local SpecKit CLI (specify) is installed
-  --no-install-speckit  Skip SpecKit bootstrap during install
-  --migrate-legacy      Migrate any legacy epics.json sprints to stories.json (default)
-  --no-migrate-legacy   Skip automatic legacy sprint migration during install
-  --verify-setup MODE   Configure verify.local.sh: auto|detect-only|ai|skip (default: auto)
-  --skip-git-check      Allow installing outside a git repo
+   --install-skills      Copy skills into ~/.codex/skills
+   --install-prompts     Copy /command prompts to Global prompts directory
+   --install-speckit     Ensure the repo-local SpecKit CLI (specify) is installed
+   --no-install-speckit  Skip SpecKit bootstrap during install
+   --migrate-legacy      Migrate any legacy epics.json sprints to stories.json (default)
+   --no-migrate-legacy   Skip automatic legacy sprint migration during install
+   --verify-setup MODE   Configure verify.local.sh: auto|detect-only|ai|skip (default: auto)
+   --skip-git-check      Allow installing outside a git repo
+    --harness HARNESS     Specify harness to use (codex|opencode|piagent|claude_code) (default: codex)
+    --model MODEL         Specify model to use with the harness (default: harness-specific)
+    --agent AGENT         Specify agent/subagent type to use (default: harness-specific)
   -h, --help            Show help
 
 Examples:
@@ -83,12 +89,14 @@ while [[ $# -gt 0 ]]; do
       MIGRATE_LEGACY=0; shift;;
     --verify-setup)
       VERIFY_SETUP_MODE="${2:-}"; shift 2;;
-    --skip-git-check)
-      SKIP_GIT_CHECK=1; shift;;
-    -h|--help)
-      usage; exit 0;;
-    *)
-      fail "Unknown argument: $1";;
+     --skip-git-check)
+       SKIP_GIT_CHECK=1; shift;;
+     --harness)
+       RALPH_HARNESS="${2:-}"; shift 2;;
+     -h|--help)
+       usage; exit 0;;
+     *)
+       fail "Unknown argument: $1";;
   esac
 done
 
@@ -182,6 +190,7 @@ copy_file "$RUNTIME_SOURCE_DIR/ralph-verify.sh" "$DEST_DIR_REL/ralph-verify.sh"
 copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralph-sprint-test.sh.example"
 copy_file "$RUNTIME_SOURCE_DIR/execution-baseline.md" "$DEST_DIR_REL/execution-baseline.md"
 copy_file "$RUNTIME_SOURCE_DIR/lib/codex-exec.sh" "$DEST_DIR_REL/lib/codex-exec.sh"
+copy_file "$RUNTIME_SOURCE_DIR/lib/harness-exec.sh" "$DEST_DIR_REL/lib/harness-exec.sh"
 copy_file "$RUNTIME_SOURCE_DIR/lib/editor-intake.sh" "$DEST_DIR_REL/lib/editor-intake.sh"
 copy_file "$RUNTIME_SOURCE_DIR/lib/search.sh" "$DEST_DIR_REL/lib/search.sh"
 copy_file "$RUNTIME_SOURCE_DIR/lib/specify.sh" "$DEST_DIR_REL/lib/specify.sh"
@@ -192,6 +201,7 @@ copy_file "$RUNTIME_SOURCE_DIR/known-test-baseline-failures.txt" "$DEST_DIR_REL/
 copy_file "$RUNTIME_SOURCE_DIR/story.json.example" "$DEST_DIR_REL/story.json.example"
 copy_file "$RUNTIME_SOURCE_DIR/stories.json.example" "$DEST_DIR_REL/stories.json.example"
 copy_file "$RUNTIME_SOURCE_DIR/verify.local.sh.example" "$DEST_DIR_REL/verify.local.sh.example"
+copy_file "$RUNTIME_SOURCE_DIR/.ralph-env.example" "$DEST_DIR_REL/.ralph-env.example"
 rm -f \
   "$DEST_DIR_REL/ralph-task.sh" \
   "$DEST_DIR_REL/ralph-prd.sh" \

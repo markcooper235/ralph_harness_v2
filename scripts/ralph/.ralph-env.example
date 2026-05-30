@@ -1,0 +1,28 @@
+# Ralph Environment Variables
+# Copy this file to $HOME/.ralph-env or scripts/ralph/.ralph-env and fill in your values.
+# This file is NOT tracked by git.
+
+# --- Consolidated Provider (e.g., OpenRouter) ---
+# Uncomment to use OpenRouter as a unified provider for all harnesses.
+# export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+# export OPENAI_API_KEY="sk-or-..."   # Your OpenRouter API key
+# export ANTHROPIC_BASE_URL="https://openrouter.ai/api/v1"
+# export ANTHROPIC_API_KEY="sk-or-..." # Same key works for Anthropic-compatible endpoint
+
+# --- Native Provider API Keys (used when base URLs are unset) ---
+# export OPENAI_API_KEY="sk-..."       # Your OpenAI API key (for Codex, Opencode if compatible)
+# export ANTHROPIC_API_KEY="sk-ant-..." # Your Anthropic API key (for Claude Code)
+
+# --- Optional: Provider-specific overrides per harness ---
+# If a harness requires different variables, set them here.
+# Example for Opencode (if it uses distinct vars):
+# export OPENTCODE_BASE_URL="https://openrouter.ai/api/v1"
+# export OPENTCODE_API_KEY="sk-or-..."
+# Example for PI Agent:
+# export PI_BASE_URL="https://openrouter.ai/api/v1"
+# export PI_API_KEY="sk-or-..."
+
+# --- Fallback Note ---
+# Leave the *_BASE_URL variables unset to let each harness use its default native endpoints.
+# To switch to OpenRouter globally, uncomment and set the base URLs above.
+# To fallback manually, comment out the base URL lines or set them to empty strings.
