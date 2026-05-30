@@ -1,0 +1,100 @@
+{
+  "profiles": {
+    "researcher": {
+      "description": "Investigation, debugging, exploration tasks requiring deep analysis",
+      "models": {
+        "codex": "gpt-4-turbo",
+        "opencode": "gpt-4-turbo",
+        "piagent": "gpt-4-turbo",
+        "claude_code": "claude-3-opus"
+      },
+      "system_prompt_addition": "You are an expert investigator and debugger. Focus on thorough analysis, asking clarifying questions when needed, and providing detailed explanations of your reasoning process.",
+      "temperature": 0.2,
+      "max_tokens": 4000
+    },
+    "junior-dev": {
+      "description": "Simple features, bug fixes, typos, and straightforward implementation tasks",
+      "models": {
+        "codex": "gpt-3.5-turbo",
+        "opencode": "gpt-3.5-turbo",
+        "piagent": "gpt-3.5-turbo",
+        "claude_code": "claude-3-haiku"
+      },
+      "system_prompt_addition": "You are a competent junior developer focused on completing tasks efficiently and correctly. Follow instructions precisely, write clean code, and ensure all tests pass.",
+      "temperature": 0.3,
+      "max_tokens": 3000
+    },
+    "senior-dev": {
+      "description": "Complex features, architecture decisions, refactoring, and performance optimization",
+      "models": {
+        "codex": "gpt-4",
+        "opencode": "gpt-4",
+        "piagent": "gpt-4",
+        "claude_code": "claude-3-opus"
+      },
+      "system_prompt_addition": "You are a senior software architect and developer. Consider long-term maintainability, scalability, and best practices in your solutions. Think ahead about potential issues and edge cases.",
+      "temperature": 0.2,
+      "max_tokens": 5000
+    },
+    "security": {
+      "description": "Security patches, vulnerability fixes, and security-focused implementations",
+      "models": {
+        "codex": "gpt-4",
+        "opencode": "gpt-4",
+        "piagent": "gpt-4",
+        "claude_code": "claude-3-opus"
+      },
+      "system_prompt_addition": "You are a security-focused developer with expertise in identifying and fixing vulnerabilities. Always consider security implications, follow security best practices, and validate that your changes don't introduce new security risks.",
+      "temperature": 0.1,
+      "max_tokens": 4000
+    },
+    "qa-test": {
+      "description": "Test creation, validation, verification, and quality assurance tasks",
+      "models": {
+        "codex": "gpt-4",
+        "opencode": "gpt-4",
+        "piagent": "gpt-4",
+        "claude_code": "claude-3-sonnet"
+      },
+      "system_prompt_addition": "You are a meticulous QA engineer focused on thorough testing and validation. Create comprehensive test cases, verify edge cases, and ensure all requirements are met.",
+      "temperature": 0.2,
+      "max_tokens": 3500
+    },
+    "devops": {
+      "description": "Infrastructure, deployment, CI/CD, and system administration tasks",
+      "models": {
+        "codex": "gpt-4",
+        "opencode": "gpt-4",
+        "piagent": "gpt-4",
+        "claude_code": "claude-3-sonnet"
+      },
+      "system_prompt_addition": "You are a DevOps engineer with expertise in infrastructure, deployment pipelines, and system reliability. Focus on automation, reproducibility, and operational excellence.",
+      "temperature": 0.3,
+      "max_tokens": 3500
+    },
+    "documentation": {
+      "description": "Documentation, comments, explanations, and educational content",
+      "models": {
+        "codex": "gpt-3.5-turbo",
+        "opencode": "gpt-3.5-turbo",
+        "piagent": "gpt-3.5-turbo",
+        "claude_code": "claude-3-haiku"
+      },
+      "system_prompt_addition": "You are a technical writer focused on creating clear, accurate, and helpful documentation. Explain concepts thoroughly, provide examples, and ensure accessibility for your audience.",
+      "temperature": 0.4,
+      "max_tokens": 3000
+    },
+    "default": {
+      "description": "General purpose agent for tasks that don't fit other categories",
+      "models": {
+        "codex": "gpt-3.5-turbo",
+        "opencode": "gpt-3.5-turbo",
+        "piagent": "gpt-3.5-turbo",
+        "claude_code": "claude-3-haiku"
+      },
+      "system_prompt_addition": "You are a helpful and capable AI assistant. Follow instructions carefully and provide high-quality solutions.",
+      "temperature": 0.3,
+      "max_tokens": 3000
+    }
+  }
+}
