@@ -20,18 +20,20 @@ elif [ -f "${SCRIPT_DIR}/.ralph-env" ]; then
     . "${SCRIPT_DIR}/.ralph-env"
 fi
 
-# Fallback to native base URLs and API keys if native variables are set
-if [ -n "${OPENAI_API_BASE_NATIVE:-}" ]; then
-    OPENAI_BASE_URL="${OPENAI_API_BASE_NATIVE}"
-fi
-if [ -n "${ANTHROPIC_BASE_URL_NATIVE:-}" ]; then
-    ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL_NATIVE}"
-fi
+# Fallback to native API keys and unset base URL overrides on failure
+# Unset base URL overrides to let harnesses use their default endpoints
+unset OPENAI_BASE_URL
+unset ANTHROPIC_BASE_URL
+# Reset API keys to native values if set, otherwise unset to allow harness-configured auth (e.g., OAuth)
 if [ -n "${OPENAI_API_KEY_NATIVE:-}" ]; then
     OPENAI_API_KEY="${OPENAI_API_KEY_NATIVE}"
+else
+    unset OPENAI_API_KEY
 fi
 if [ -n "${ANTHROPIC_API_KEY_NATIVE:-}" ]; then
     ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY_NATIVE}"
+else
+    unset ANTHROPIC_API_KEY
 fi
 
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"

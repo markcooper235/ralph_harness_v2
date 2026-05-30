@@ -11,13 +11,15 @@
 # export ANTHROPIC_API_KEY="sk-or-..." # Same key works for Anthropic-compatible endpoint
 
 # --- To use native providers (automatic fallback on failure) ---
-# Alternatively, you can set the following *_NATIVE variables to enable automatic fallback to native providers
+# Alternatively, you can set the following *_NATIVE variables to enable automatic fallback to native API keys
 # if the consolidated provider fails (e.g., due to quota exhaustion or errors).
+# On fallback, the base URL overrides (OPENAI_BASE_URL, ANTHROPIC_BASE_URL) will be unset,
+# allowing the harnesses to use their default endpoints.
 # If set, these variables will be used on the second attempt if the first attempt fails.
-# export OPENAI_API_BASE_NATIVE=""        # Empty string means use harness default (or set to explicit URL if needed)
 # export OPENAI_API_KEY_NATIVE="sk-..."   # Your native OpenAI API key
-# export ANTHROPIC_API_BASE_NATIVE=""     # Empty string means use harness default
 # export ANTHROPIC_API_KEY_NATIVE="sk-ant-..." # Your native Anthropic API key
+# export PI_API_KEY_NATIVE="sk-pi-..."    # Your native PI Agent API key
+# export OPENCODE_API_KEY_NATIVE="sk-op-..." # Your native Opencode API key
 
 # --- Optional: Provider-specific overrides per harness ---
 # If a harness requires different variables, set them here.
@@ -29,9 +31,11 @@
 # export PI_API_KEY="sk-or-..."
 
 # --- Fallback Note ---
-# The system will automatically fall back to the native API keys and base URLs (if the corresponding *_NATIVE variables are set)
-# when the first attempt to execute a story with the configured harness (e.g., pointing to OpenRouter) fails.
+# The system will automatically fall back to the native API keys (if the corresponding *_NATIVE variables are set)
+# and unset the base URL overrides when the first attempt to execute a story with the configured harness (e.g., pointing to OpenRouter) fails.
 # To enable this feature, set the *_NATIVE variables as described above.
 # If you do not set the *_NATIVE variables, no automatic fallback will occur.
 # You can also manage fallback manually by unsetting the base URL variables (OPENAI_BASE_URL, ANTHROPIC_BASE_URL) 
-# and ensuring your native API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY) are set in the environment.
+# and ensuring your native API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, PI_API_KEY, OPENCODE_API_KEY) are set in the environment.
+# On fallback, the harnesses will use their default endpoints and any externally configured authentication
+# (e.g., OAuth flows, subscription-based auth) if the API key variables are unset.

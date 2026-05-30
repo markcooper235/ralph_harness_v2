@@ -99,11 +99,11 @@ harness_exec_prompt_with_fallback() {
     local max_attempts=2
     local exit_code=0
 
-    # Save the current environment variables for the four we care about
-    local saved_OPENAI_BASE_URL="${OPENAI_BASE_URL:-}"
-    local saved_ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}"
+    # Save the current environment variables for API keys we care about
     local saved_OPENAI_API_KEY="${OPENAI_API_KEY:-}"
     local saved_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+    local saved_PI_API_KEY="${PI_API_KEY:-}"
+    local saved_OPENCODE_API_KEY="${OPENCODE_API_KEY:-}"
 
     while [ $attempt -lt $max_attempts ]; do
         harness_exec_prompt "$prompt" "$workspace" "$@"
@@ -113,17 +113,10 @@ harness_exec_prompt_with_fallback() {
         fi
         attempt=$((attempt+1))
         if [ $attempt -lt $max_attempts ]; then
-            # Set to native if the native variable is non-empty, otherwise unset
-            if [ -n "${OPENAI_API_BASE_NATIVE:-}" ]; then
-                OPENAI_BASE_URL="${OPENAI_API_BASE_NATIVE}"
-            else
-                unset OPENAI_BASE_URL
-            fi
-            if [ -n "${ANTHROPIC_BASE_URL_NATIVE:-}" ]; then
-                ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL_NATIVE}"
-            else
-                unset ANTHROPIC_BASE_URL
-            fi
+            # Unset base URL overrides to let harnesses use their default endpoints
+            unset OPENAI_BASE_URL
+            unset ANTHROPIC_BASE_URL
+            # Reset API keys to native values if set, otherwise unset to allow harness-configured auth (e.g., OAuth)
             if [ -n "${OPENAI_API_KEY_NATIVE:-}" ]; then
                 OPENAI_API_KEY="${OPENAI_API_KEY_NATIVE}"
             else
@@ -134,24 +127,22 @@ harness_exec_prompt_with_fallback() {
             else
                 unset ANTHROPIC_API_KEY
             fi
+            if [ -n "${PI_API_KEY_NATIVE:-}" ]; then
+                PI_API_KEY="${PI_API_KEY_NATIVE}"
+            else
+                unset PI_API_KEY
+            fi
+            if [ -n "${OPENCODE_API_KEY_NATIVE:-}" ]; then
+                OPENCODE_API_KEY="${OPENCODE_API_KEY_NATIVE}"
+            else
+                unset OPENCODE_API_KEY
+            fi
             # Export them
-            export OPENAI_BASE_URL ANTHROPIC_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY
+            export OPENAI_BASE_URL ANTHROPIC_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY PI_API_KEY OPENCODE_API_KEY
         fi
     done
 
     # Restore the original environment variables
-    if [ -n "${saved_OPENAI_BASE_URL:-}" ]; then
-        OPENAI_BASE_URL="${saved_OPENAI_BASE_URL}"
-        export OPENAI_BASE_URL
-    else
-        unset OPENAI_BASE_URL
-    fi
-    if [ -n "${saved_ANTHROPIC_BASE_URL:-}" ]; then
-        ANTHROPIC_BASE_URL="${saved_ANTHROPIC_BASE_URL}"
-        export ANTHROPIC_BASE_URL
-    else
-        unset ANTHROPIC_BASE_URL
-    fi
     if [ -n "${saved_OPENAI_API_KEY:-}" ]; then
         OPENAI_API_KEY="${saved_OPENAI_API_KEY}"
         export OPENAI_API_KEY
@@ -163,6 +154,18 @@ harness_exec_prompt_with_fallback() {
         export ANTHROPIC_API_KEY
     else
         unset ANTHROPIC_API_KEY
+    fi
+    if [ -n "${saved_PI_API_KEY:-}" ]; then
+        PI_API_KEY="${saved_PI_API_KEY}"
+        export PI_API_KEY
+    else
+        unset PI_API_KEY
+    fi
+    if [ -n "${saved_OPENCODE_API_KEY:-}" ]; then
+        OPENCODE_API_KEY="${saved_OPENCODE_API_KEY}"
+        export OPENCODE_API_KEY
+    else
+        unset OPENCODE_API_KEY
     fi
 
     return $exit_code
