@@ -37,7 +37,8 @@
 #   export OPENCODE_API_BASE_NATIVE="https://opencode.ai/zen/v1/chat/completions"
 #   export OPENCODE_MODEL_NATIVE="opencode/deepseek-v4-flash-free"
 #   export OPENCODE_USE_LOGIN_FALLBACK="0"
-#   # If env-based Zen auth fails, clear or rename ~/.local/share/opencode/auth.json so stored provider auth does not override it.
+#   export OPENCODE_FORCE_LOGOUT_ON_FALLBACK="1"
+#   # Temporarily disables ~/.local/share/opencode/auth.json during the retry so stored provider auth does not override env-based Zen auth.
 #
 # For PI Agent fallback:
 #   export PI_API_KEY_NATIVE="sk-op-..."         # OpenCode Zen key used by PI's opencode provider

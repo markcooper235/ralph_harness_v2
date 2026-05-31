@@ -108,6 +108,20 @@ done
 # Export for subprocesses (especially harness-exec.sh)
 export RALPH_HARNESS RALPH_MODEL RALPH_AGENT RALPH_CODEX_PROFILE
 
+temporarily_disable_opencode_auth() {
+    local auth_path="$HOME/.local/share/opencode/auth.json"
+    local disabled_path="$HOME/.local/share/opencode/auth.json.ralph-disabled"
+    [ -f "$auth_path" ] || return 0
+    mv "$auth_path" "$disabled_path"
+}
+
+restore_opencode_auth() {
+    local auth_path="$HOME/.local/share/opencode/auth.json"
+    local disabled_path="$HOME/.local/share/opencode/auth.json.ralph-disabled"
+    [ -f "$disabled_path" ] || return 0
+    mv "$disabled_path" "$auth_path"
+}
+
 # Function to wrap harness execution with automatic fallback to native providers on failure
 harness_exec_prompt_with_fallback() {
     local prompt="$1"
@@ -132,6 +146,7 @@ harness_exec_prompt_with_fallback() {
     local saved_ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}"
     local saved_RALPH_CODEX_PROFILE="${RALPH_CODEX_PROFILE:-}"
     local saved_RALPH_MODEL="${RALPH_MODEL:-}"
+    local opencode_auth_temporarily_disabled=0
 
     case "$harness_name" in
         codex)
@@ -202,6 +217,10 @@ harness_exec_prompt_with_fallback() {
                 opencode)
                     if [ -n "${OPENCODE_MODEL_NATIVE:-}" ]; then
                         RALPH_MODEL="${OPENCODE_MODEL_NATIVE}"
+                    fi
+                    if [ "${OPENCODE_FORCE_LOGOUT_ON_FALLBACK:-0}" = "1" ]; then
+                        temporarily_disable_opencode_auth
+                        opencode_auth_temporarily_disabled=1
                     fi
                     if [ "${OPENCODE_USE_LOGIN_FALLBACK:-0}" = "1" ] && [ -z "${OPENCODE_API_KEY_NATIVE:-}" ]; then
                         unset OPENCODE_API_KEY
@@ -284,6 +303,9 @@ harness_exec_prompt_with_fallback() {
         export RALPH_MODEL
     else
         unset RALPH_MODEL
+    fi
+    if [ "$opencode_auth_temporarily_disabled" -eq 1 ]; then
+        restore_opencode_auth
     fi
 
     return $exit_code
