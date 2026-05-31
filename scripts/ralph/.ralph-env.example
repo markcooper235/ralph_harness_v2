@@ -32,11 +32,12 @@
 # For Claude Code fallback to Anthropic native API:
 #   export ANTHROPIC_API_KEY_NATIVE="sk-ant-..." # Your Anthropic API key
 #
-# For Opencode fallback (currently optional; not validated in this repo's non-interactive flow):
-#   export OPENCODE_API_KEY_NATIVE=""
-#   export OPENCODE_API_BASE_NATIVE=""
-#   export OPENCODE_MODEL_NATIVE=""
+# For Opencode fallback:
+#   export OPENCODE_API_KEY_NATIVE="sk-op-..."   # OpenCode Zen key
+#   export OPENCODE_API_BASE_NATIVE="https://opencode.ai/zen/v1/chat/completions"
+#   export OPENCODE_MODEL_NATIVE="opencode/deepseek-v4-flash-free"
 #   export OPENCODE_USE_LOGIN_FALLBACK="0"
+#   # If env-based Zen auth fails, clear or rename ~/.local/share/opencode/auth.json so stored provider auth does not override it.
 #
 # For PI Agent fallback:
 #   export PI_API_KEY_NATIVE="sk-op-..."         # OpenCode Zen key used by PI's opencode provider
