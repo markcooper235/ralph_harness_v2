@@ -2107,6 +2107,18 @@ cmd_import_story() {
   normalize_story_container "$story_path_abs"
   validate_story_container_file "$story_path_abs" "$story_id" "$sprint"
 
+  local imported_status imported_passes tmp
+  imported_status="$(jq -r '.status // empty' "$story_path_abs")"
+  imported_passes="$(jq -r '.passes // false' "$story_path_abs")"
+  if [ -n "$imported_status" ]; then
+    tmp="$(mktemp)"
+    jq --arg id "$story_id" --arg status "$imported_status" --argjson passes "$imported_passes" '
+      (.stories[] | select(.id == $id) | .status) = $status
+      | (.stories[] | select(.id == $id) | .passes) = $passes
+    ' "$STORIES_FILE" > "$tmp"
+    mv "$tmp" "$STORIES_FILE"
+  fi
+
   if [ -n "${tmp_input:-}" ] && [ -f "$tmp_input" ]; then
     rm -f "$tmp_input"
   fi

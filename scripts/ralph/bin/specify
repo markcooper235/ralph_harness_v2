@@ -3,7 +3,6 @@ set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF_PATH="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
-LOCAL_SPECIFY="$SELF_DIR/../.venv-specify/bin/specify"
 
 find_uvx_bin() {
   local candidate user_base
@@ -41,10 +40,6 @@ find_uv_bin() {
   return 1
 }
 
-if [ -x "$LOCAL_SPECIFY" ]; then
-  exec "$LOCAL_SPECIFY" "$@"
-fi
-
 if UVX_BIN="$(find_uvx_bin)"; then
   exec "$UVX_BIN" --from git+https://github.com/github/spec-kit.git specify "$@"
 fi
@@ -63,7 +58,7 @@ fi
 cat >&2 <<'EOF'
 ERROR: No repo-local or global 'specify' CLI is available.
 Install options:
-  1. Re-run Ralph install to bootstrap scripts/ralph/.venv-specify
+  1. Re-run Ralph install so it can bootstrap uv for this repo wrapper
   2. Install uv, then this wrapper can run via uv/uvx automatically
   3. Install globally as a last resort: uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
 EOF

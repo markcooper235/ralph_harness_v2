@@ -451,6 +451,8 @@ expected_state="ready"
     --prompt-context "Create tests/ui.spec.mjs using Playwright chromium with a local HTTP server. Assert at least 6 things including #app text, #status text, data-state attr, #cta text, title attr, and that cta is a button. Then build and run browser:check." \
     > "$WORK_DIR/story-add-S-003.log" 2>&1
 
+  ./ralph-sprint.sh restage sprint-1 > "$WORK_DIR/sprint-restage.log" 2>&1
+
   ./ralph-story.sh import-story S-001 - <<STORYJSON
 {
   "version": 1,
@@ -674,7 +676,6 @@ STORYJSON
 
   ./ralph-story.sh health > "$WORK_DIR/story-health.log" 2>&1
   ./ralph-sprint.sh status > "$WORK_DIR/status-sprint-preloop.log" 2>&1 || true
-  ./ralph-sprint.sh restage sprint-1 > "$WORK_DIR/sprint-restage.log" 2>&1
   commit_framework_baseline "$SPRINT_REPO" "chore(worst-ui): pre-loop planning state"
   ./ralph-sprint.sh mark-ready sprint-1 > "$WORK_DIR/sprint-mark-ready.log" 2>&1
   ./ralph-sprint.sh use sprint-1 > "$WORK_DIR/sprint-use.log" 2>&1
@@ -725,7 +726,7 @@ assert_contains "$runtime_loop_log" "Story S-002 COMPLETE"
 assert_contains "$runtime_loop_log" "Story S-003 COMPLETE"
 assert_contains "$WORK_DIR/test-sprint.log" "test ok"
 assert_contains "$WORK_DIR/runtime-sprint.log" "browser ok: $expected_headline \| $expected_status \| $expected_cta \| $expected_state"
-assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint regression: PASS"
+assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint-scoped verification: PASS"
 assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Deleted source sprint branch:"
 
 echo "[worst-ui] running ralph-verify --full post-commit"

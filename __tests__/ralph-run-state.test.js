@@ -392,10 +392,10 @@ exit 0
     },
   })
 
-  assert.match(output, /WARN: specify is available via the repo-local wrapper only|OK: specify available via repo-local persistent install/)
+  assert.match(output, /OK: specify available via the repo-local wrapper/)
 })
 
-test('doctor warns when the repo-local specify wrapper exists without a persistent local install', () => {
+test('doctor reports the repo-local specify wrapper when it resolves via fallback', () => {
   const repoDir = initTempRepo()
   const localSpecifyPath = path.join(repoDir, 'scripts/ralph/bin/specify')
   const fakeGlobalPath = path.join(repoDir, 'fake-global')
@@ -429,8 +429,8 @@ exec "${path.join(fakeGlobalPath, 'specify')}" "$@"
     },
   })
 
-  assert.match(output, /WARN: specify is available via the repo-local wrapper only/)
-  assert.match(output, /runtime fallback/)
+  assert.match(output, /OK: specify available via the repo-local wrapper/)
+  assert.match(output, /global specify only as a last resort/)
 })
 
 test('install auto-configures verify.local.sh for a detected Node/TypeScript repo', () => {

@@ -58,18 +58,14 @@ echo "    Project-level 'specify init' is optional and not required for Ralph wo
 if specify_bin="$(find_specify_bin)"; then
   specify_source="$(describe_specify_bin "$specify_bin")"
   case "$specify_source" in
-    "repo-local persistent install")
-      echo "OK: specify available via repo-local persistent install"
-      ;;
     "repo-local wrapper")
-      echo "WARN: specify is available via the repo-local wrapper only"
-      echo "      This repo can run SpecKit, but it is relying on a runtime fallback (uv/uvx preferred, global specify last resort)."
-      echo "      For a self-contained repo-local install, ensure Python venv support or uv is available, then re-run install.sh."
+      echo "OK: specify available via the repo-local wrapper"
+      echo "    Wrapper resolution prefers uv/uvx and uses global specify only as a last resort."
       ;;
     "uvx fallback")
       echo "WARN: specify is available via uv/uvx fallback"
-      echo "      This works, but it is not a durable repo-local install and may depend on network/tooling at runtime."
-      echo "      For a self-contained repo-local install, ensure Python venv support or uv is available, then re-run install.sh."
+      echo "      This works, but it is not a durable repo-local wrapper install and may depend on network/tooling at runtime."
+      echo "      For a self-contained repo setup, ensure uv is available, then re-run install.sh."
       ;;
     *)
       echo "OK: specify CLI found via global install"

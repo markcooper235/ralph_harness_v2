@@ -632,6 +632,8 @@ if [ "$WITH_LOOP" -eq 1 ]; then
       --prompt-context "$sprint_s003_context" \
       > "$WORK_DIR/story-add-S-003.log" 2>&1
 
+    ./ralph-sprint.sh restage sprint-1 > "$WORK_DIR/sprint-restage.log" 2>&1
+
     ./ralph-story.sh import-story S-001 - <<STORYJSON
 {
   "version": 1,
@@ -916,7 +918,6 @@ STORYJSON
     fi
 
     ./ralph-story.sh health > "$WORK_DIR/story-health.log" 2>&1
-    ./ralph-sprint.sh restage sprint-1 > "$WORK_DIR/sprint-restage.log" 2>&1
     commit_framework_baseline "$SPRINT_REPO" "chore(smoke): pre-loop planning state (sprint)"
     ./ralph-sprint.sh mark-ready sprint-1 > "$WORK_DIR/sprint-mark-ready.log" 2>&1
     ./ralph-sprint.sh use sprint-1 > "$WORK_DIR/sprint-use.log" 2>&1
@@ -987,7 +988,7 @@ STORYJSON
     assert_contains "$WORK_DIR/runtime-sprint.log" "^$sprint_expected_msg$"
   fi
   assert_contains "$WORK_DIR/test-sprint.log" "test ok"
-  assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint regression: PASS"
+  assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Sprint-scoped verification: PASS"
   assert_contains "$WORK_DIR/sprint-commit-sprint.log" "Deleted source sprint branch:"
 
   sprint_tokens="$(extract_tokens_from_log "$runtime_loop_log")"

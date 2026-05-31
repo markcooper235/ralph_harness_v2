@@ -73,11 +73,7 @@ describe_specify_bin() {
   repo_bin="$(specify_repo_bin)"
 
   if [ "$specify_bin" = "$repo_bin" ]; then
-    if [ -x "$SCRIPT_DIR/.venv-specify/bin/specify" ]; then
-      echo "repo-local persistent install"
-    else
-      echo "repo-local wrapper"
-    fi
+    echo "repo-local wrapper"
     return 0
   fi
 
