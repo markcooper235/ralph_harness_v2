@@ -1,0 +1,16 @@
+{
+  "storyId": "S-SENIOR-001",
+  "title": "Refactor authentication service for better performance",
+  "description": "Restructure the authentication service to improve scalability and maintainability",
+  "tasks": [
+    {
+      "id": "T-SENIOR-001",
+      "title": "Extract password validation into separate service"
+    },
+    {
+      "id": "T-SENIOR-002",
+      "title": "Implement caching for user lookups"
+    }
+  ]
+}
+EOF

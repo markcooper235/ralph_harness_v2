@@ -1,0 +1,16 @@
+{
+  "storyId": "S-DEBUG-001",
+  "title": "Investigate intermittent API timeout errors",
+  "description": "Users report occasional 504 errors when calling the payment API. Need to investigate logs, trace requests, and identify root cause.",
+  "tasks": [
+    {
+      "id": "T-DEBUG-001",
+      "title": "Enable debug logging for payment API"
+    },
+    {
+      "id": "T-DEBUG-002",
+      "title": "Analyze error patterns in logs over past week"
+    }
+  ]
+}
+EOF

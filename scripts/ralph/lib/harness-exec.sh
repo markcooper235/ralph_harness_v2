@@ -9,9 +9,6 @@
 RALPH_HARNESS_DEFAULT="${RALPH_HARNISH_DEFAULT:-codex}"
 
 # Model and agent selection (if supported by harness)
-RALPH_MODEL="${RALPH_MODEL:-}"
-RALPH_AGENT="${RALPH_AGENT:-}"
-
 # Paths to configuration files (relative to script directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_PROFILES_FILE="$SCRIPT_DIR/agent-profiles.json"
@@ -116,38 +113,44 @@ _determine_agent_from_story() {
   
   local content="$title $description $tasks_content"
   
+  
   # Define keyword patterns for each agent type
-  if echo "$content" | grep -qE "(debug|debugging|investigate|investigation|research|analyze|analysis|troubleshoot|troubleshooting|diagnose|diagnosis|root cause|explore|exploration)"; then
+  if echo "$content" | rg -q "(debug|debugging|investigate|investigation|research|analyze|analysis|troubleshoot|troubleshooting|diagnose|diagnosis|root cause|explore|exploration)"; then
     echo "researcher"
     return
   fi
-  
-  if echo "$content" | grep -qE "(security|vulnerability|vulnerabilities|exploit|exploits|patch|patching|auth|authentication|authorization|encrypt|encryption|decrypt|decryption|token|tokens|oauth|password|passwords|secret|secrets|key|keys|cert|certificate|ssl|tls|xss|csrf|injection|sql injection|xxe|rce|privilege|escalation|audit|auditing|compliance)"; then
-    echo "security"
-    return
-  fi
-  
-  if echo "$content" | grep -qE "(typo|typos|text|string|label|labels|button|buttons|ui|ux|frontend|minor|minors|small|trivial|fix|fixes|fixing|spelling|grammar|style|styling|css|ui/css|theme|theming|color|colors|font|fonts|icon|icons|image|images|logo|logos)"; then
-    echo "junior-dev"
-    return
-  fi
-  
-  if echo "$content" | grep -qE "(refactor|refactoring|restructure|restructuring|architecture|architectural|design|design pattern|design patterns|pattern|patterns|scalability|scalable|performance|optimize|optimization|efficiency|algorithm|algorithms|data structure|database|db|sql|nosql|api|microservice|microservices|service|services|backend|system|systems|enterprise)"; then
+
+  if echo "$content" | rg -q "(refactor|refactoring|restructure|restructuring|architecture|architectural|design|design pattern|design patterns|pattern|patterns|scalability|scalable|performance|optimize|optimization|efficiency|algorithm|algorithms|data structure|database|db|sql|nosql|api|microservice|microservices|service|services|backend|system|systems|enterprise)"; then
     echo "senior-dev"
     return
   fi
-  
-  if echo "$content" | grep -qE "(test|testing|unit test|unit-test|integration test|integration-test|e2e|end-to-end|end to end|validation|valid|verify|verification|assert|assertion|mock|mocks|stub|stubs|fixture|fixtures|test case|test cases|test suite|test driven|tdd|bdd)"; then
+
+  # Security terms with word boundaries for single words, and substring for multi-word term
+  if echo "$content" | rg -q '(^|[^a-zA-Z0-9_])(security|vulnerability|vulnerabilities|exploit|exploits|patch|patching|auth|authentication|authorization|encrypt|encryption|decrypt|decryption|token|tokens|oauth|password|passwords|secret|secrets|key|keys|cert|certificate|ssl|tls|xss|csrf|injection|xxe|rce|privilege|escalation|audit|auditing|compliance)([^a-zA-Z0-9_]|$)' || echo "$content" | rg -q "sql injection"; then
+    echo "security"
+    return
+  fi
+
+  if echo "$content" | rg -q "(typo|typos|text|string|label|labels|button|buttons|ui|ux|frontend|minor|minors|small|trivial|fix|fixes|fixing|spelling|grammar|style|styling|css|ui/css|theme|theming|color|colors|font|fonts|icon|icons|image|images|logo|logos)"; then
+    echo "junior-dev"
+    return
+  fi
+
+  if echo "$content" | rg -q "(test|testing|unit test|unit-test|integration test|integration-test|e2e|end-to-end|end to end|validation|valid|verify|verification|assert|assertion|mock|mocks|stub|stubs|fixture|fixtures|test case|test cases|test suite|test driven|tdd|bdd)"; then
     echo "qa-test"
     return
   fi
-  
-  if echo "$content" | grep -qE "(deploy|deployment|deploying|infrastructure|infrastructural|docker|kubernetes|k8s|aws|azure|gcp|cloud|server|servers|network|networking|ci|ci/cd|continuous integration|continuous delivery|continuous deployment|pipeline|pipelines|jenkins|gitlab|github actions|terraform|ansible|puppet|chef|monitoring|logging|logs|metrics|alerting)"; then
+
+  if echo "$content" | rg -q "(deploy|deployment|deploying|infrastructure|infrastructural|docker|kubernetes|k8s|aws|azure|gcp|cloud|server|servers|network|networking|ci|ci/cd|continuous integration|continuous delivery|continuous deployment|pipeline|pipelines|jenkins|gitlab|github actions|terraform|ansible|puppet|chef|monitoring|logging|logs|metrics|alerting)"; then
     echo "devops"
     return
   fi
-  
-  if echo "$content" | grep -qE "(doc|documentation|comment|comments|explain|explanation|description|descriptions|readme|readmes|guide|guides|tutorial|tutorials|walkthrough|faq|faqs|wiki|wikis|markdown|md)"; then
+
+  if echo "$content" | rg -q "(doc|documentation|comment|comments|explain|explanation|description|descriptions|readme|readmes|guide|guides|tutorial|tutorials|walkthrough|faq|faqs|wiki|wikis|markdown|md)"; then
+    echo "documentation"
+    return
+  fi
+  if echo "$content" | rg -q "(doc|documentation|comment|comments|explain|explanation|description|descriptions|readme|readmes|guide|guides|tutorial|tutorials|walkthrough|faq|faqs|wiki|wikis|markdown|md)"; then
     echo "documentation"
     return
   fi
@@ -439,7 +442,7 @@ harness_exec_prompt() {
 _supports_codex_yolo() {
   local out
   out="$("${CODEX_BIN:-codex}" --yolo exec --help 2>&1 || true)"
-  echo "$out" | grep -qi "unexpected argument '--yolo'" && return 1
-  echo "$out" | grep -qi "Run Codex non-interactively" && return 0
+  echo "$out" | rg -qi "unexpected argument '--yolo'" && return 1
+  echo "$out" | rg -qi "Run Codex non-interactively" && return 0
   return 1
 }

@@ -1,0 +1,16 @@
+{
+  "storyId": "S-DOC-001",
+  "title": "Document API endpoints for frontend team",
+  "description": "Create comprehensive documentation for all REST API endpoints with examples",
+  "tasks": [
+    {
+      "id": "T-DOC-001",
+      "title": "Document user authentication endpoints"
+    },
+    {
+      "id": "T-DOC-002",
+      "title": "Document payment processing endpoints"
+    }
+  ]
+}
+EOF

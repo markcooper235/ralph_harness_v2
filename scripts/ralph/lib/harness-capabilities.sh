@@ -112,3 +112,11 @@ get_harness_access_method() {
   method="$(_load_json_value "$capabilities_file" ".harnesses.$harness.access_method // empty")"
   echo "$method"
 }
+# Get default agent for a harness
+get_harness_default_agent() {
+  local harness="$1"
+  local capabilities_file="$(_get_capabilities_file)"
+  local default_agent
+  default_agent="$(_load_json_value "$capabilities_file" ".harnesses.$harness.default_agent // empty")"
+  echo "$default_agent"
+}
