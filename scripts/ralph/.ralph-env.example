@@ -7,18 +7,24 @@
 # This provides a single API key to access multiple model providers.
 # export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
 # export OPENAI_API_KEY="sk-or-..."   # Your OpenRouter API key
-# export ANTHROPIC_BASE_URL="https://openrouter.ai/api/v1"
-# export ANTHROPIC_API_KEY="sk-or-..." # Same key works for Anthropic-compatible endpoint
+# Claude Code uses Anthropic gateway semantics with OpenRouter:
+# export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+# export ANTHROPIC_AUTH_TOKEN="sk-or-..."
+# export ANTHROPIC_API_KEY=""   # Must be explicitly blank to avoid auth conflicts
+# Optional Claude/OpenRouter model aliases:
+# export ANTHROPIC_DEFAULT_HAIKU_MODEL="~anthropic/claude-haiku-latest"
+# export ANTHROPIC_DEFAULT_SONNET_MODEL="~anthropic/claude-sonnet-latest"
+# export ANTHROPIC_DEFAULT_OPUS_MODEL="~anthropic/claude-opus-latest"
 
 # --- To use native providers (automatic fallback on failure) ---
-# Alternatively, you can set the following *_NATIVE variables to enable automatic fallback 
-# if the consolidated provider fails (e.g., due to quota exhaustion or errors).
+# Set the following *_NATIVE variables to enable one automatic fallback
+# if the OpenRouter-backed first attempt fails (for example due to quota exhaustion).
 # On fallback:
-#   * Base URL overrides (OPENAI_BASE_URL, ANTHROPIC_BASE_URL) will be unset, 
-#     allowing harnesses to use their default endpoints
-#   * API keys will be set to the *_NATIVE values if defined, otherwise unset
-#     (unset allows harness-configured authentication like OAuth or auth files)
-# If set, these variables will be used on the second attempt if the first attempt fails.
+#   * OpenRouter base URL overrides are removed
+#   * Native API keys are applied for the selected harness only
+#   * Ralph does NOT fall back to stored harness OAuth/account auth
+# If no matching *_NATIVE variable is set for a harness, Ralph will fail after the
+# OpenRouter attempt instead of trying account-based auth inside the framework.
 # 
 # For Codex fallback to OpenAI native API:
 #   export OPENAI_API_KEY_NATIVE="sk-..."   # Your OpenAI API key
@@ -26,9 +32,16 @@
 # For Claude Code fallback to Anthropic native API:
 #   export ANTHROPIC_API_KEY_NATIVE="sk-ant-..." # Your Anthropic API key
 #
-# For Opencode and PI Agent fallback to Opencode Zen Setup:
-#   export OPENCODE_API_KEY_NATIVE="sk-op-..."   # Your Opencode Zen API key
-#   (This will be available as OPENCODE_API_KEY during fallback for both harnesses)
+# For Opencode fallback (currently optional; not validated in this repo's non-interactive flow):
+#   export OPENCODE_API_KEY_NATIVE=""
+#   export OPENCODE_API_BASE_NATIVE=""
+#   export OPENCODE_MODEL_NATIVE=""
+#   export OPENCODE_USE_LOGIN_FALLBACK="0"
+#
+# For PI Agent fallback:
+#   export PI_API_KEY_NATIVE="sk-op-..."         # OpenCode Zen key used by PI's opencode provider
+#   export PI_API_BASE_NATIVE="https://opencode.ai/zen/v1/chat/completions"
+#   export PI_MODEL_NATIVE="opencode/nemotron-3-super-free"
 #
 # --- Optional: Provider-specific overrides per harness ---
 # If a harness requires different variables, set them here.
@@ -40,21 +53,25 @@
 # export PI_API_KEY="sk-or-..."
 
 # --- Fallback Note ---
-# The system will automatically fall back as described above when the first attempt 
-# to execute a story with the configured harness (e.g., pointing to OpenRouter) fails.
-# To enable this feature, set the *_NATIVE variables as described above.
+# Ralph now uses a simple two-step policy:
+#   1. Try the configured OpenRouter/provider route first
+#   2. If that fails, retry once with the matching *_NATIVE API key
+# There is no third framework-managed fallback to harness OAuth/account auth.
+# To enable the second step, set the *_NATIVE variables as described above.
 # If you do not set the *_NATIVE variables, no automatic fallback will occur.
-# You can also manage fallback manually by unsetting the base URL variables (OPENAI_BASE_URL, ANTHROPIC_BASE_URL) 
-# and ensuring your desired API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENCODE_API_KEY) 
-# are set in the environment (unset API key variables allow harness-configured auth).
+# You can still use harness-specific OAuth/account login manually outside Ralph,
+# but framework runs should rely on explicit env vars so behavior stays deterministic.
 # 
 # Examples:
 #   # To fall back to native OpenAI/Anthropic API keys:
 #   export OPENAI_API_KEY_NATIVE="sk-..."
 #   export ANTHROPIC_API_KEY_NATIVE="sk-ant-..."
 #
-#   # To fall back to Opencode Zen Setup for Opencode and PI Agent:
+#   # To fall back for Opencode:
 #   export OPENCODE_API_KEY_NATIVE="sk-op-..."
 #
-#   # To rely on externally configured authentication (OAuth, auth files, etc.):
-#   # Leave all *_NATIVE variables unset
+#   # To fall back for PI Agent:
+#   export PI_API_KEY_NATIVE="sk-..."
+#
+#   # To disable native fallback for a harness:
+#   # Leave the matching *_NATIVE variable unset

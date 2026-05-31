@@ -956,7 +956,7 @@ STORYJSON
     ./ralph-sprint.sh mark-ready sprint-1 > "$WORK_DIR/sprint-mark-ready.log" 2>&1
     ./ralph-sprint.sh use sprint-1 > "$WORK_DIR/sprint-use.log" 2>&1
     sprint_loop_start_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
-    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" ./ralph.sh "${RALPH_LOOP_ARGS[@]}"
+    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" RALPH_STRUCTURED_OUTPUT=1 ./ralph.sh "${RALPH_LOOP_ARGS[@]}"
     sprint_loop_end_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
 
     jq -e '.passes == true and .status == "done"' "sprints/sprint-1/stories/S-001/story.json" >/dev/null
@@ -1034,7 +1034,7 @@ STORYJSON
   benchmark_set_retries "$sprint_retries"
 
   if [ "$sprint_tokens" -eq 0 ]; then
-    echo "[smoke] token summary: unavailable (no 'tokens used' markers in codex output)"
+    echo "[smoke] token summary: unavailable (no parseable token usage found in runtime log)"
   else
     echo "[smoke] token summary: app_mode=$APP_MODE sprint=$sprint_tokens stories_completed=$sprint_stories_completed"
   fi

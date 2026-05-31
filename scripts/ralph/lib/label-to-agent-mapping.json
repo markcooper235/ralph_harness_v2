@@ -222,8 +222,10 @@
     "load test": "senior-dev",
     "stress test": "senior-dev",
     "security audit": "security",
-    "code review": "senior-dev",
-    "review": "senior-dev",
+    "code review": "reviewer",
+    "review": "reviewer",
+    "reviewer": "reviewer",
+    "peer review": "reviewer",
     "tech debt": "senior-dev",
     "technical debt": "senior-dev"
   }

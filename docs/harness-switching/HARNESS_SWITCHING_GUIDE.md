@@ -158,17 +158,17 @@ Ralph does not manage provider selection or API keys—it merely passes the mode
 1. Set the appropriate environment variables for the harness (e.g., `OPENAI_BASE_URL=https://openrouter.ai/api/v1` and `OPENAI_API_KEY=<your‑openrouter‑key>` for Codex‑like harnesses, or the equivalent for Opencode/PI‑Agent/Claude‑Code).
 2. Provide the full model identifier that the harness expects when targeting OpenRouter (often `openrouter/<provider>/<model>` or similar—check the harness’s documentation).
 
-Ralph also supports automatic fallback to native providers or external authentication when the primary provider fails:
+Ralph also supports automatic fallback to native provider API keys when the primary provider fails:
 
 ### Automatic Fallback Mechanism
 
-If you set `*_API_KEY_NATIVE` environment variables (e.g., `OPENAI_API_KEY_NATIVE`, `ANTHROPIC_API_KEY_NATIVE`, `OPENCODE_API_KEY_NATIVE`), Ralph will automatically attempt a fallback on failure:
+If you set `*_API_KEY_NATIVE` environment variables (e.g., `OPENAI_API_KEY_NATIVE`, `ANTHROPIC_API_KEY_NATIVE`, `OPENCODE_API_KEY_NATIVE`), Ralph will automatically attempt one fallback on failure:
 
 1. **First attempt**: Uses the configured provider (e.g., OpenRouter via `OPENAI_BASE_URL`)
 2. **On failure** (non-zero exit):
    - Unsets `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` (harnesses use default endpoints)
-   - Sets API keys to the `*_NATIVE` values if defined, otherwise unsets them
-   - Unsetting API keys allows harnesses to use externally configured authentication (OAuth, auth files, etc.)
+   - Sets API keys to the matching `*_NATIVE` values
+   - Does not fall back to stored harness OAuth/account authentication
 3. **Second attempt**: Runs with the fallback configuration
 
 ### Examples
@@ -184,8 +184,7 @@ To fall back to Opencode Zen Setup for Opencode and PI Agent:
 export OPENCODE_API_KEY_NATIVE="sk-op-..."
 ```
 
-To rely on externally configured authentication (OAuth, auth files, etc.):
-Leave all `*_NATIVE` variables unset.
+If you leave the matching `*_NATIVE` variable unset, Ralph will stop after the first failure instead of using stored harness auth.
 
 If you want Ralph to validate or document provider‑specific requirements, you could extend `harness-capabilities.json` with a `provider` field and perhaps a `requires_base_url` flag, but that is optional; the current capability model already lets you specify which models are available per harness, and you can simply add the OpenRouter‑qualified model strings to the `available_models` list.
 

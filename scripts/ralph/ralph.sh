@@ -26,6 +26,32 @@ if ! load_ralph_env "${HOME}/.ralph-env"; then
     load_ralph_env "${SCRIPT_DIR}/.ralph-env" || true
 fi
 
+normalize_claude_openrouter_env() {
+  local anthropic_base="${ANTHROPIC_BASE_URL:-}"
+  local openrouter_base="${OPENROUTER_BASE_URL:-}"
+
+  case "${anthropic_base:-$openrouter_base}" in
+    *openrouter.ai/api* )
+      ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+      if [ -n "${OPENROUTER_API_KEY:-}" ] && [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+        ANTHROPIC_AUTH_TOKEN="${OPENROUTER_API_KEY}"
+      fi
+      case "${ANTHROPIC_API_KEY:-}" in
+        sk-or-v1-*|"${OPENROUTER_API_KEY:-__no_match__}")
+          ANTHROPIC_API_KEY=""
+          ;;
+      esac
+      : "${ANTHROPIC_DEFAULT_HAIKU_MODEL:=~anthropic/claude-haiku-latest}"
+      : "${ANTHROPIC_DEFAULT_SONNET_MODEL:=~anthropic/claude-sonnet-latest}"
+      : "${ANTHROPIC_DEFAULT_OPUS_MODEL:=~anthropic/claude-opus-latest}"
+      export ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
+      export ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL
+      ;;
+  esac
+}
+
+normalize_claude_openrouter_env
+
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 LOCK_DIR="$SCRIPT_DIR/.workflow-lock"

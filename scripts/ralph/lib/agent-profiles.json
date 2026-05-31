@@ -3,10 +3,10 @@
     "researcher": {
       "description": "Investigation, debugging, exploration tasks requiring deep analysis",
       "models": {
-        "codex": "gpt-5.2-codex",
-        "opencode": "gpt-5-codex",
-        "piagent": "gpt-5",
-        "claude_code": "claude-opus-4-7"
+        "codex": "gpt-5.5",
+        "opencode": "gpt-5.5",
+        "piagent": "gpt-5.5",
+        "claude_code": "claude-opus-4-8"
       },
       "system_prompt_addition": "You are an expert investigator and debugger. Focus on thorough analysis, asking clarifying questions when needed, and providing detailed explanations of your reasoning process.",
       "temperature": 0.2,
@@ -15,9 +15,9 @@
     "junior-dev": {
       "description": "Simple features, bug fixes, typos, and straightforward implementation tasks",
       "models": {
-        "codex": "gpt-5.1-codex-mini",
-        "opencode": "gpt-5.1-codex-mini",
-        "piagent": "gpt-5-mini",
+        "codex": "gpt-5.4-mini",
+        "opencode": "gpt-5.4-mini",
+        "piagent": "gpt-5.4-mini",
         "claude_code": "claude-haiku-4-5"
       },
       "system_prompt_addition": "You are a competent junior developer focused on completing tasks efficiently and correctly. Follow instructions precisely, write clean code, and ensure all tests pass.",
@@ -27,10 +27,10 @@
     "senior-dev": {
       "description": "Complex features, architecture decisions, refactoring, and performance optimization",
       "models": {
-        "codex": "gpt-5.2-codex",
-        "opencode": "gpt-5-codex",
-        "piagent": "gpt-5",
-        "claude_code": "claude-opus-4-7"
+        "codex": "gpt-5.4",
+        "opencode": "gpt-5.4",
+        "piagent": "gpt-5.4",
+        "claude_code": "claude-sonnet-4-6"
       },
       "system_prompt_addition": "You are a senior software architect and developer. Consider long-term maintainability, scalability, and best practices in your solutions. Think ahead about potential issues and edge cases.",
       "temperature": 0.2,
@@ -39,13 +39,25 @@
     "security": {
       "description": "Security patches, vulnerability fixes, and security-focused implementations",
       "models": {
-        "codex": "gpt-5.2-codex",
-        "opencode": "gpt-5-codex",
-        "piagent": "gpt-5",
-        "claude_code": "claude-opus-4-7"
+        "codex": "gpt-5.5",
+        "opencode": "gpt-5.5",
+        "piagent": "gpt-5.5",
+        "claude_code": "claude-opus-4-8"
       },
       "system_prompt_addition": "You are a security-focused developer with expertise in identifying and fixing vulnerabilities. Always consider security implications, follow security best practices, and validate that your changes don't introduce new security risks.",
       "temperature": 0.1,
+      "max_tokens": 4000
+    },
+    "reviewer": {
+      "description": "Code review, change assessment, regression risk identification, and implementation critique",
+      "models": {
+        "codex": "gpt-5.4",
+        "opencode": "gpt-5.4",
+        "piagent": "gpt-5.4",
+        "claude_code": "claude-sonnet-4-6"
+      },
+      "system_prompt_addition": "You are a careful code reviewer. Prioritize finding bugs, regressions, risky assumptions, missing tests, and maintainability issues. Be specific, evidence-based, and concise.",
+      "temperature": 0.2,
       "max_tokens": 4000
     },
     "qa-test": {
@@ -53,7 +65,7 @@
       "models": {
         "codex": "gpt-5.4-mini",
         "opencode": "gpt-5.4-mini",
-        "piagent": "openrouter/openai/gpt-5.4-mini",
+        "piagent": "gpt-5.4-mini",
         "claude_code": "claude-sonnet-4-6"
       },
       "system_prompt_addition": "You are a meticulous QA engineer focused on thorough testing and validation. Create comprehensive test cases, verify edge cases, and ensure all requirements are met.",
@@ -65,7 +77,7 @@
       "models": {
         "codex": "gpt-5.4-mini",
         "opencode": "gpt-5.4-mini",
-        "piagent": "openrouter/openai/gpt-5.4-mini",
+        "piagent": "gpt-5.4-mini",
         "claude_code": "claude-sonnet-4-6"
       },
       "system_prompt_addition": "You are a DevOps engineer with expertise in infrastructure, deployment pipelines, and system reliability. Focus on automation, reproducibility, and operational excellence.",
@@ -75,9 +87,9 @@
     "documentation": {
       "description": "Documentation, comments, explanations, and educational content",
       "models": {
-        "codex": "gpt-5.1-codex-mini",
-        "opencode": "gpt-5.1-codex-mini",
-        "piagent": "gpt-5-mini",
+        "codex": "gpt-5.4-mini",
+        "opencode": "gpt-5.4-mini",
+        "piagent": "gpt-5.4-mini",
         "claude_code": "claude-haiku-4-5"
       },
       "system_prompt_addition": "You are a technical writer focused on creating clear, accurate, and helpful documentation. Explain concepts thoroughly, provide examples, and ensure accessibility for your audience.",
@@ -87,9 +99,9 @@
     "default": {
       "description": "General purpose agent for tasks that don't fit other categories",
       "models": {
-        "codex": "gpt-5.1-codex-mini",
-        "opencode": "gpt-5.1-codex-mini",
-        "piagent": "gpt-5-mini",
+        "codex": "gpt-5.4-mini",
+        "opencode": "gpt-5.4-mini",
+        "piagent": "gpt-5.4-mini",
         "claude_code": "claude-haiku-4-5"
       },
       "system_prompt_addition": "You are a helpful and capable AI assistant. Follow instructions carefully and provide high-quality solutions.",

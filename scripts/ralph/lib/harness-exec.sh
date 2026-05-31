@@ -79,7 +79,7 @@ _resolve_opencode_model() {
   case "$provider_base" in
     *openrouter.ai*)
       case "$requested_model" in
-        gpt-3.5-turbo|gpt-4|gpt-4-turbo|gpt-4o|gpt-4.1|gpt-4.1-mini|gpt-4.1-nano|gpt-5|gpt-5-mini|gpt-5-nano|gpt-5-pro|gpt-5-codex|gpt-5.1-codex|gpt-5.1-codex-mini|gpt-5.2-codex)
+        gpt-3.5-turbo|gpt-4|gpt-4-turbo|gpt-4o|gpt-4.1|gpt-4.1-mini|gpt-4.1-nano|gpt-5|gpt-5-mini|gpt-5-nano|gpt-5-pro|gpt-5.4|gpt-5.4-mini|gpt-5.4-pro|gpt-5.5|gpt-5.5-pro|gpt-5-codex|gpt-5.1-codex|gpt-5.1-codex-mini|gpt-5.2-codex)
           echo "openrouter/openai/$requested_model"
           return
           ;;
@@ -91,8 +91,8 @@ _resolve_opencode_model() {
           echo "openrouter/anthropic/claude-sonnet-4.6"
           return
           ;;
-        claude-3-opus|claude-opus-4-7|claude-opus-4.7)
-          echo "openrouter/anthropic/claude-opus-4.7"
+        claude-3-opus|claude-opus-4-8|claude-opus-4.8)
+          echo "openrouter/anthropic/claude-opus-4.8"
           return
           ;;
       esac
@@ -148,7 +148,7 @@ _resolve_piagent_model() {
   fi
 
   case "$requested_model" in
-    openrouter/*|anthropic/*|google/*|openai/*)
+    opencode/*|openrouter/*|anthropic/*|google/*|openai/*)
       printf '%s\n' "$requested_model"
       return
       ;;
@@ -169,8 +169,35 @@ _resolve_piagent_model() {
           printf '%s\n' "openrouter/anthropic/claude-sonnet-4.6"
           return
           ;;
-        claude-3-opus|claude-opus-4-7|claude-opus-4.7)
-          printf '%s\n' "openrouter/anthropic/claude-opus-4.7"
+        claude-3-opus|claude-opus-4-8|claude-opus-4.8)
+          printf '%s\n' "openrouter/anthropic/claude-opus-4.8"
+          return
+          ;;
+      esac
+      ;;
+  esac
+
+  printf '%s\n' "$requested_model"
+}
+
+_resolve_claude_code_model() {
+  local requested_model="$1"
+  [ -n "$requested_model" ] || return 0
+
+  local provider_base="${ANTHROPIC_BASE_URL:-}"
+  case "$provider_base" in
+    *openrouter.ai/api*)
+      case "$requested_model" in
+        openrouter/anthropic/claude-haiku-*|anthropic/claude-haiku-*|claude-haiku-*|haiku)
+          printf '%s\n' "haiku"
+          return
+          ;;
+        openrouter/anthropic/claude-sonnet-*|anthropic/claude-sonnet-*|claude-sonnet-*|sonnet)
+          printf '%s\n' "sonnet"
+          return
+          ;;
+        openrouter/anthropic/claude-opus-*|anthropic/claude-opus-*|claude-opus-*|opus)
+          printf '%s\n' "opus"
           return
           ;;
       esac
@@ -191,10 +218,13 @@ _model_family_name() {
 _agent_selection_priority() {
   local agent_name="$1"
   case "$agent_name" in
-    researcher|senior-dev|security)
+    researcher|security)
       echo "heavy"
       ;;
-    qa-test|devops)
+    senior-dev|reviewer)
+      echo "advanced"
+      ;;
+    reviewer|qa-test|devops)
       echo "strong"
       ;;
     documentation|junior-dev|default|*)
@@ -249,20 +279,60 @@ _score_model_for_agent() {
   case "$priority" in
     heavy)
       case "$lower" in
-        *gpt-5.2-codex*|*gpt-5.1-codex*|*gpt-5-codex*|*gpt-5.2*|*gpt-5.1*|*gpt-5-pro*|*gpt-5*|*gpt-4.1*|*gpt-4o*|*gpt-4-turbo*|*claude-opus*|*claude-sonnet-4*|*claude-sonnet-latest*|*deepseek-r1*|*deepseek-v4-pro*)
+        *claude-opus*)
+          score=$((score + 180))
+          ;;
+        *claude-sonnet*)
+          score=$((score + 100))
+          ;;
+        *gpt-5.5*)
+          score=$((score + 180))
+          ;;
+        *gpt-5.5*|*gpt-5.4-pro*|*gpt-5.4*|*gpt-5.2-codex*|*gpt-5.1-codex*|*gpt-5-codex*|*gpt-5.2*|*gpt-5.1*|*gpt-5-pro*|*gpt-5*|*gpt-4.1*|*gpt-4o*|*gpt-4-turbo*|*claude-opus*|*claude-sonnet-4*|*claude-sonnet-latest*|*deepseek-r1*|*deepseek-v4-pro*)
           score=$((score + 120))
           ;;
-        *gpt-mini*|*mini*|*nano*|*haiku*|*flash-lite*|*:free)
+        *gpt-5.4-mini*|*gpt-mini*|*mini*|*nano*|*haiku*|*flash-lite*|*:free)
           score=$((score - 40))
+          ;;
+      esac
+      ;;
+    advanced)
+      case "$lower" in
+        *claude-sonnet*)
+          score=$((score + 150))
+          ;;
+        *claude-opus*)
+          score=$((score + 80))
+          ;;
+        *gpt-5.4*)
+          score=$((score + 160))
+          ;;
+        *gpt-5.5*)
+          score=$((score + 110))
+          ;;
+        *gpt-5.4-mini*|*gpt-5-mini*|*gpt-4.1-mini*|*gpt-4o-mini*)
+          score=$((score + 80))
+          ;;
+        *gpt-5*|*gpt-4.1*|*gpt-4o*|*gpt-4-turbo*|*claude-sonnet*|*claude-opus*|*deepseek-v4*|*codestral*|*devstral*)
+          score=$((score + 90))
           ;;
       esac
       ;;
     strong)
       case "$lower" in
+        *claude-sonnet*)
+          score=$((score + 140))
+          ;;
+        *claude-opus*)
+          score=$((score + 40))
+          ;;
         *gpt-5.4-mini*|*gpt-5-mini*|*gpt-4.1-mini*|*gpt-4o-mini*)
           score=$((score + 120))
           ;;
-        *gpt-5*|*gpt-4.1*|*gpt-4o*|*gpt-4-turbo*|*claude-sonnet*|*claude-opus*|*deepseek-v4*|*codestral*|*devstral*)
+        *gpt-5.5*)
+          score=$((score - 20))
+          ;;
+        *gpt-5.4*|*gpt-5*|*gpt-4.1*|*gpt-4o*|*gpt-4-turbo*|*claude-sonnet*|*claude-opus*|*deepseek-v4*|*codestral*|*devstral*)
           score=$((score + 90))
           ;;
         *mini*|*nano*|*haiku*|*flash-lite*)
@@ -272,10 +342,19 @@ _score_model_for_agent() {
       ;;
     economy)
       case "$lower" in
-        *gpt-mini-latest*|*gpt-4o-mini*|*gpt-4.1-mini*|*gpt-4.1-nano*|*gpt-5-mini*|*gpt-5-nano*|*gpt-3.5-turbo*|*haiku*|*mini*|*nano*|*flash-lite*|*:free)
-          score=$((score + 100))
+        *claude-haiku*)
+          score=$((score + 180))
           ;;
-        *opus*|*pro*|*large*|*gpt-5.2*|*gpt-5.1*|*gpt-5-codex*)
+        *claude-sonnet*|*claude-opus*)
+          score=$((score - 40))
+          ;;
+        *gpt-5.4-mini*)
+          score=$((score + 180))
+          ;;
+        *gpt-mini-latest*|*gpt-4o-mini*|*gpt-4.1-mini*|*gpt-4.1-nano*|*gpt-5-mini*|*gpt-5-nano*|*haiku*|*mini*|*nano*|*flash-lite*|*:free)
+          score=$((score + 140))
+          ;;
+        *gpt-3.5-turbo*|*gpt-5.5*|*opus*|*pro*|*large*|*gpt-5.4*|*gpt-5.2*|*gpt-5.1*|*gpt-5-codex*)
           score=$((score - 35))
           ;;
       esac
@@ -284,6 +363,16 @@ _score_model_for_agent() {
 
   case "$agent_name" in
     documentation)
+      ;;
+    reviewer)
+      case "$lower" in
+        *gpt-5.4*)
+          score=$((score + 50))
+          ;;
+        *gpt-5.5*)
+          score=$((score - 10))
+          ;;
+      esac
       ;;
     qa-test|devops)
       case "$lower" in
@@ -297,7 +386,10 @@ _score_model_for_agent() {
       ;;
     *)
       case "$lower" in
-        *codex*|*codestral*|*devstral*|*coder*)
+        *gpt-5.1-codex-mini*|*gpt-5-codex*)
+          score=$((score - 60))
+          ;;
+        *codestral*|*devstral*|*coder*)
           score=$((score + 15))
           ;;
       esac
@@ -402,6 +494,11 @@ _determine_agent_from_story() {
   # Security terms with word boundaries for single words, and substring for multi-word term
   if echo "$content" | rg -q '(^|[^a-zA-Z0-9_])(security|vulnerability|vulnerabilities|exploit|exploits|patch|patching|auth|authentication|authorization|encrypt|encryption|decrypt|decryption|token|tokens|oauth|password|passwords|secret|secrets|key|keys|cert|certificate|ssl|tls|xss|csrf|injection|xxe|rce|privilege|escalation|audit|auditing|compliance)([^a-zA-Z0-9_]|$)' || echo "$content" | rg -q "sql injection"; then
     echo "security"
+    return
+  fi
+
+  if echo "$content" | rg -q "(code review|peer review|review comments|review feedback|review findings|reviewer|regression risk|change assessment)"; then
+    echo "reviewer"
     return
   fi
 
@@ -523,6 +620,7 @@ _opencode_exec_prompt() {
   # Opencode uses `opencode run` for non-interactive execution
   # --dangerously-skip-permissions to bypass approvals
   local opencode_args=("--dangerously-skip-permissions")
+  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && opencode_args+=("--format" "json")
   
   # Add model selection if specified
   [ -n "${RALPH_MODEL:-}" ] && opencode_args+=("--model" "$RALPH_MODEL")
@@ -550,13 +648,18 @@ _piagent_exec_prompt() {
   # Set the permission mode as an environment variable for the command.
 
   # Build arguments array
-  local pi_args=("$prompt")
+  local pi_args=()
+  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && pi_args+=("--mode" "json")
 
   local pi_provider="${PI_PROVIDER:-}"
   local resolved_model="${RALPH_MODEL:-}"
   local pi_provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
   if [ -z "$pi_provider" ] && [ -n "$resolved_model" ]; then
     case "$resolved_model" in
+      opencode/*)
+        pi_provider="opencode"
+        resolved_model="${resolved_model#opencode/}"
+        ;;
       openrouter/*)
         pi_provider="openrouter"
         resolved_model="${resolved_model#openrouter/}"
@@ -589,6 +692,7 @@ _piagent_exec_prompt() {
 
   # Pass through any additional arguments
   pi_args+=("$@")
+  pi_args+=("$prompt")
 
   # Change to workspace directory and run pi with prompt
   (
@@ -607,10 +711,11 @@ _claude_code_exec_prompt() {
   # For fully non-interactive/CI use, --permission-mode dontAsk is better
   # than --dangerously-skip-permissions which may show initial dialog
   local claude_args=("--permission-mode" "dontAsk")
+  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && claude_args+=("--output-format" "json")
   
    # Add model selection if specified and supported
    if [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "claude_code"; then
-       claude_args+=("--model" "$RALPH_MODEL")
+       claude_args+=("--model" "$(_resolve_claude_code_model "$RALPH_MODEL")")
    fi
   
   # Note: Claude Code doesn't have explicit agent selection like Codex/Opencode
@@ -656,6 +761,7 @@ _opencode_exec_prompt() {
   # Opencode uses `opencode run` for non-interactive execution
   # --dangerously-skip-permissions to bypass approvals
   local opencode_args=("--dangerously-skip-permissions")
+  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && opencode_args+=("--format" "json")
   
   # Add model selection if specified
   [ -n "${RALPH_MODEL:-}" ] && opencode_args+=("--model" "$RALPH_MODEL")
@@ -683,7 +789,8 @@ _piagent_exec_prompt() {
   # Set the permission mode as an environment variable for the command.
 
   # Build arguments array
-  local pi_args=("$prompt")
+  local pi_args=()
+  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && pi_args+=("--mode" "json")
 
   local pi_provider="${PI_PROVIDER:-}"
   local resolved_model="${RALPH_MODEL:-}"
@@ -722,6 +829,7 @@ _piagent_exec_prompt() {
 
   # Pass through any additional arguments
   pi_args+=("$@")
+  pi_args+=("$prompt")
 
   # Change to workspace directory and run pi with prompt
   (
@@ -740,10 +848,11 @@ _claude_code_exec_prompt() {
   # For fully non-interactive/CI use, --permission-mode dontAsk is better
   # than --dangerously-skip-permissions which may show initial dialog
   local claude_args=("--permission-mode" "dontAsk")
+  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && claude_args+=("--output-format" "json")
   
    # Add model selection if specified and supported
    if [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "claude_code"; then
-     claude_args+=("--model" "$RALPH_MODEL")
+     claude_args+=("--model" "$(_resolve_claude_code_model "$RALPH_MODEL")")
    fi
   
   # Pass through any additional arguments (like --max-turns, etc.)

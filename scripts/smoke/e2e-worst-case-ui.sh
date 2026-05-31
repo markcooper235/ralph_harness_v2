@@ -687,7 +687,7 @@ STORYJSON
   RALPH_LOOP_ARGS=(--max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure --harness "$SMOKE_HARNESS")
   [ -n "$SMOKE_MODEL" ] && RALPH_LOOP_ARGS+=(--model "$SMOKE_MODEL")
   [ -n "$SMOKE_AGENT" ] && RALPH_LOOP_ARGS+=(--agent "$SMOKE_AGENT")
-  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" ./ralph.sh "${RALPH_LOOP_ARGS[@]}"
+  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" RALPH_STRUCTURED_OUTPUT=1 ./ralph.sh "${RALPH_LOOP_ARGS[@]}"
   sprint_loop_end_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
 
   jq -e '.passes == true and .status == "done"' "sprints/sprint-1/stories/S-001/story.json" >/dev/null
@@ -751,6 +751,10 @@ benchmark_set_story_cycles "$stories_completed"
 benchmark_set_stories "$stories_completed"
 benchmark_set_retries "$retry_count"
 
-echo "[worst-ui] token summary: loop=$loop_tokens total=$loop_tokens"
+if [ "$loop_tokens" -eq 0 ]; then
+  echo "[worst-ui] token summary: unavailable (no parseable token usage found in runtime log)"
+else
+  echo "[worst-ui] token summary: loop=$loop_tokens total=$loop_tokens"
+fi
 echo "[worst-ui] stories completed: $stories_completed"
 echo "[worst-ui] PASS: worst-case UI smoke completed"
