@@ -856,7 +856,7 @@ exit 124
     },
   })
 
-  assert.match(output, /WARN: Codex story cycle timed out/)
+  assert.match(output, /WARN: Story cycle timed out/)
   assert.match(output, /Story S-001 COMPLETE/)
 
   const storyData = JSON.parse(fs.readFileSync(storyPath, 'utf8'))

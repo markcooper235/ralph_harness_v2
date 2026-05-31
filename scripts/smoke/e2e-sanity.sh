@@ -524,6 +524,7 @@ HOME="$TMP_HOME" "$REPO_ROOT/install.sh" --install-skills > "$WORK_DIR/install-s
 assert_contains "$WORK_DIR/install-skills.log" "Installed Codex skill: prd"
 assert_file_exists "$TMP_HOME/.codex/skills/prd/SKILL.md"
 assert_file_exists "$TMP_HOME/.codex/skills/ralph/SKILL.md"
+assert_file_exists "$TMP_HOME/.codex/skills/ralph-runtime/SKILL.md"
 assert_file_exists "$TMP_HOME/.codex/skills/setup/SKILL.md"
 
 

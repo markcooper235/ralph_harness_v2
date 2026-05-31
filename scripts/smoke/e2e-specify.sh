@@ -367,7 +367,7 @@ print_context_stats() {
 }
 
 # ── normalize_story_checks ─────────────────────────────────────────────────
-# Fix rg escape sequences and add grep -E fallback in a story's story.json.
+# Fix rg escape sequences and normalize simple rg checks to the current baseline.
 
 normalize_story_checks() {
   local story_id="$1"
@@ -383,10 +383,10 @@ normalize_story_checks() {
          else . end) |
         (if test("^rg \"[^\"]+\" [^ ]+$") then
            capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
-           "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+           "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null"
          elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
            capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$") |
-           "rg -q \"\(.pat)\" \(.file) 2>/dev/null || grep -qE \"\(.pat)\" \(.file)"
+           "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null"
          else . end)
       else . end
     )

@@ -411,6 +411,7 @@ git commit -m "chore: init worst-case smoke ui" >/dev/null
 echo "[worst-ui] refresh skills"
 HOME="$TMP_HOME" "$REPO_ROOT/install.sh" --install-skills > "$WORK_DIR/install-skills.log" 2>&1
 assert_contains "$WORK_DIR/install-skills.log" "Installed Codex skill: prd"
+assert_file_exists "$TMP_HOME/.codex/skills/ralph-runtime/SKILL.md"
 
 echo "[worst-ui] install framework"
 HOME="$TMP_HOME" "$REPO_ROOT/install.sh" --project "$TEST_REPO" > "$WORK_DIR/install-framework.log" 2>&1

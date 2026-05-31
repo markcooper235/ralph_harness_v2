@@ -7,16 +7,16 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Load environment variables from .ralph-env files
 # Priority: $HOME/.ralph-env (user-specific) then scripts/ralph/.ralph-env (project-specific fallback)
 if [ -f "${HOME}/.ralph-env" ]; then
     # shellcheck source=/dev/null
     . "${HOME}/.ralph-env"
-elif [ -f "${SCRIPT_DIR}/.ralph-env" ]; then
+elif [ -f "${RALPH_SCRIPT_DIR}/.ralph-env" ]; then
     # shellcheck source=/dev/null
-    . "${SCRIPT_DIR}/.ralph-env"
+    . "${RALPH_SCRIPT_DIR}/.ralph-env"
 fi
 
 # Fallback to native base URLs and API keys if native variables are set
@@ -35,9 +35,9 @@ fi
 
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
-source "$SCRIPT_DIR/lib/codex-exec.sh"
-source "$SCRIPT_DIR/lib/specify.sh"
-LOCK_DIR="$SCRIPT_DIR/.workflow-lock"
+source "$RALPH_SCRIPT_DIR/lib/harness-exec.sh"
+source "$RALPH_SCRIPT_DIR/lib/specify.sh"
+LOCK_DIR="$RALPH_SCRIPT_DIR/.workflow-lock"
 
 STORY_FILE=""
 TARGET_TASK_ID=""
@@ -202,12 +202,12 @@ resolve_story_file() {
     return
   fi
 
-  local active_sprint_file="$SCRIPT_DIR/.active-sprint"
+  local active_sprint_file="$RALPH_SCRIPT_DIR/.active-sprint"
   [ -f "$active_sprint_file" ] || fail "No --story given and no .active-sprint found."
   local sprint
   sprint="$(cat "$active_sprint_file")"
 
-  local stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
+  local stories_file="$RALPH_SCRIPT_DIR/sprints/$sprint/stories.json"
   [ -f "$stories_file" ] || fail "No stories.json for sprint $sprint: $stories_file"
 
   local active_id
@@ -224,7 +224,7 @@ resolve_story_file() {
 
 resolve_story_file
 STORY_DIR="$(dirname "$STORY_FILE")"
-RUNTIME_ROOT="$SCRIPT_DIR/runtime"
+RUNTIME_ROOT="$RALPH_SCRIPT_DIR/runtime"
 STORY_RUNS_DIR="$RUNTIME_ROOT/story-runs"
 STORY_RUNTIME_DIR=""
 CHECK_RUNTIME_DIR=""
@@ -478,7 +478,7 @@ dependency_handoff_json() {
   while IFS= read -r dep_id; do
     [ -z "$dep_id" ] && continue
     local stories_file dep_path
-    stories_file="$SCRIPT_DIR/sprints/$(awk 'NF {print; exit}' "$SCRIPT_DIR/.active-sprint" 2>/dev/null || true)/stories.json"
+    stories_file="$RALPH_SCRIPT_DIR/sprints/$(awk 'NF {print; exit}' "$RALPH_SCRIPT_DIR/.active-sprint" 2>/dev/null || true)/stories.json"
     [ -f "$stories_file" ] || continue
     dep_path="$(jq -r --arg id "$dep_id" '.stories[] | select(.id == $id) | .story_path // ""' "$stories_file" 2>/dev/null)"
     [ -n "$dep_path" ] || continue
@@ -504,7 +504,7 @@ dependency_handoff_json() {
 }
 
 execution_baseline_path() {
-  printf '%s/execution-baseline.md\n' "$SCRIPT_DIR"
+  printf '%s/execution-baseline.md\n' "$RALPH_SCRIPT_DIR"
 }
 
 detect_execution_repo_profile() {
@@ -1017,11 +1017,11 @@ acquire_lock() {
 }
 
 sync_story_metadata_to_backlog() {
-  local active_sprint_file="$SCRIPT_DIR/.active-sprint"
+  local active_sprint_file="$RALPH_SCRIPT_DIR/.active-sprint"
   [ -f "$active_sprint_file" ] || return 0
   local sprint meta_file stmp
   sprint="$(awk 'NF {print; exit}' "$active_sprint_file")"
-  meta_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
+  meta_file="$RALPH_SCRIPT_DIR/sprints/$sprint/stories.json"
   [ -f "$meta_file" ] || return 0
   stmp="$(mktemp)"
   jq --arg id "$STORY_ID" '
@@ -1047,13 +1047,13 @@ merge_story_branch() {
   local story_branch story_title sprint sprint_branch merge_target meta_stories_file
   story_branch="$(jq -r '.branchName // ""' "$STORY_FILE" 2>/dev/null || true)"
   story_title="$(jq -r '.title // ""' "$STORY_FILE" 2>/dev/null || true)"
-  sprint="$(awk 'NF {print; exit}' "$SCRIPT_DIR/.active-sprint" 2>/dev/null || true)"
+  sprint="$(awk 'NF {print; exit}' "$RALPH_SCRIPT_DIR/.active-sprint" 2>/dev/null || true)"
   [ -n "$story_branch" ] && [ -n "$sprint" ] || return 0
 
   sprint_branch="ralph/sprint/$sprint"
   merge_target="$(git -C "$WORKSPACE_ROOT" for-each-ref --format='%(upstream:short)' "refs/heads/$story_branch" 2>/dev/null | head -n1)"
   [ -n "$merge_target" ] || merge_target="$sprint_branch"
-  meta_stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
+  meta_stories_file="$RALPH_SCRIPT_DIR/sprints/$sprint/stories.json"
 
   if ! git -C "$WORKSPACE_ROOT" show-ref --verify --quiet "refs/heads/$story_branch" 2>/dev/null; then
     log "Story branch already absent: $story_branch"
