@@ -5,6 +5,42 @@ specify_repo_bin() {
   printf '%s/bin/specify\n' "$SCRIPT_DIR"
 }
 
+find_uvx_bin() {
+  local candidate user_base
+  if command -v uvx >/dev/null 2>&1; then
+    command -v uvx
+    return 0
+  fi
+  for candidate in "${HOME:-}/.local/bin/uvx"; do
+    [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      user_base="$("$candidate" -m site --user-base 2>/dev/null || true)"
+      [ -n "$user_base" ] && [ -x "$user_base/bin/uvx" ] && { printf '%s\n' "$user_base/bin/uvx"; return 0; }
+    fi
+  done
+  return 1
+}
+
+find_uv_bin() {
+  local candidate user_base
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+  for candidate in "${HOME:-}/.local/bin/uv"; do
+    [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      user_base="$("$candidate" -m site --user-base 2>/dev/null || true)"
+      [ -n "$user_base" ] && [ -x "$user_base/bin/uv" ] && { printf '%s\n' "$user_base/bin/uv"; return 0; }
+    fi
+  done
+  return 1
+}
+
 find_specify_bin() {
   local repo_bin
   repo_bin="$(specify_repo_bin)"
@@ -13,13 +49,18 @@ find_specify_bin() {
     return 0
   fi
 
-  if command -v specify >/dev/null 2>&1; then
-    command -v specify
+  if find_uvx_bin >/dev/null 2>&1; then
+    echo "uvx --from git+https://github.com/github/spec-kit.git specify"
     return 0
   fi
 
-  if command -v npx >/dev/null 2>&1 && npx --yes specify version >/dev/null 2>&1; then
-    echo "npx --yes specify"
+  if find_uv_bin >/dev/null 2>&1; then
+    echo "uv tool run --from git+https://github.com/github/spec-kit.git specify"
+    return 0
+  fi
+
+  if command -v specify >/dev/null 2>&1; then
+    command -v specify
     return 0
   fi
 
@@ -40,8 +81,9 @@ describe_specify_bin() {
     return 0
   fi
 
-  if [ "$specify_bin" = "npx --yes specify" ]; then
-    echo "npx fallback"
+  if [ "$specify_bin" = "uvx --from git+https://github.com/github/spec-kit.git specify" ] || \
+     [ "$specify_bin" = "uv tool run --from git+https://github.com/github/spec-kit.git specify" ]; then
+    echo "uvx fallback"
     return 0
   fi
 

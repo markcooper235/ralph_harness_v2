@@ -5,8 +5,52 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF_PATH="$SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
 LOCAL_SPECIFY="$SELF_DIR/../.venv-specify/bin/specify"
 
+find_uvx_bin() {
+  local candidate user_base
+  if command -v uvx >/dev/null 2>&1; then
+    command -v uvx
+    return 0
+  fi
+  for candidate in "${HOME:-}/.local/bin/uvx"; do
+    [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      user_base="$("$candidate" -m site --user-base 2>/dev/null || true)"
+      [ -n "$user_base" ] && [ -x "$user_base/bin/uvx" ] && { printf '%s\n' "$user_base/bin/uvx"; return 0; }
+    fi
+  done
+  return 1
+}
+
+find_uv_bin() {
+  local candidate user_base
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+  for candidate in "${HOME:-}/.local/bin/uv"; do
+    [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      user_base="$("$candidate" -m site --user-base 2>/dev/null || true)"
+      [ -n "$user_base" ] && [ -x "$user_base/bin/uv" ] && { printf '%s\n' "$user_base/bin/uv"; return 0; }
+    fi
+  done
+  return 1
+}
+
 if [ -x "$LOCAL_SPECIFY" ]; then
   exec "$LOCAL_SPECIFY" "$@"
+fi
+
+if UVX_BIN="$(find_uvx_bin)"; then
+  exec "$UVX_BIN" --from git+https://github.com/github/spec-kit.git specify "$@"
+fi
+
+if UV_BIN="$(find_uv_bin)"; then
+  exec "$UV_BIN" tool run --from git+https://github.com/github/spec-kit.git specify "$@"
 fi
 
 if command -v specify >/dev/null 2>&1; then
@@ -16,15 +60,11 @@ if command -v specify >/dev/null 2>&1; then
   fi
 fi
 
-if command -v uvx >/dev/null 2>&1; then
-  exec uvx --from git+https://github.com/github/spec-kit.git specify "$@"
-fi
-
 cat >&2 <<'EOF'
 ERROR: No repo-local or global 'specify' CLI is available.
 Install options:
   1. Re-run Ralph install to bootstrap scripts/ralph/.venv-specify
-  2. Install uv, then this wrapper can run via uvx automatically
-  3. Install globally: uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
+  2. Install uv, then this wrapper can run via uv/uvx automatically
+  3. Install globally as a last resort: uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
 EOF
 exit 1

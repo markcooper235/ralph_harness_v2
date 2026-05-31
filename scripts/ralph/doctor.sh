@@ -63,11 +63,11 @@ if specify_bin="$(find_specify_bin)"; then
       ;;
     "repo-local wrapper")
       echo "WARN: specify is available via the repo-local wrapper only"
-      echo "      This repo can run SpecKit, but it is relying on a runtime fallback (global specify or uvx)."
+      echo "      This repo can run SpecKit, but it is relying on a runtime fallback (uv/uvx preferred, global specify last resort)."
       echo "      For a self-contained repo-local install, ensure Python venv support or uv is available, then re-run install.sh."
       ;;
-    "npx fallback")
-      echo "WARN: specify is available via npx fallback"
+    "uvx fallback")
+      echo "WARN: specify is available via uv/uvx fallback"
       echo "      This works, but it is not a durable repo-local install and may depend on network/tooling at runtime."
       echo "      For a self-contained repo-local install, ensure Python venv support or uv is available, then re-run install.sh."
       ;;

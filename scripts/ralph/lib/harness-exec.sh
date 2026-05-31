@@ -9,14 +9,14 @@
 RALPH_HARNESS_DEFAULT="${RALPH_HARNISH_DEFAULT:-codex}"
 
 # Model and agent selection (if supported by harness)
-# Paths to configuration files (relative to script directory)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENT_PROFILES_FILE="$SCRIPT_DIR/agent-profiles.json"
-LABEL_MAPPING_FILE="$SCRIPT_DIR/label-to-agent-mapping.json"
-HARNESS_CAPABILITIES_FILE="$SCRIPT_DIR/harness-capabilities.json"
+# Paths to configuration files (relative to this library directory)
+HARNESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AGENT_PROFILES_FILE="$HARNESS_LIB_DIR/agent-profiles.json"
+LABEL_MAPPING_FILE="$HARNESS_LIB_DIR/label-to-agent-mapping.json"
+HARNESS_CAPABILITIES_FILE="$HARNESS_LIB_DIR/harness-capabilities.json"
 
 # Source harness capabilities helpers
-source "$SCRIPT_DIR/harness-capabilities.sh"
+source "$HARNESS_LIB_DIR/harness-capabilities.sh"
 
 # Determine which harness to use
 _get_harness() {

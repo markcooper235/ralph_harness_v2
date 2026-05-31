@@ -1184,7 +1184,10 @@ ensure_repo_local_speckit() {
   local repo_venv="$PROJECT_DIR/$DEST_DIR_REL/.venv-specify"
   local repo_pip="$repo_venv/bin/pip"
   local python_bin=""
+  local python_ver=""
+  local venv_pkg_hint="python3-venv"
   local venv_warned=0
+  local venv_log=""
 
   if [ -x "$repo_venv/bin/specify" ] && "$repo_venv/bin/specify" version >/dev/null 2>&1; then
     echo "SpecKit already installed in repo: $repo_venv"
@@ -1197,26 +1200,113 @@ ensure_repo_local_speckit() {
     python_bin="python"
   fi
 
+  find_uvx_bin_for_install() {
+    local candidate user_base
+    if command -v uvx >/dev/null 2>&1; then
+      command -v uvx
+      return 0
+    fi
+    for candidate in "${HOME:-}/.local/bin/uvx"; do
+      [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+    done
+    for candidate in python3 python; do
+      if command -v "$candidate" >/dev/null 2>&1; then
+        user_base="$("$candidate" -m site --user-base 2>/dev/null || true)"
+        [ -n "$user_base" ] && [ -x "$user_base/bin/uvx" ] && { printf '%s\n' "$user_base/bin/uvx"; return 0; }
+      fi
+    done
+    return 1
+  }
+
+  find_uv_bin_for_install() {
+    local candidate user_base
+    if command -v uv >/dev/null 2>&1; then
+      command -v uv
+      return 0
+    fi
+    for candidate in "${HOME:-}/.local/bin/uv"; do
+      [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+    done
+    for candidate in python3 python; do
+      if command -v "$candidate" >/dev/null 2>&1; then
+        user_base="$("$candidate" -m site --user-base 2>/dev/null || true)"
+        [ -n "$user_base" ] && [ -x "$user_base/bin/uv" ] && { printf '%s\n' "$user_base/bin/uv"; return 0; }
+      fi
+    done
+    return 1
+  }
+
+  ensure_uv_runner_available() {
+    local installer_python="$1"
+    local uv_log=""
+
+    if find_uvx_bin_for_install >/dev/null 2>&1 || find_uv_bin_for_install >/dev/null 2>&1; then
+      return 0
+    fi
+
+    [ -n "$installer_python" ] || return 1
+    if ! "$installer_python" -m pip --version >/dev/null 2>&1; then
+      return 1
+    fi
+
+    echo "Bootstrapping uv tool runner for SpecKit wrapper fallback..."
+    uv_log="$(mktemp)"
+    if "$installer_python" -m pip install --user uv >"$uv_log" 2>&1; then
+      if find_uvx_bin_for_install >/dev/null 2>&1 || find_uv_bin_for_install >/dev/null 2>&1; then
+        rm -f "$uv_log"
+        echo "Installed uv tool runner for wrapper-based SpecKit fallback."
+        return 0
+      fi
+    fi
+
+    echo "WARN: Could not auto-install uv for SpecKit wrapper fallback."
+    if [ -s "$uv_log" ]; then
+      echo "      uv bootstrap output:"
+      sed 's/^/        /' "$uv_log"
+    fi
+    rm -f "$uv_log"
+    return 1
+  }
+
   if [ -n "$python_bin" ]; then
+    python_ver="$("$python_bin" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    if [ -n "$python_ver" ]; then
+      venv_pkg_hint="python${python_ver}-venv"
+    fi
     echo "Bootstrapping repo-local SpecKit into $DEST_DIR_REL/.venv-specify..."
     rm -rf "$repo_venv"
-    if "$python_bin" -m venv "$repo_venv"; then
+    venv_log="$(mktemp)"
+    if "$python_bin" -m venv "$repo_venv" >"$venv_log" 2>&1; then
       if "$repo_pip" install "git+https://github.com/github/spec-kit.git"; then
         if [ -x "$repo_venv/bin/specify" ] && "$repo_venv/bin/specify" version >/dev/null 2>&1; then
+          rm -f "$venv_log"
           echo "Installed repo-local SpecKit: $DEST_DIR_REL/.venv-specify"
           return 0
         fi
       else
+        rm -f "$venv_log"
         echo "WARN: Repo-local SpecKit pip install failed; falling back to wrapper resolution."
       fi
     else
       echo "WARN: Could not create repo-local SpecKit virtualenv; falling back to wrapper resolution."
-      echo "      If this is Debian/Ubuntu, you may need: apt install python3-venv"
+      if grep -qi "ensurepip is not available" "$venv_log" 2>/dev/null; then
+        echo "      Python venv support is missing for $python_bin."
+        echo "      On Debian/Ubuntu, install it with: apt install $venv_pkg_hint"
+      else
+        echo "      If this is Debian/Ubuntu, you may need: apt install $venv_pkg_hint"
+      fi
+      if [ -s "$venv_log" ]; then
+        echo "      venv bootstrap output:"
+        sed 's/^/        /' "$venv_log"
+      fi
+      rm -f "$venv_log"
       venv_warned=1
     fi
   else
     echo "WARN: No Python interpreter found for repo-local SpecKit bootstrap."
   fi
+
+  ensure_uv_runner_available "$python_bin" || true
 
   if "$repo_specify" version >/dev/null 2>&1; then
     if [ -x "$repo_venv/bin/specify" ]; then
@@ -1228,15 +1318,15 @@ ensure_repo_local_speckit() {
     return 0
   fi
 
-  if command -v specify >/dev/null 2>&1; then
-    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to global specify."
-    echo "      The repo is usable, but SpecKit is not installed persistently inside the repo."
+  if find_uvx_bin_for_install >/dev/null 2>&1 || find_uv_bin_for_install >/dev/null 2>&1; then
+    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to uv/uvx."
+    echo "      The repo is usable without a persistent repo-local SpecKit install."
     return 0
   fi
 
-  if command -v uvx >/dev/null 2>&1; then
-    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to uvx."
-    echo "      This works, but may depend on network/tooling at runtime instead of a durable repo-local install."
+  if command -v specify >/dev/null 2>&1; then
+    echo "WARN: Repo-local SpecKit bootstrap was skipped; $DEST_DIR_REL/bin/specify will fall back to global specify as a last resort."
+    echo "      The repo is usable, but SpecKit is not installed persistently inside the repo."
     return 0
   fi
 
