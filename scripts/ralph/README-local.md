@@ -148,7 +148,7 @@ Each task in `story.json` has:
   "acceptance": "Migration file exists, schema reflects priority column, typecheck passes.",
   "checks": [
     "test -f migrations/001_add_priority.sql",
-    "grep -q 'priority' db/schema.sql",
+    "rg -q 'priority' db/schema.sql",
     "npm run typecheck"
   ],
   "depends_on": [],
@@ -231,8 +231,8 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 ### Execution and status
 
 ```bash
-./scripts/ralph/ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
-./scripts/ralph/ralph-story-run.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run]
+./scripts/ralph/ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run] [--harness NAME] [--model MODEL] [--agent AGENT]
+./scripts/ralph/ralph-story-run.sh [--story PATH] [--task-id ID] [--max-retries N] [--dry-run] [--harness NAME] [--model MODEL] [--agent AGENT]
 ./scripts/ralph/ralph-status.sh
 ```
 
@@ -242,6 +242,18 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 - `--continue-on-failure` — continue to next story when a story fails (default: stop)
 - `--skip-fallow` — deprecated compatibility flag; no effect
 - `--dry-run` — print plan without executing
+- `--harness NAME` — select the execution harness (`codex`, `opencode`, `piagent`, `claude_code`)
+- `--model MODEL` — pass a model override to the selected harness
+- `--agent AGENT` — pass an agent/subagent override when the harness supports it
+
+`ralph-story-run.sh` flags:
+- `--story PATH` — run a specific `story.json` instead of the active story
+- `--task-id ID` — limit execution to one task for focused repair
+- `--max-retries N` — targeted remediation cycles after the main story cycle (default: 1)
+- `--dry-run` — print the assembled prompt without executing the harness
+- `--harness NAME` — select the execution harness (`codex`, `opencode`, `piagent`, `claude_code`)
+- `--model MODEL` — pass a model override to the selected harness
+- `--agent AGENT` — pass an agent/subagent override when the harness supports it
 
 ### Verification and quality
 

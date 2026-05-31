@@ -4,6 +4,8 @@
 
 This document summarizes the implementation of harness switching capability in the Ralph framework, allowing users to switch between different AI backends (Codex, Opencode, PI Agent, Claude Code) at both install time and runtime, along with model and agent selection.
 
+Current baseline note: Ralph assumes `rg` (ripgrep) is available for shell text-matching examples and generated checks.
+
 ## Problem Statement
 
 The original Ralph framework was tightly coupled to the Codex CLI, making it difficult to experiment with or switch to other AI harnesses. Users needed a way to:
