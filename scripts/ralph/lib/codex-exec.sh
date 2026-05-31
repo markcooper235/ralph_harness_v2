@@ -7,8 +7,8 @@
 _supports_codex_yolo() {
   local out
   out="$("${CODEX_BIN:-codex}" --yolo exec --help 2>&1 || true)"
-  echo "$out" | grep -qi "unexpected argument '--yolo'" && return 1
-  echo "$out" | grep -qi "Run Codex non-interactively" && return 0
+  echo "$out" | rg -qi "unexpected argument '--yolo'" && return 1
+  echo "$out" | rg -qi "Run Codex non-interactively" && return 0
   return 1
 }
 

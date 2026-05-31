@@ -114,7 +114,7 @@ if ! "$CODEX_BIN" exec --help >/dev/null 2>&1; then
   fail "Codex exec help failed. Check your Codex installation."
 fi
 
-if "$CODEX_BIN" --yolo exec --help 2>&1 | grep -qi "unexpected argument '--yolo'"; then
+if "$CODEX_BIN" --yolo exec --help 2>&1 | rg -qi "unexpected argument '--yolo'"; then
   echo "WARN: Your Codex does not support --yolo; ralph.sh will use a safe fallback."
 else
   echo "OK: codex --yolo available"

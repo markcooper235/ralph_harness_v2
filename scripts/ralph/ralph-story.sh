@@ -820,10 +820,10 @@ normalize_story_container() {
                        else . end)
                       | (if test("^rg \"[^\"]+\" [^ ]+$") then
                            capture("^rg \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$")
-                           | "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null || grep -Fq \"\(.pat)\" \(.file)"
+                           | "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null"
                          elif test("^rg -[a-zA-Z]+ \"[^\"]+\" [^ ]+$") then
                            capture("^rg -[a-zA-Z]+ \"(?<pat>[^\"]+)\" (?<file>[^ ]+)$")
-                           | "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null || grep -Fq \"\(.pat)\" \(.file)"
+                           | "rg -Fq \"\(.pat)\" \(.file) 2>/dev/null"
                          else . end)
                     else . end
                   ))
@@ -870,19 +870,19 @@ infer_checks_from_text() {
   local text="$1"
   local checks="[]"
 
-  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(typecheck|tsc|type check|type-check)($|[^[:alnum:]_])'; then
+  if printf '%s\n' "$text" | rg -qi '(^|[^[:alnum:]_])(typecheck|tsc|type check|type-check)($|[^[:alnum:]_])'; then
     checks="$(echo "$checks" | jq '. + ["npm run typecheck"]')"
   fi
-  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(test|tests|jest|vitest|pytest|go test)($|[^[:alnum:]_])'; then
+  if printf '%s\n' "$text" | rg -qi '(^|[^[:alnum:]_])(test|tests|jest|vitest|pytest|go test)($|[^[:alnum:]_])'; then
     checks="$(echo "$checks" | jq '. + ["npm test"]')"
   fi
-  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(lint|eslint)($|[^[:alnum:]_])'; then
+  if printf '%s\n' "$text" | rg -qi '(^|[^[:alnum:]_])(lint|eslint)($|[^[:alnum:]_])'; then
     checks="$(echo "$checks" | jq '. + ["npm run lint"]')"
   fi
-  if printf '%s\n' "$text" | grep -Eqi '(^|[^[:alnum:]_])(build)($|[^[:alnum:]_])'; then
+  if printf '%s\n' "$text" | rg -qi '(^|[^[:alnum:]_])(build)($|[^[:alnum:]_])'; then
     checks="$(echo "$checks" | jq '. + ["npm run build"]')"
   fi
-  if printf '%s\n' "$text" | grep -Eqi 'verify in browser|playwright|cypress|verification'; then
+  if printf '%s\n' "$text" | rg -qi 'verify in browser|playwright|cypress|verification'; then
     checks="$(echo "$checks" | jq '. + ["echo browser verification required"]')"
   fi
 
@@ -946,9 +946,9 @@ json_first_slice_from_markdown() {
 json_scope_from_text() {
   local text="$1"
   {
-    printf '%s\n' "$text" | grep -oE '`[^`]+`' | tr -d '`' || true
-    printf '%s\n' "$text" | grep -oE '([A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+' || true
-    printf '%s\n' "$text" | grep -oE '([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+' || true
+    printf '%s\n' "$text" | rg -o '`[^`]+`' | tr -d '`' || true
+    printf '%s\n' "$text" | rg -o '([A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+' || true
+    printf '%s\n' "$text" | rg -o '([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+' || true
   } \
     | sed -E 's/^[("'\''`]+//; s/[)"'\''`.,;:]+$//' \
     | awk 'NF && !seen[$0]++' \
@@ -1016,7 +1016,7 @@ parse_legacy_markdown_story_json() {
   user_stories_body="$(extract_markdown_section_body_any "$markdown_path" '## User Stories' '## Stories' '## Implementation Stories' || true)"
   [ -n "$user_stories_body" ] || return 1
 
-  if ! printf '%s\n' "$user_stories_body" | grep -Eq '^(### ([Ss]tory[[:space:]]+[0-9]+:|[0-9]+[.)][[:space:]]+|[^#].+)|[Ss]tory[[:space:]]+[[:alnum:]]+([:.-][[:space:]].*)?)'; then
+  if ! printf '%s\n' "$user_stories_body" | rg -q '^(### ([Ss]tory[[:space:]]+[0-9]+:|[0-9]+[.)][[:space:]]+|[^#].+)|[Ss]tory[[:space:]]+[[:alnum:]]+([:.-][[:space:]].*)?)'; then
     return 1
   fi
 
@@ -1731,7 +1731,7 @@ cmd_set_status() {
   resolve_stories_file
 
   local valid_statuses="planned ready active done abandoned blocked"
-  echo "$valid_statuses" | grep -qw "$new_status" || fail "Invalid status '$new_status'. Valid: $valid_statuses"
+  printf '%s\n' "$valid_statuses" | tr ' ' '\n' | rg -qx -- "$new_status" || fail "Invalid status '$new_status'. Valid: $valid_statuses"
 
   local tmp
   tmp="$(mktemp)"

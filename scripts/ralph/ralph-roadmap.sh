@@ -314,7 +314,7 @@ validate_sprint_local_dependencies() {
     while IFS=$'\t' read -r story_id dep_id; do
       [ -n "$story_id" ] || continue
       [ -n "$dep_id" ] || continue
-      if ! printf '%s\n' "$local_ids" | grep -qx "$dep_id"; then
+      if ! printf '%s\n' "$local_ids" | rg -qx -- "$dep_id"; then
         fail "Roadmap JSON contains cross-sprint or missing dependency: $story_id -> $dep_id"
       fi
     done < <(jq -r --arg sprint "$sprint" '

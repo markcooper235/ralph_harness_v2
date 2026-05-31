@@ -992,7 +992,7 @@ verify_story() {
 
     while IFS= read -r entry; do
       [ -z "$entry" ] && continue
-      if grep -qF "$entry" "$baseline_fp_file" 2>/dev/null; then
+      if rg -qF -- "$entry" "$baseline_fp_file" 2>/dev/null; then
         VERIFY_FAILED_STRUCTURAL=1
         break
       fi

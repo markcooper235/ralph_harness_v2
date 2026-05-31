@@ -134,7 +134,7 @@ OUT_OF_SCOPE_CHANGED_FILES=()
 _scope_add() {
   local f="$1"
   [ -z "$f" ] && return
-  printf '%s\n' "$_scope_seen" | grep -qxF "$f" 2>/dev/null && return
+  printf '%s\n' "$_scope_seen" | rg -qxF -- "$f" 2>/dev/null && return
   _scope_seen="${_scope_seen}${f}"$'\n'
   SCOPE_FILES+=("$f")
 }
@@ -142,7 +142,7 @@ _scope_add() {
 _scope_pattern_add() {
   local pattern="$1"
   [ -z "$pattern" ] && return
-  printf '%s\n' "$_scope_pattern_seen" | grep -qxF "$pattern" 2>/dev/null && return
+  printf '%s\n' "$_scope_pattern_seen" | rg -qxF -- "$pattern" 2>/dev/null && return
   _scope_pattern_seen="${_scope_pattern_seen}${pattern}"$'\n'
   SCOPE_PATTERNS+=("$pattern")
 }
@@ -174,9 +174,9 @@ _scope_extract_patterns_from_text() {
   while IFS= read -r token; do
     [ -n "$token" ] || continue
     _scope_entry_add "$token"
-  done < <(printf '%s\n' "$text" | grep -oE '`[^`]+`' | tr -d '`')
+  done < <(printf '%s\n' "$text" | rg -o '`[^`]+`' | tr -d '`')
 
-  if printf '%s\n' "$text" | grep -qiE 'jest|browser tests|playwright|targeted .*tests'; then
+  if printf '%s\n' "$text" | rg -qi 'jest|browser tests|playwright|targeted .*tests'; then
     _scope_pattern_add 'src/**/__tests__/**'
     _scope_pattern_add 'src/**/*.test.*'
     _scope_pattern_add 'tests/**'
@@ -238,7 +238,7 @@ resolve_changed_scope_files() {
   local f
   for f in "${changed[@]}"; do
     CHANGED_FILES+=("$f")
-    if printf '%s\n' "$_scope_seen" | grep -qxF "$f" 2>/dev/null; then
+    if printf '%s\n' "$_scope_seen" | rg -qxF -- "$f" 2>/dev/null; then
       CHANGED_SCOPE_FILES+=("$f")
       continue
     fi
@@ -376,7 +376,7 @@ _extract_fallow_issues() {
   t="$(_jq_extract "$json" '(.complexity.findings // [])[] | "complexity: \(.file) \(.name // "") cyclomatic=\(.cyclomatic // "?")"')"
   [ -n "$t" ] && lines="${lines}${t}"$'\n'
 
-  printf '%s' "$lines" | grep -v '^[[:space:]]*$' || true
+  printf '%s' "$lines" | rg -v '^[[:space:]]*$' || true
 }
 
 run_fallow_audit() {
@@ -502,7 +502,7 @@ run_python_analysis() {
 
   if command -v vulture >/dev/null 2>&1; then
     local v_raw
-    v_raw="$(cd "$WORKSPACE_ROOT" && vulture --min-confidence 80 "${args[@]}" 2>/dev/null | grep -v "^$" || true)"
+    v_raw="$(cd "$WORKSPACE_ROOT" && vulture --min-confidence 80 "${args[@]}" 2>/dev/null | rg . || true)"
     [ -n "$v_raw" ] && issues="${issues:+$issues
 }$v_raw"
   fi
@@ -614,7 +614,7 @@ run_rust_analysis() {
   local issues=""
   local raw
   raw="$(cd "$WORKSPACE_ROOT" && cargo clippy -- -D warnings 2>&1 || true)"
-  issues="$(printf '%s' "$raw" | grep -E '^error|^warning' | grep -v "^warning: unused import" | head -50 || true)"
+  issues="$(printf '%s' "$raw" | rg '^(error|warning)' | rg -v '^warning: unused import' | head -50 || true)"
 
   if [ -z "$issues" ]; then
     _grep_fallback
@@ -641,28 +641,28 @@ _grep_fallback() {
       while IFS= read -r name; do
         [ -z "$name" ] && continue
         local uses
-        uses="$(grep -v "^import" "$fpath" | grep -cw "$name" 2>/dev/null; true)"
+        uses="$(rg -v '^import' "$fpath" 2>/dev/null | rg -c -w -F -- "$name" 2>/dev/null; true)"
         uses="${uses%%[^0-9]*}"
         if [ "${uses:-0}" -eq 0 ] 2>/dev/null; then
           issues+=("$f: possibly unused import: $name")
         fi
       done < <(
-        grep "^import" "$fpath" 2>/dev/null \
-          | grep -oE '\{[^}]+\}' | tr -d '{}' | tr ',' '\n' \
-          | sed 's/[[:space:]]//g' | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' \
+        rg '^import' "$fpath" 2>/dev/null \
+          | rg -o '\{[^}]+\}' | tr -d '{}' | tr ',' '\n' \
+          | sed 's/[[:space:]]//g' | rg '^[A-Za-z_][A-Za-z0-9_]*$' \
           | sort -u || true
       )
     fi
 
     local console_count
-    console_count="$(grep -c "console\.log" "$fpath" 2>/dev/null; true)"
+    console_count="$(rg -c 'console\.log' "$fpath" 2>/dev/null; true)"
     console_count="${console_count%%[^0-9]*}"
     if [ "${console_count:-0}" -gt 0 ] 2>/dev/null; then
       issues+=("$f: ${console_count} console.log statement(s)")
     fi
 
     local todo_count
-    todo_count="$(grep -cE "(TODO|FIXME|HACK|XXX)" "$fpath" 2>/dev/null; true)"
+    todo_count="$(rg -c '(TODO|FIXME|HACK|XXX)' "$fpath" 2>/dev/null; true)"
     todo_count="${todo_count%%[^0-9]*}"
     if [ "${todo_count:-0}" -gt 0 ] 2>/dev/null; then
       issues+=("$f: ${todo_count} TODO/FIXME marker(s)")
