@@ -10,30 +10,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+load_ralph_env() {
+  local env_file="$1"
+  [ -f "$env_file" ] || return 1
+  set -a
+  # shellcheck source=/dev/null
+  . "$env_file"
+  set +a
+  return 0
+}
+
 # Load environment variables from .ralph-env files
 # Priority: $HOME/.ralph-env (user-specific) then scripts/ralph/.ralph-env (project-specific fallback)
-if [ -f "${HOME}/.ralph-env" ]; then
-    # shellcheck source=/dev/null
-    . "${HOME}/.ralph-env"
-elif [ -f "${SCRIPT_DIR}/.ralph-env" ]; then
-    # shellcheck source=/dev/null
-    . "${SCRIPT_DIR}/.ralph-env"
-fi
-
-# Fallback to native API keys and unset base URL overrides on failure
-# Unset base URL overrides to let harnesses use their default endpoints
-unset OPENAI_BASE_URL
-unset ANTHROPIC_BASE_URL
-# Reset API keys to native values if set, otherwise unset to allow harness-configured auth (e.g., OAuth)
-if [ -n "${OPENAI_API_KEY_NATIVE:-}" ]; then
-    OPENAI_API_KEY="${OPENAI_API_KEY_NATIVE}"
-else
-    unset OPENAI_API_KEY
-fi
-if [ -n "${ANTHROPIC_API_KEY_NATIVE:-}" ]; then
-    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY_NATIVE}"
-else
-    unset ANTHROPIC_API_KEY
+if ! load_ralph_env "${HOME}/.ralph-env"; then
+    load_ralph_env "${SCRIPT_DIR}/.ralph-env" || true
 fi
 
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"

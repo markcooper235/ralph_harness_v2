@@ -31,6 +31,9 @@ BENCH_FILE="$BENCH_DIR/worst-case-ui.tsv"
 LOOP_RETRY_MAX="${LOOP_RETRY_MAX:-2}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-8}"
 CODEX_BIN_VALUE="${CODEX_BIN:-codex}"
+SMOKE_HARNESS="${SMOKE_HARNESS:-${RALPH_HARNESS:-codex}}"
+SMOKE_MODEL="${SMOKE_MODEL:-${RALPH_MODEL:-}}"
+SMOKE_AGENT="${SMOKE_AGENT:-${RALPH_AGENT:-}}"
 
 cleanup() {
   local exit_code=$?
@@ -41,7 +44,7 @@ cleanup() {
   fi
   benchmark_append_row "$status"
   if [ "$KEEP_REPO" -eq 1 ] || [ "$exit_code" -ne 0 ]; then
-    echo "[worst-ui] retained temp repo: $TEST_REPO"
+echo "[worst-ui] retained temp repo: $TEST_REPO"
     return
   fi
   rm -rf "$WORK_DIR"
@@ -75,6 +78,7 @@ done
 
 mkdir -p "$TMP_HOME" "$TEST_REPO"
 benchmark_init "worst-case-ui" "ui" "$BENCH_FILE"
+echo "[worst-ui] harness: $SMOKE_HARNESS"
 
 extract_story_complete_count_from_log() {
   local log_file="$1"
@@ -431,7 +435,7 @@ expected_state="ready"
 
 (
   cd "$SPRINT_REPO/scripts/ralph"
-  CODEX_BIN="$CODEX_BIN_VALUE" ./doctor.sh > "$WORK_DIR/doctor-sprint.log" 2>&1
+  CODEX_BIN="$CODEX_BIN_VALUE" RALPH_HARNESS="$SMOKE_HARNESS" ./doctor.sh > "$WORK_DIR/doctor-sprint.log" 2>&1
   ./ralph-sprint.sh remove sprint-1 --yes --hard > "$WORK_DIR/sprint-reset-sprint.log" 2>&1 || true
   ./ralph-sprint.sh create sprint-1 > "$WORK_DIR/sprint-create-sprint.log" 2>&1 </dev/null
   ./ralph-story.sh add \
@@ -680,7 +684,10 @@ STORYJSON
   ./ralph-sprint.sh mark-ready sprint-1 > "$WORK_DIR/sprint-mark-ready.log" 2>&1
   ./ralph-sprint.sh use sprint-1 > "$WORK_DIR/sprint-use.log" 2>&1
   sprint_loop_start_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
-  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" ./ralph.sh --max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure
+  RALPH_LOOP_ARGS=(--max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure --harness "$SMOKE_HARNESS")
+  [ -n "$SMOKE_MODEL" ] && RALPH_LOOP_ARGS+=(--model "$SMOKE_MODEL")
+  [ -n "$SMOKE_AGENT" ] && RALPH_LOOP_ARGS+=(--agent "$SMOKE_AGENT")
+  run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 600 env CODEX_BIN="$CODEX_BIN_VALUE" RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" ./ralph.sh "${RALPH_LOOP_ARGS[@]}"
   sprint_loop_end_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
 
   jq -e '.passes == true and .status == "done"' "sprints/sprint-1/stories/S-001/story.json" >/dev/null

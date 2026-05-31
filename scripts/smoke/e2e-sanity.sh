@@ -29,6 +29,9 @@ FORCE_MOCK_CODEX=0
 WITH_LOOP=0
 APP_MODE="${APP_MODE:-console}"
 LOOP_RETRY_MAX="${LOOP_RETRY_MAX:-2}"
+SMOKE_HARNESS="${SMOKE_HARNESS:-${RALPH_HARNESS:-codex}}"
+SMOKE_MODEL="${SMOKE_MODEL:-${RALPH_MODEL:-}}"
+SMOKE_AGENT="${SMOKE_AGENT:-${RALPH_AGENT:-}}"
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/e2e-history.tsv"
 
@@ -62,19 +65,46 @@ while [[ $# -gt 0 ]]; do
       APP_MODE="$2"
       shift 2
       ;;
+    --harness)
+      [ $# -ge 2 ] || {
+        echo "Missing value for --harness" >&2
+        exit 1
+      }
+      SMOKE_HARNESS="$2"
+      shift 2
+      ;;
+    --model)
+      [ $# -ge 2 ] || {
+        echo "Missing value for --model" >&2
+        exit 1
+      }
+      SMOKE_MODEL="$2"
+      shift 2
+      ;;
+    --agent)
+      [ $# -ge 2 ] || {
+        echo "Missing value for --agent" >&2
+        exit 1
+      }
+      SMOKE_AGENT="$2"
+      shift 2
+      ;;
     -h|--help)
       cat <<'USAGE'
-Usage: scripts/smoke/e2e-sanity.sh [--ci] [--keep] [--real-codex] [--mock-codex] [--with-loop] [--app-mode console|ui]
+Usage: scripts/smoke/e2e-sanity.sh [--ci] [--keep] [--real-codex] [--mock-codex] [--with-loop] [--app-mode console|ui] [--harness HARNESS] [--model MODEL] [--agent AGENT]
 
 Runs disposable install-repo E2E sanity checks.
 
 Options:
-  --ci          CI-friendly mode (uses mock codex by default; no-op for loop phase which always uses real codex)
+  --ci          CI-friendly mode (uses mock codex by default for codex-path checks)
   --keep        Keep temp repo for debugging
   --real-codex  Force real codex binary
   --mock-codex  Force mock codex binary
-  --with-loop   Run the sprint story-task loop with real codex
+  --with-loop   Run the sprint story-task loop with the selected harness
   --app-mode    App profile: console (default) or ui
+  --harness     Harness for the real loop run (codex|opencode|piagent|claude_code)
+  --model       Optional model override passed to ralph.sh
+  --agent       Optional agent override passed to ralph.sh when supported
 USAGE
       exit 0
       ;;
@@ -259,6 +289,7 @@ fi
 echo "[smoke] work dir: $WORK_DIR"
 echo "[smoke] codex: $CODEX_BIN_VALUE"
 echo "[smoke] app mode: $APP_MODE"
+echo "[smoke] harness: $SMOKE_HARNESS"
 
 echo "[smoke] running framework run-state regression test"
 node --test "$REPO_ROOT/__tests__/ralph-run-state.test.js" >/dev/null
@@ -541,7 +572,7 @@ echo "[smoke] doctor"
 if [ "$WITH_LOOP" -eq 0 ]; then
   (
     cd "$TEST_REPO/scripts/ralph"
-    CODEX_BIN="$CODEX_BIN_VALUE" ./doctor.sh > "$WORK_DIR/doctor.log" 2>&1
+    CODEX_BIN="$CODEX_BIN_VALUE" RALPH_HARNESS="$SMOKE_HARNESS" ./doctor.sh > "$WORK_DIR/doctor.log" 2>&1
   )
   assert_contains "$WORK_DIR/doctor.log" "OK: prerequisites present"
 else
@@ -550,7 +581,10 @@ fi
 
 if [ "$WITH_LOOP" -eq 1 ]; then
   echo "[smoke] sprint story-task loop"
-  LOOP_CODEX_BIN="codex"
+  LOOP_CODEX_BIN="$CODEX_BIN_VALUE"
+  RALPH_LOOP_ARGS=(--max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure --harness "$SMOKE_HARNESS")
+  [ -n "$SMOKE_MODEL" ] && RALPH_LOOP_ARGS+=(--model "$SMOKE_MODEL")
+  [ -n "$SMOKE_AGENT" ] && RALPH_LOOP_ARGS+=(--agent "$SMOKE_AGENT")
 
   SPRINT_REPO="$WORK_DIR/project-loop-sprint"
   cp -a "$TEST_REPO" "$SPRINT_REPO"
@@ -613,7 +647,7 @@ if [ "$WITH_LOOP" -eq 1 ]; then
 
   (
     cd "$SPRINT_REPO/scripts/ralph"
-    CODEX_BIN="$CODEX_BIN_VALUE" ./doctor.sh > "$WORK_DIR/doctor-sprint.log" 2>&1
+    CODEX_BIN="$CODEX_BIN_VALUE" RALPH_HARNESS="$SMOKE_HARNESS" ./doctor.sh > "$WORK_DIR/doctor-sprint.log" 2>&1
     ./ralph-sprint.sh remove sprint-1 --yes --hard > "$WORK_DIR/sprint-reset-sprint.log" 2>&1 || true
     ./ralph-sprint.sh create sprint-1 > "$WORK_DIR/sprint-create-sprint.log" 2>&1
     ./ralph-story.sh add \
@@ -922,7 +956,7 @@ STORYJSON
     ./ralph-sprint.sh mark-ready sprint-1 > "$WORK_DIR/sprint-mark-ready.log" 2>&1
     ./ralph-sprint.sh use sprint-1 > "$WORK_DIR/sprint-use.log" 2>&1
     sprint_loop_start_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
-    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" ./ralph.sh --max-stories 3 --max-retries "$LOOP_RETRY_MAX" --continue-on-failure
+    run_with_retries_logged "$LOOP_RETRY_MAX" "$WORK_DIR/loop.log" "$SPRINT_REPO" timeout 420 env CODEX_BIN="$LOOP_CODEX_BIN" RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" ./ralph.sh "${RALPH_LOOP_ARGS[@]}"
     sprint_loop_end_head="$(git -C "$SPRINT_REPO" rev-parse HEAD)"
 
     jq -e '.passes == true and .status == "done"' "sprints/sprint-1/stories/S-001/story.json" >/dev/null

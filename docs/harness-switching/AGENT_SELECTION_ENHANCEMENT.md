@@ -135,7 +135,7 @@ This function will be called by each harness executor when `RALPH_AGENT` is not 
 
 We'll add:
 - `scripts/ralph/agent-mapping.json` - Label to agent mappings (customizable)
-- `scripts/ralph/agent-profiles.json` - Agent definitions with suggested models, etc. (for future enhancement)
+- `scripts/ralph/lib/agent-profiles.json` - Agent definitions with suggested models, etc. (for future enhancement)
 
 ## Usage Examples
 

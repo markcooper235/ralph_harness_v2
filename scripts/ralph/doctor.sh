@@ -6,7 +6,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
+RALPH_HARNESS="${RALPH_HARNESS:-codex}"
 source "$SCRIPT_DIR/lib/specify.sh"
+source "$SCRIPT_DIR/lib/harness-capabilities.sh"
 ROADMAP_FILE="$SCRIPT_DIR/roadmap.json"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
@@ -28,10 +30,28 @@ require_cmd() {
 
 echo "Ralph doctor"
 echo "ralph dir: $SCRIPT_DIR"
+echo "harness: $RALPH_HARNESS"
 
 require_cmd git
 require_cmd jq
-require_cmd "$CODEX_BIN"
+
+case "$RALPH_HARNESS" in
+  codex)
+    require_cmd "$CODEX_BIN"
+    ;;
+  opencode)
+    require_cmd opencode
+    ;;
+  piagent)
+    require_cmd pi
+    ;;
+  claude_code)
+    require_cmd claude
+    ;;
+  *)
+    fail "Unknown harness: $RALPH_HARNESS"
+    ;;
+esac
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fail "Not inside a git repository. Run this from within your project repo."
@@ -106,14 +126,27 @@ if [ -n "$tracked_legacy" ]; then
   echo "      Remove them from git tracking after migration if they are no longer needed."
 fi
 
-if ! "$CODEX_BIN" exec --help >/dev/null 2>&1; then
-  fail "Codex exec help failed. Check your Codex installation."
-fi
+case "$RALPH_HARNESS" in
+  codex)
+    if ! "$CODEX_BIN" exec --help >/dev/null 2>&1; then
+      fail "Codex exec help failed. Check your Codex installation."
+    fi
 
-if "$CODEX_BIN" --yolo exec --help 2>&1 | rg -qi "unexpected argument '--yolo'"; then
-  echo "WARN: Your Codex does not support --yolo; ralph.sh will use a safe fallback."
-else
-  echo "OK: codex --yolo available"
-fi
+    if "$CODEX_BIN" --yolo exec --help 2>&1 | rg -qi "unexpected argument '--yolo'"; then
+      echo "WARN: Your Codex does not support --yolo; ralph.sh will use a safe fallback."
+    else
+      echo "OK: codex --yolo available"
+    fi
+    ;;
+  opencode)
+    echo "OK: opencode CLI available"
+    ;;
+  piagent)
+    echo "OK: pi CLI available"
+    ;;
+  claude_code)
+    echo "OK: claude CLI available"
+    ;;
+esac
 
 echo "OK: prerequisites present"

@@ -51,9 +51,283 @@ _load_json_value() {
 _get_agent_profile() {
   local agent_name="$1"
   local harness_name="$2"  # e.g., "codex", "opencode", etc.
-  local profile_key="$3"   # e.g., ".models.codex" or ".system_prompt_addition"
-  
-  _load_json_value "$AGENT_PROFILES_FILE" ".profiles.${agent_name}${profile_key}.${harness_name}"
+  local profile_key="${3:-}"   # e.g., ".models.codex" or ".system_prompt_addition"
+
+  if [ ! -f "$AGENT_PROFILES_FILE" ] || ! command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+
+  jq -r --arg agent_name "$agent_name" --arg harness_name "$harness_name" '
+    .profiles[$agent_name]
+    | if . == null then empty else . end
+    | if has("models") then .models[$harness_name] // empty else empty end
+  ' "$AGENT_PROFILES_FILE" 2>/dev/null
+}
+
+_resolve_opencode_model() {
+  local requested_model="$1"
+  [ -n "$requested_model" ] || return 0
+
+  case "$requested_model" in
+    */*)
+      echo "$requested_model"
+      return
+      ;;
+  esac
+
+  local provider_base="${OPENCODE_BASE_URL:-${OPENAI_BASE_URL:-}}"
+  case "$provider_base" in
+    *openrouter.ai*)
+      case "$requested_model" in
+        gpt-3.5-turbo|gpt-4|gpt-4-turbo|gpt-4o|gpt-4.1|gpt-4.1-mini|gpt-4.1-nano|gpt-5|gpt-5-mini|gpt-5-nano|gpt-5-pro|gpt-5-codex|gpt-5.1-codex|gpt-5.1-codex-mini|gpt-5.2-codex)
+          echo "openrouter/openai/$requested_model"
+          return
+          ;;
+        claude-3-haiku|claude-haiku-4-5|claude-haiku-4.5)
+          echo "openrouter/anthropic/claude-haiku-4.5"
+          return
+          ;;
+        claude-3-sonnet|claude-sonnet-4-6|claude-sonnet-4.6)
+          echo "openrouter/anthropic/claude-sonnet-4.6"
+          return
+          ;;
+        claude-3-opus|claude-opus-4-7|claude-opus-4.7)
+          echo "openrouter/anthropic/claude-opus-4.7"
+          return
+          ;;
+      esac
+      ;;
+  esac
+
+  echo "$requested_model"
+}
+
+_resolve_codex_model() {
+  local requested_model="$1"
+  [ -n "$requested_model" ] || return 0
+
+  case "$requested_model" in
+    openai/*)
+      printf '%s\n' "${requested_model#openai/}"
+      return
+      ;;
+    openrouter/openai/*)
+      printf '%s\n' "${requested_model#openrouter/openai/}"
+      return
+      ;;
+    openrouter/*|anthropic/*)
+      printf '%s\n' "${requested_model#*/}"
+      return
+      ;;
+  esac
+
+  printf '%s\n' "$requested_model"
+}
+
+_resolve_piagent_model() {
+  local requested_model="$1"
+  [ -n "$requested_model" ] || return 0
+
+  local provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+
+  if [[ "$provider_base" == *openrouter.ai* ]]; then
+    case "$requested_model" in
+      openrouter/*)
+        printf '%s\n' "$requested_model"
+        return
+        ;;
+      openai/*)
+        printf 'openrouter/%s\n' "$requested_model"
+        return
+        ;;
+      anthropic/*)
+        printf 'openrouter/%s\n' "$requested_model"
+        return
+        ;;
+    esac
+  fi
+
+  case "$requested_model" in
+    openrouter/*|anthropic/*|google/*|openai/*)
+      printf '%s\n' "$requested_model"
+      return
+      ;;
+  esac
+
+  case "$provider_base" in
+    *openrouter.ai*)
+      case "$requested_model" in
+        gpt-*|o1|o3|o4-*)
+          printf 'openrouter/openai/%s\n' "$requested_model"
+          return
+          ;;
+        claude-3-haiku|claude-haiku-4-5|claude-haiku-4.5)
+          printf '%s\n' "openrouter/anthropic/claude-haiku-4.5"
+          return
+          ;;
+        claude-3-sonnet|claude-sonnet-4-6|claude-sonnet-4.6)
+          printf '%s\n' "openrouter/anthropic/claude-sonnet-4.6"
+          return
+          ;;
+        claude-3-opus|claude-opus-4-7|claude-opus-4.7)
+          printf '%s\n' "openrouter/anthropic/claude-opus-4.7"
+          return
+          ;;
+      esac
+      ;;
+  esac
+
+  printf '%s\n' "$requested_model"
+}
+
+_model_family_name() {
+  local model="$1"
+  local lower
+  lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
+  lower="${lower##*/}"
+  printf '%s\n' "$lower"
+}
+
+_agent_selection_priority() {
+  local agent_name="$1"
+  case "$agent_name" in
+    researcher|senior-dev|security)
+      echo "heavy"
+      ;;
+    qa-test|devops)
+      echo "strong"
+      ;;
+    documentation|junior-dev|default|*)
+      echo "economy"
+      ;;
+  esac
+}
+
+_score_model_for_agent() {
+  local agent_name="$1"
+  local harness_name="$2"
+  local model="$3"
+  local priority lower score=0 provider_base
+
+  priority="$(_agent_selection_priority "$agent_name")"
+  lower="$(_model_family_name "$model")"
+  provider_base="${OPENCODE_BASE_URL:-${OPENAI_BASE_URL:-}}"
+
+  case "$lower" in
+    *embedding*|*moderation*|*realtime*|*audio*|*transcribe*|*tts*|*image*|*search-preview*)
+      echo -1000
+      return
+      ;;
+  esac
+
+  case "$harness_name" in
+    codex)
+      case "$model" in
+        openai/*|gpt-*|o1|o3|o4-*)
+          score=$((score + 300))
+          ;;
+        anthropic/*|openrouter/anthropic/*|claude-*)
+          score=$((score - 250))
+          ;;
+        */*)
+          score=$((score - 75))
+          ;;
+      esac
+      ;;
+    opencode)
+      case "$provider_base" in
+        *openrouter.ai*)
+          case "$model" in
+            openrouter/*) score=$((score + 400)) ;;
+            opencode/*)   score=$((score - 200)) ;;
+          esac
+          ;;
+      esac
+      ;;
+  esac
+
+  case "$priority" in
+    heavy)
+      case "$lower" in
+        *gpt-5.2-codex*|*gpt-5.1-codex*|*gpt-5-codex*|*gpt-5.2*|*gpt-5.1*|*gpt-5-pro*|*gpt-5*|*gpt-4.1*|*gpt-4o*|*gpt-4-turbo*|*claude-opus*|*claude-sonnet-4*|*claude-sonnet-latest*|*deepseek-r1*|*deepseek-v4-pro*)
+          score=$((score + 120))
+          ;;
+        *gpt-mini*|*mini*|*nano*|*haiku*|*flash-lite*|*:free)
+          score=$((score - 40))
+          ;;
+      esac
+      ;;
+    strong)
+      case "$lower" in
+        *gpt-5.4-mini*|*gpt-5-mini*|*gpt-4.1-mini*|*gpt-4o-mini*)
+          score=$((score + 120))
+          ;;
+        *gpt-5*|*gpt-4.1*|*gpt-4o*|*gpt-4-turbo*|*claude-sonnet*|*claude-opus*|*deepseek-v4*|*codestral*|*devstral*)
+          score=$((score + 90))
+          ;;
+        *mini*|*nano*|*haiku*|*flash-lite*)
+          score=$((score - 20))
+          ;;
+      esac
+      ;;
+    economy)
+      case "$lower" in
+        *gpt-mini-latest*|*gpt-4o-mini*|*gpt-4.1-mini*|*gpt-4.1-nano*|*gpt-5-mini*|*gpt-5-nano*|*gpt-3.5-turbo*|*haiku*|*mini*|*nano*|*flash-lite*|*:free)
+          score=$((score + 100))
+          ;;
+        *opus*|*pro*|*large*|*gpt-5.2*|*gpt-5.1*|*gpt-5-codex*)
+          score=$((score - 35))
+          ;;
+      esac
+      ;;
+  esac
+
+  case "$agent_name" in
+    documentation)
+      ;;
+    qa-test|devops)
+      case "$lower" in
+        *gpt-5.4-mini*)
+          score=$((score + 40))
+          ;;
+        *gpt-5-codex*)
+          score=$((score - 30))
+          ;;
+      esac
+      ;;
+    *)
+      case "$lower" in
+        *codex*|*codestral*|*devstral*|*coder*)
+          score=$((score + 15))
+          ;;
+      esac
+      ;;
+  esac
+
+  echo "$score"
+}
+
+_select_dynamic_model_for_agent() {
+  local agent_name="$1"
+  local harness_name="$2"
+  local inventory_json best_model="" best_score=-10000
+  local model score
+
+  inventory_json="$(get_harness_models_inventory "$harness_name" 2>/dev/null || echo "[]")"
+  [ -n "$inventory_json" ] || return 0
+  [ "$inventory_json" != "[]" ] || return 0
+
+  while IFS= read -r model; do
+    [ -n "$model" ] || continue
+    score="$(_score_model_for_agent "$agent_name" "$harness_name" "$model")"
+    if [ "$score" -gt "$best_score" ]; then
+      best_score="$score"
+      best_model="$model"
+    fi
+  done < <(printf '%s' "$inventory_json" | jq -r '.[]')
+
+  [ -n "$best_model" ] || return 0
+  printf '%s\n' "$best_model"
 }
 
 # Determine agent from story content (explicit field, labels, or content analysis)
@@ -192,8 +466,22 @@ _apply_agent_profile() {
   # Only override model if not explicitly set via command line/environment
   if [ -z "${RALPH_MODEL:-}" ]; then
     local suggested_model
-    suggested_model="$(_get_agent_profile "$agent_name" "$effective_harness" '.models')"
+    suggested_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
+    if [ -z "$suggested_model" ]; then
+      suggested_model="$(_get_agent_profile "$agent_name" "$effective_harness" '.models')"
+    fi
     if [ -n "$suggested_model" ]; then
+      case "$effective_harness" in
+        codex)
+          suggested_model="$(_resolve_codex_model "$suggested_model")"
+          ;;
+        opencode)
+          suggested_model="$(_resolve_opencode_model "$suggested_model")"
+          ;;
+        piagent)
+          suggested_model="$(_resolve_piagent_model "$suggested_model")"
+          ;;
+      esac
       RALPH_MODEL="$suggested_model"
       export RALPH_MODEL
     fi
@@ -257,27 +545,55 @@ _piagent_exec_prompt() {
   local prompt="$1"
   local workspace="${2:-$PWD}"
   shift 2 || true
-  
-  # PI Agent uses `pi -p` for print/non-interactive mode
-  # Permission bypass via PI_PERMISSION_LEVEL=bypassed
-  local pi_env=(PI_PERMISSION_LEVEL=bypassed)
-  
+
+  # PI Agent uses `pi -p` for print/non-interactive mode.
+  # Set the permission mode as an environment variable for the command.
+
   # Build arguments array
   local pi_args=("$prompt")
-  
+
+  local pi_provider="${PI_PROVIDER:-}"
+  local resolved_model="${RALPH_MODEL:-}"
+  local pi_provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+  if [ -z "$pi_provider" ] && [ -n "$resolved_model" ]; then
+    case "$resolved_model" in
+      openrouter/*)
+        pi_provider="openrouter"
+        resolved_model="${resolved_model#openrouter/}"
+        ;;
+      anthropic/*)
+        pi_provider="anthropic"
+        resolved_model="${resolved_model#anthropic/}"
+        ;;
+      openai/*)
+        pi_provider="openai"
+        resolved_model="${resolved_model#openai/}"
+        ;;
+      google/*)
+        pi_provider="google"
+        resolved_model="${resolved_model#google/}"
+        ;;
+    esac
+  fi
+
+  if [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *openrouter.ai* ]]; then
+    pi_provider="openrouter"
+  fi
+
   # Add model selection if specified (if supported by PI Agent)
-  [ -n "${RALPH_MODEL:-}" ] && pi_args+=("--model" "$RALPH_MODEL")
-  
+  [ -n "$pi_provider" ] && pi_args+=("--provider" "$pi_provider")
+  [ -n "$resolved_model" ] && pi_args+=("--model" "$resolved_model")
+
   # Add agent selection if specified (if supported by PI Agent)
   [ -n "${RALPH_AGENT:-}" ] && pi_args+=("--agent" "$RALPH_AGENT")
-  
+
   # Pass through any additional arguments
   pi_args+=("$@")
-  
+
   # Change to workspace directory and run pi with prompt
   (
     cd "$workspace"
-    "${pi_env[@]}" pi -p "${pi_args[@]}"
+    PI_PERMISSION_LEVEL=bypassed pi -p "${pi_args[@]}"
   )
 }
 
@@ -362,27 +678,55 @@ _piagent_exec_prompt() {
   local prompt="$1"
   local workspace="${2:-$PWD}"
   shift 2 || true
-  
-  # PI Agent uses `pi -p` for print/non-interactive mode
-  # Permission bypass via PI_PERMISSION_LEVEL=bypassed
-  local pi_env=(PI_PERMISSION_LEVEL=bypassed)
-  
+
+  # PI Agent uses `pi -p` for print/non-interactive mode.
+  # Set the permission mode as an environment variable for the command.
+
   # Build arguments array
   local pi_args=("$prompt")
-  
+
+  local pi_provider="${PI_PROVIDER:-}"
+  local resolved_model="${RALPH_MODEL:-}"
+  local pi_provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+  if [ -z "$pi_provider" ] && [ -n "$resolved_model" ]; then
+    case "$resolved_model" in
+      openrouter/*)
+        pi_provider="openrouter"
+        resolved_model="${resolved_model#openrouter/}"
+        ;;
+      anthropic/*)
+        pi_provider="anthropic"
+        resolved_model="${resolved_model#anthropic/}"
+        ;;
+      openai/*)
+        pi_provider="openai"
+        resolved_model="${resolved_model#openai/}"
+        ;;
+      google/*)
+        pi_provider="google"
+        resolved_model="${resolved_model#google/}"
+        ;;
+    esac
+  fi
+
+  if [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *openrouter.ai* ]]; then
+    pi_provider="openrouter"
+  fi
+
   # Add model selection if specified (if supported by PI Agent)
-  [ -n "${RALPH_MODEL:-}" ] && pi_args+=("--model" "$RALPH_MODEL")
-  
+  [ -n "$pi_provider" ] && pi_args+=("--provider" "$pi_provider")
+  [ -n "$resolved_model" ] && pi_args+=("--model" "$resolved_model")
+
   # Add agent selection if specified (if supported by PI Agent)
   [ -n "${RALPH_AGENT:-}" ] && pi_args+=("--agent" "$RALPH_AGENT")
-  
+
   # Pass through any additional arguments
   pi_args+=("$@")
-  
+
   # Change to workspace directory and run pi with prompt
   (
     cd "$workspace"
-    "${pi_env[@]}" pi -p "${pi_args[@]}"
+    PI_PERMISSION_LEVEL=bypassed pi -p "${pi_args[@]}"
   )
 }
 

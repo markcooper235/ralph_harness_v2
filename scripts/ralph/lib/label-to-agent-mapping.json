@@ -14,7 +14,6 @@
     "root cause": "researcher",
     "explore": "researcher",
     "exploration": "researcher",
-    
     "security": "security",
     "vulnerability": "security",
     "vulnerabilities": "security",
@@ -53,7 +52,6 @@
     "audit": "security",
     "auditing": "security",
     "compliance": "security",
-    
     "typo": "junior-dev",
     "typos": "junior-dev",
     "text": "junior-dev",
@@ -64,7 +62,6 @@
     "buttons": "junior-dev",
     "ui": "junior-dev",
     "ux": "junior-dev",
-    "frontend": "junior-dev",
     "frontend": "junior-dev",
     "minor": "junior-dev",
     "minors": "junior-dev",
@@ -91,7 +88,6 @@
     "images": "junior-dev",
     "logo": "junior-dev",
     "logos": "junior-dev",
-    
     "refactor": "senior-dev",
     "refactoring": "senior-dev",
     "restructure": "senior-dev",
@@ -122,11 +118,9 @@
     "service": "senior-dev",
     "services": "senior-dev",
     "backend": "senior-dev",
-    "backend": "senior-dev",
     "system": "senior-dev",
     "systems": "senior-dev",
     "enterprise": "senior-dev",
-    
     "test": "qa-test",
     "testing": "qa-test",
     "unit test": "qa-test",
@@ -154,7 +148,6 @@
     "test driven": "qa-test",
     "tdd": "qa-test",
     "bdd": "qa-test",
-    
     "deploy": "devops",
     "deployment": "devops",
     "deploying": "devops",
@@ -190,7 +183,6 @@
     "logs": "devops",
     "metrics": "devops",
     "alerting": "devops",
-    
     "doc": "documentation",
     "documentation": "documentation",
     "comment": "documentation",
@@ -212,7 +204,6 @@
     "wikis": "documentation",
     "markdown": "documentation",
     "md": "documentation",
-    
     "example": "junior-dev",
     "examples": "junior-dev",
     "sample": "junior-dev",
@@ -233,7 +224,6 @@
     "security audit": "security",
     "code review": "senior-dev",
     "review": "senior-dev",
-    "refactor": "senior-dev",
     "tech debt": "senior-dev",
     "technical debt": "senior-dev"
   }

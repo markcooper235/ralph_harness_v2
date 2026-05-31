@@ -9,14 +9,20 @@ set -euo pipefail
 
 RALPH_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+load_ralph_env() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 1
+    set -a
+    # shellcheck source=/dev/null
+    . "$env_file"
+    set +a
+    return 0
+}
+
 # Load environment variables from .ralph-env files
 # Priority: $HOME/.ralph-env (user-specific) then scripts/ralph/.ralph-env (project-specific fallback)
-if [ -f "${HOME}/.ralph-env" ]; then
-    # shellcheck source=/dev/null
-    . "${HOME}/.ralph-env"
-elif [ -f "${RALPH_SCRIPT_DIR}/.ralph-env" ]; then
-    # shellcheck source=/dev/null
-    . "${RALPH_SCRIPT_DIR}/.ralph-env"
+if ! load_ralph_env "${HOME}/.ralph-env"; then
+    load_ralph_env "${RALPH_SCRIPT_DIR}/.ralph-env" || true
 fi
 
 # Fallback to native base URLs and API keys if native variables are set
@@ -88,7 +94,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Export for subprocesses (especially harness-exec.sh)
-export RALPH_HARNESS RALPH_MODEL RALPH_AGENT
+export RALPH_HARNESS RALPH_MODEL RALPH_AGENT RALPH_CODEX_PROFILE
 
 # Function to wrap harness execution with automatic fallback to native providers on failure
 harness_exec_prompt_with_fallback() {
@@ -104,6 +110,7 @@ harness_exec_prompt_with_fallback() {
     local saved_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
     local saved_PI_API_KEY="${PI_API_KEY:-}"
     local saved_OPENCODE_API_KEY="${OPENCODE_API_KEY:-}"
+    local saved_RALPH_CODEX_PROFILE="${RALPH_CODEX_PROFILE:-}"
 
     while [ $attempt -lt $max_attempts ]; do
         harness_exec_prompt "$prompt" "$workspace" "$@"
@@ -113,6 +120,9 @@ harness_exec_prompt_with_fallback() {
         fi
         attempt=$((attempt+1))
         if [ $attempt -lt $max_attempts ]; then
+            if [ "$(_get_harness)" = "codex" ]; then
+                unset RALPH_CODEX_PROFILE
+            fi
             # Unset base URL overrides to let harnesses use their default endpoints
             unset OPENAI_BASE_URL
             unset ANTHROPIC_BASE_URL
@@ -138,7 +148,7 @@ harness_exec_prompt_with_fallback() {
                 unset OPENCODE_API_KEY
             fi
             # Export them
-            export OPENAI_BASE_URL ANTHROPIC_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY PI_API_KEY OPENCODE_API_KEY
+            export OPENAI_BASE_URL ANTHROPIC_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY PI_API_KEY OPENCODE_API_KEY RALPH_CODEX_PROFILE
         fi
     done
 
@@ -166,6 +176,12 @@ harness_exec_prompt_with_fallback() {
         export OPENCODE_API_KEY
     else
         unset OPENCODE_API_KEY
+    fi
+    if [ -n "${saved_RALPH_CODEX_PROFILE:-}" ]; then
+        RALPH_CODEX_PROFILE="${saved_RALPH_CODEX_PROFILE}"
+        export RALPH_CODEX_PROFILE
+    else
+        unset RALPH_CODEX_PROFILE
     fi
 
     return $exit_code
@@ -737,16 +753,13 @@ build_execution_bundle() {
 }
 
 build_story_prompt() {
-  # Determine effective agent and apply profile settings (model, etc.)
-  local effective_agent
-  effective_agent="$(_get_effective_agent "$STORY_FILE")"
-  _apply_agent_profile "$effective_agent"
-  
+  local effective_agent="${1:-default}"
+
   build_execution_bundle
   
   # Build system prompt addition from agent profile if available
   local agent_system_prompt_addition=""
-  agent_system_prompt_addition="$(_get_agent_profile "$effective_agent" '.system_prompt_addition // empty')"
+  agent_system_prompt_addition="$(_load_json_value "$AGENT_PROFILES_FILE" ".profiles.${effective_agent}.system_prompt_addition // empty")"
   
   cat <<PROMPT
 Execute this Ralph story.
@@ -1157,7 +1170,9 @@ fi
 baseline_fp_file="$(mktemp)"
 capture_failing_fingerprints "$baseline_fp_file"
 
-primary_prompt="$(build_story_prompt)"
+effective_agent="$(_get_effective_agent "$STORY_FILE")"
+_apply_agent_profile "$effective_agent"
+primary_prompt="$(build_story_prompt "$effective_agent")"
 run_story_cycle "primary" "$primary_prompt"
 
 remediation_count=0
