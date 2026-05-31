@@ -28,49 +28,12 @@ roadmap → stories.json (per sprint)
        → sprint commit → main
 ```
 
-## Core Commands
+## Command Discovery
 
-```bash
-# Install Ralph into a target project
-./install.sh --project /path/to/project [--install-speckit]
-
-# Optional global Codex assets
-./install.sh --install-skills
-./install.sh --install-prompts
-
-# Validate a Ralph-enabled repo
-./scripts/ralph/doctor.sh
-
-# Roadmap / sprint planning
-./scripts/ralph/ralph-roadmap.sh --vision "Roadmap from baseline to target state"
-./scripts/ralph/ralph-sprint.sh status
-./scripts/ralph/ralph-sprint.sh next [--activate]
-
-# Story preparation
-./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-1   # specify + generate + health + promote
-./scripts/ralph/ralph-story.sh specify S-001                   # SpecKit analysis only
-./scripts/ralph/ralph-story.sh generate S-001                  # generate story.json from .specify/ artifacts
-./scripts/ralph/ralph-story.sh health [S-001]                  # validate story task containers
-
-# Loop execution
-./scripts/ralph/ralph.sh [--max-stories N] [--max-retries N] [--continue-on-failure] [--skip-fallow] [--dry-run]
-
-# Status
-./scripts/ralph/ralph-status.sh
-
-# Verification
-./scripts/ralph/ralph-verify.sh [--targeted|--task|--story-scope|--sprint|--full-regression]
-
-# Closeout
-./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--full-regression]
-
-# Advanced / recovery helpers
-./scripts/ralph/ralph-story.sh add --title "..." --goal "..." --prompt-context "..."
-./scripts/ralph/ralph-story.sh set-status S-001 planned
-./scripts/ralph/ralph-story.sh import-prd scripts/ralph/prd.json
-./scripts/ralph/ralph-sprint-migrate.sh [--sprint NAME]
-./scripts/ralph/ralph-cleanup.sh --force
-```
+- Use `./scripts/ralph/doctor.sh` as the first validation entry point in a Ralph-enabled repo.
+- Use the `setup` skill for install/bootstrap workflows.
+- Use the `ralph-runtime` skill for sprint/story execution flow, verification, runtime state, and recovery helpers.
+- For exact flags or subcommands, prefer `--help` on the specific script you are about to use instead of loading broad command reference context.
 
 ## Deferred Skills
 
