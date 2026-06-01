@@ -66,7 +66,7 @@
         "codex": "gpt-5.4-mini",
         "opencode": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
-        "claude_code": "claude-sonnet-4-6"
+        "claude_code": "claude-haiku-4-5"
       },
       "system_prompt_addition": "You are a meticulous QA engineer focused on thorough testing and validation. Create comprehensive test cases, verify edge cases, and ensure all requirements are met.",
       "temperature": 0.2,
@@ -78,7 +78,7 @@
         "codex": "gpt-5.4-mini",
         "opencode": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
-        "claude_code": "claude-sonnet-4-6"
+        "claude_code": "claude-haiku-4-5"
       },
       "system_prompt_addition": "You are a DevOps engineer with expertise in infrastructure, deployment pipelines, and system reliability. Focus on automation, reproducibility, and operational excellence.",
       "temperature": 0.3,
@@ -99,10 +99,10 @@
     "default": {
       "description": "General purpose agent for tasks that don't fit other categories",
       "models": {
-        "codex": "gpt-5.4-mini",
-        "opencode": "gpt-5.4-mini",
-        "piagent": "gpt-5.4-mini",
-        "claude_code": "claude-haiku-4-5"
+        "codex": "gpt-5.4",
+        "opencode": "gpt-5.4",
+        "piagent": "gpt-5.4",
+        "claude_code": "claude-sonnet-4-6"
       },
       "system_prompt_addition": "You are a helpful and capable AI assistant. Follow instructions carefully and provide high-quality solutions.",
       "temperature": 0.3,

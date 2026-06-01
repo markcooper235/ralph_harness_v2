@@ -15,6 +15,22 @@ ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 STORIES_FILE="${RALPH_STORIES_FILE:-}"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
+
+load_ralph_env() {
+  local env_file="$1"
+  [ -f "$env_file" ] || return 1
+  set -a
+  # shellcheck source=/dev/null
+  . "$env_file"
+  set +a
+  return 0
+}
+
+# Load Ralph env so specify/generate use the same provider routing as story runs.
+if ! load_ralph_env "${HOME}/.ralph-env"; then
+  load_ralph_env "${SCRIPT_DIR}/.ralph-env" || true
+fi
+
 source "$SCRIPT_DIR/lib/harness-exec.sh"
 source "$SCRIPT_DIR/lib/specify.sh"
 
@@ -48,16 +64,23 @@ story_harness_profile_push() {
     }' > "$tmp_story_meta"
 
     effective_agent="$(_get_effective_agent "$tmp_story_meta")"
+    local complexity_pair complexity_score complexity_tier
+    complexity_pair="$(_story_complexity_score "$story_meta_json")"
+    complexity_score="${complexity_pair%%:*}"
+    complexity_tier="${complexity_pair#*:}"
     rm -f "$tmp_story_meta"
 
     STORY_HARNESS_EFFECTIVE_AGENT="$effective_agent"
+    STORY_COMPLEXITY_SCORE="$complexity_score"
+    STORY_COMPLEXITY_TIER="$complexity_tier"
+    export STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER
     _apply_agent_profile "$effective_agent"
     effective_harness="$(_get_harness)"
 
     if [ -n "${RALPH_MODEL:-}" ]; then
-      echo "Selected harness profile: harness=$effective_harness agent=$effective_agent model=$RALPH_MODEL"
+      echo "Selected harness profile: harness=$effective_harness agent=$effective_agent model=$RALPH_MODEL complexity=$STORY_COMPLEXITY_TIER($STORY_COMPLEXITY_SCORE)"
     else
-      echo "Selected harness profile: harness=$effective_harness agent=$effective_agent"
+      echo "Selected harness profile: harness=$effective_harness agent=$effective_agent complexity=$STORY_COMPLEXITY_TIER($STORY_COMPLEXITY_SCORE)"
     fi
   fi
 
@@ -82,6 +105,8 @@ story_harness_profile_pop() {
     unset STORY_HARNESS_PROFILE_ORIG_MODEL_SET
     unset STORY_HARNESS_PROFILE_ORIG_MODEL
     unset STORY_HARNESS_EFFECTIVE_AGENT
+    unset STORY_COMPLEXITY_SCORE
+    unset STORY_COMPLEXITY_TIER
     unset STORY_HARNESS_PROFILE_DEPTH
   fi
 }

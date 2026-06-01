@@ -207,12 +207,142 @@ _resolve_claude_code_model() {
   printf '%s\n' "$requested_model"
 }
 
+_resolve_model_for_harness() {
+  local requested_model="$1"
+  local harness_name="$2"
+
+  case "$harness_name" in
+    codex)
+      _resolve_codex_model "$requested_model"
+      ;;
+    opencode)
+      _resolve_opencode_model "$requested_model"
+      ;;
+    piagent)
+      _resolve_piagent_model "$requested_model"
+      ;;
+    claude_code)
+      _resolve_claude_code_model "$requested_model"
+      ;;
+    *)
+      printf '%s\n' "$requested_model"
+      ;;
+  esac
+}
+
 _model_family_name() {
   local model="$1"
   local lower
   lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
   lower="${lower##*/}"
   printf '%s\n' "$lower"
+}
+
+_story_complexity_text() {
+  local story_json="${1:-}"
+  [ -n "$story_json" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+
+  printf '%s' "$story_json" | jq -r '
+    [
+      (.title // ""),
+      (.description // .goal // ""),
+      (.promptContext // ""),
+      (.agent // ""),
+      ((.labels // [])[]?),
+      ((.tags // [])[]?),
+      ((.tasks // [])[]? | (.title? // ""))
+    ]
+    | map(select(length > 0))
+    | join(" ")
+  ' 2>/dev/null
+}
+
+_story_complexity_score() {
+  local story_json="${1:-}"
+  local text task_count label_count word_count path_count score=0
+  local complexity_tier
+
+  text="$(_story_complexity_text "$story_json")"
+  [ -n "$text" ] || { echo 0; return 0; }
+
+  task_count="$(printf '%s' "$story_json" | jq -r '((.tasks // []) | length) // 0' 2>/dev/null || echo 0)"
+  label_count="$(printf '%s' "$story_json" | jq -r '((.labels // []) | length) + ((.tags // []) | length)' 2>/dev/null || echo 0)"
+  word_count="$(printf '%s' "$text" | tr -cs '[:alnum:]/._-' '\n' | sed '/^$/d' | wc -l | awk '{print $1}')"
+  path_count="$(printf '%s' "$text" | rg -o '[[:alnum:]_.-]+(/[[:alnum:]_.-]+)+' 2>/dev/null | awk 'END { print NR + 0 }')"
+
+  task_count="${task_count:-0}"
+  label_count="${label_count:-0}"
+  word_count="${word_count:-0}"
+  path_count="${path_count:-0}"
+
+  score=$((score + ((task_count > 1 ? task_count - 1 : 0) * 4)))
+  score=$((score + (label_count > 4 ? 12 : label_count * 2)))
+  score=$((score + (path_count > 4 ? 12 : path_count * 3)))
+
+  if [ "$word_count" -ge 280 ]; then
+    score=$((score + 12))
+  elif [ "$word_count" -ge 160 ]; then
+    score=$((score + 8))
+  elif [ "$word_count" -ge 80 ]; then
+    score=$((score + 4))
+  fi
+
+  if printf '%s' "$text" | rg -q "(security|vulnerability|vulnerabilities|exploit|patch|patching|auth|authentication|authorization|encrypt|encryption|decrypt|decryption|token|oauth|password|secret|key|cert|certificate|ssl|tls|xss|csrf|injection|xxe|rce|privilege|escalation|compliance)"; then
+    score=$((score + 18))
+  fi
+
+  if printf '%s' "$text" | rg -q "(refactor|refactoring|restructure|architecture|architectural|design|scalability|scalable|performance|optimize|optimization|efficiency|algorithm|algorithms|database|db|sql|nosql|api|microservice|microservices|backend|system|systems|migration|integration|concurrency)"; then
+    score=$((score + 12))
+  fi
+
+  if printf '%s' "$text" | rg -q "(debug|debugging|investigate|investigation|research|analyze|analysis|troubleshoot|troubleshooting|diagnose|diagnosis|root cause|explore|exploration|intermittent|unknown)"; then
+    score=$((score + 12))
+  fi
+
+  if printf '%s' "$text" | rg -q "(code review|peer review|review comments|review feedback|review findings|reviewer|regression risk|change assessment|risk assessment)"; then
+    score=$((score + 10))
+  fi
+
+  if printf '%s' "$text" | rg -q "(test|testing|unit test|integration test|e2e|end-to-end|validation|verify|verification|assert|assertion|mock|mocks|stub|stubs|fixture|fixtures|test case|test cases|test suite|tdd|bdd)"; then
+    score=$((score + 8))
+  fi
+
+  if printf '%s' "$text" | rg -q "(typo|typos|text|string|label|labels|button|buttons|ui|ux|frontend|minor|minors|small|trivial|spelling|grammar|style|styling|css|theme|theming|color|colors|font|fonts|icon|icons|image|images|logo|logos|documentation|doc|readme|guide|tutorial|walkthrough|faq|wiki|markdown|md)"; then
+    score=$((score - 6))
+  fi
+
+  [ "$score" -gt 0 ] || score=0
+
+  complexity_tier="low"
+  if [ "$score" -ge 60 ]; then
+    complexity_tier="extreme"
+  elif [ "$score" -ge 40 ]; then
+    complexity_tier="high"
+  elif [ "$score" -ge 20 ]; then
+    complexity_tier="medium"
+  fi
+
+  printf '%s\n' "$score:$complexity_tier"
+}
+
+_story_complexity_tier_from_score() {
+  local score="${1:-0}"
+  case "$score" in
+    ''|*[!0-9]*)
+      echo "low"
+      return
+      ;;
+  esac
+  if [ "$score" -ge 60 ]; then
+    echo "extreme"
+  elif [ "$score" -ge 40 ]; then
+    echo "high"
+  elif [ "$score" -ge 20 ]; then
+    echo "medium"
+  else
+    echo "low"
+  fi
 }
 
 _agent_selection_priority() {
@@ -237,11 +367,12 @@ _score_model_for_agent() {
   local agent_name="$1"
   local harness_name="$2"
   local model="$3"
-  local priority lower score=0 provider_base
+  local priority lower score=0 provider_base complexity_tier
 
   priority="$(_agent_selection_priority "$agent_name")"
   lower="$(_model_family_name "$model")"
   provider_base="${OPENCODE_BASE_URL:-${OPENAI_BASE_URL:-}}"
+  complexity_tier="$(_story_complexity_tier_from_score "${RALPH_STORY_COMPLEXITY_SCORE:-0}")"
 
   case "$lower" in
     *embedding*|*moderation*|*realtime*|*audio*|*transcribe*|*tts*|*image*|*search-preview*)
@@ -361,6 +492,29 @@ _score_model_for_agent() {
       ;;
   esac
 
+  case "$complexity_tier" in
+    medium)
+      case "$lower" in
+        *claude-sonnet*|*gpt-5.4*|*gpt-5.5*|*gpt-5-pro*|*gpt-5.4-pro*|*deepseek-v4*|*codestral*|*devstral*)
+          score=$((score + 20))
+          ;;
+      esac
+      ;;
+    high|extreme)
+      case "$lower" in
+        *claude-opus*|*gpt-5.5*|*gpt-5.4-pro*)
+          score=$((score + 80))
+          ;;
+        *claude-sonnet*|*gpt-5.4*|*deepseek-v4*|*codestral*|*devstral*)
+          score=$((score + 35))
+          ;;
+        *gpt-5.4-mini*|*gpt-5-mini*|*gpt-4.1-mini*|*gpt-4o-mini*|*haiku*|*nano*|*flash-lite*|*:free)
+          score=$((score - 25))
+          ;;
+      esac
+      ;;
+  esac
+
   case "$agent_name" in
     documentation)
       ;;
@@ -374,13 +528,30 @@ _score_model_for_agent() {
           ;;
       esac
       ;;
-    qa-test|devops)
-      case "$lower" in
-        *gpt-5.4-mini*)
-          score=$((score + 40))
+    qa-test|devops|documentation)
+      case "$complexity_tier" in
+        medium)
+          case "$lower" in
+            *claude-sonnet*|*gpt-5.4*|*gpt-5.5*|*gpt-5-pro*|*gpt-5.4-pro*|*deepseek-v4*|*codestral*|*devstral*)
+              score=$((score + 80))
+              ;;
+            *claude-haiku*|*gpt-5.4-mini*|*gpt-5-mini*|*gpt-4.1-mini*|*gpt-4o-mini*|*haiku*|*nano*|*flash-lite*|*:free)
+              score=$((score - 20))
+              ;;
+          esac
           ;;
-        *gpt-5-codex*)
-          score=$((score - 30))
+        high|extreme)
+          case "$lower" in
+            *claude-sonnet*|*gpt-5.4*|*gpt-5.5*|*gpt-5-pro*|*gpt-5.4-pro*|*deepseek-v4*|*codestral*|*devstral*)
+              score=$((score + 140))
+              ;;
+            *claude-opus*)
+              score=$((score + 60))
+              ;;
+            *claude-haiku*|*gpt-5.4-mini*|*gpt-5-mini*|*gpt-4.1-mini*|*gpt-4o-mini*|*haiku*|*nano*|*flash-lite*|*:free)
+              score=$((score - 60))
+              ;;
+          esac
           ;;
       esac
       ;;
@@ -562,38 +733,35 @@ _apply_agent_profile() {
   
   # Only override model if not explicitly set via command line/environment
   if [ -z "${RALPH_MODEL:-}" ]; then
-    local suggested_model preferred_model
+    local suggested_model preferred_model preferred_score dynamic_model dynamic_score
+    preferred_score=-99999
     preferred_model="$(_get_agent_profile "$agent_name" "$effective_harness" '.models')"
-    suggested_model="$preferred_model"
-    if [ -z "$suggested_model" ]; then
-      suggested_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
-    fi
-    if [ -n "$suggested_model" ]; then
-      case "$effective_harness" in
-        codex)
-          suggested_model="$(_resolve_codex_model "$suggested_model")"
-          ;;
-        opencode)
-          suggested_model="$(_resolve_opencode_model "$suggested_model")"
-          ;;
-        piagent)
-          suggested_model="$(_resolve_piagent_model "$suggested_model")"
-          ;;
-      esac
-      if ! is_model_supported_by_harness "$effective_harness" "$suggested_model"; then
-        suggested_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
-        case "$effective_harness" in
-          codex)
-            suggested_model="$(_resolve_codex_model "$suggested_model")"
-            ;;
-          opencode)
-            suggested_model="$(_resolve_opencode_model "$suggested_model")"
-            ;;
-          piagent)
-            suggested_model="$(_resolve_piagent_model "$suggested_model")"
-            ;;
-        esac
+    if [ -n "$preferred_model" ]; then
+      preferred_model="$(_resolve_model_for_harness "$preferred_model" "$effective_harness")"
+      if ! is_model_supported_by_harness "$effective_harness" "$preferred_model"; then
+        preferred_model=""
       fi
+    fi
+
+    dynamic_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
+    if [ -n "$dynamic_model" ] && ! is_model_supported_by_harness "$effective_harness" "$dynamic_model"; then
+      dynamic_model=""
+    fi
+
+    if [ -n "$preferred_model" ]; then
+      suggested_model="$preferred_model"
+      preferred_score="$(_score_model_for_agent "$agent_name" "$effective_harness" "$preferred_model")"
+    fi
+
+    if [ -n "$dynamic_model" ]; then
+      dynamic_score="$(_score_model_for_agent "$agent_name" "$effective_harness" "$dynamic_model")"
+      if [ -z "$suggested_model" ] || [ "${dynamic_score:-0}" -gt "$preferred_score" ]; then
+        suggested_model="$dynamic_model"
+        preferred_score="$dynamic_score"
+      fi
+    fi
+
+    if [ -n "$suggested_model" ]; then
       RALPH_MODEL="$suggested_model"
       export RALPH_MODEL
     fi
