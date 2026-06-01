@@ -733,7 +733,7 @@ _apply_agent_profile() {
   
   # Only override model if not explicitly set via command line/environment
   if [ -z "${RALPH_MODEL:-}" ]; then
-    local suggested_model preferred_model preferred_score dynamic_model dynamic_score
+    local suggested_model="" preferred_model preferred_score dynamic_model dynamic_score
     preferred_score=-99999
     preferred_model="$(_get_agent_profile "$agent_name" "$effective_harness" '.models')"
     if [ -n "$preferred_model" ]; then
