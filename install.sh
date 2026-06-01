@@ -44,7 +44,7 @@ Options:
    --no-migrate-legacy   Skip automatic legacy sprint migration during install
    --verify-setup MODE   Configure verify.local.sh: auto|detect-only|ai|skip (default: auto)
    --skip-git-check      Allow installing outside a git repo
-    --harness HARNESS     Specify harness to use (codex|opencode|piagent|claude_code) (default: codex)
+    --harness HARNESS     Specify harness to use (codex|piagent|claude_code) (default: codex)
     --model MODEL         Specify model to use with the harness (default: harness-specific)
     --agent AGENT         Specify agent/subagent type to use (default: harness-specific)
   -h, --help            Show help

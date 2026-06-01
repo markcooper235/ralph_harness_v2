@@ -108,20 +108,6 @@ done
 # Export for subprocesses (especially harness-exec.sh)
 export RALPH_HARNESS RALPH_MODEL RALPH_AGENT RALPH_CODEX_PROFILE
 
-temporarily_disable_opencode_auth() {
-    local auth_path="$HOME/.local/share/opencode/auth.json"
-    local disabled_path="$HOME/.local/share/opencode/auth.json.ralph-disabled"
-    [ -f "$auth_path" ] || return 0
-    mv "$auth_path" "$disabled_path"
-}
-
-restore_opencode_auth() {
-    local auth_path="$HOME/.local/share/opencode/auth.json"
-    local disabled_path="$HOME/.local/share/opencode/auth.json.ralph-disabled"
-    [ -f "$disabled_path" ] || return 0
-    mv "$disabled_path" "$auth_path"
-}
-
 # Function to wrap harness execution with automatic fallback to native providers on failure
 harness_exec_prompt_with_fallback() {
     local prompt="$1"
@@ -137,16 +123,13 @@ harness_exec_prompt_with_fallback() {
     # Save the current environment variables for API keys we care about
     local saved_OPENAI_BASE_URL="${OPENAI_BASE_URL:-}"
     local saved_ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}"
-    local saved_OPENCODE_BASE_URL="${OPENCODE_BASE_URL:-}"
     local saved_PI_BASE_URL="${PI_BASE_URL:-}"
     local saved_OPENAI_API_KEY="${OPENAI_API_KEY:-}"
     local saved_ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
     local saved_PI_API_KEY="${PI_API_KEY:-}"
-    local saved_OPENCODE_API_KEY="${OPENCODE_API_KEY:-}"
     local saved_ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}"
     local saved_RALPH_CODEX_PROFILE="${RALPH_CODEX_PROFILE:-}"
     local saved_RALPH_MODEL="${RALPH_MODEL:-}"
-    local opencode_auth_temporarily_disabled=0
 
     case "$harness_name" in
         codex)
@@ -154,11 +137,6 @@ harness_exec_prompt_with_fallback() {
             ;;
         claude_code)
             [ -n "${ANTHROPIC_API_KEY_NATIVE:-}" ] && native_fallback_available=1
-            ;;
-        opencode)
-            if [ -n "${OPENCODE_API_KEY_NATIVE:-}" ] || [ "${OPENCODE_USE_LOGIN_FALLBACK:-0}" = "1" ]; then
-                native_fallback_available=1
-            fi
             ;;
         piagent)
             [ -n "${PI_API_KEY_NATIVE:-}" ] && native_fallback_available=1
@@ -181,22 +159,17 @@ harness_exec_prompt_with_fallback() {
             # Switch to native API routing only; the framework does not fall back to harness OAuth.
             unset OPENAI_BASE_URL
             unset ANTHROPIC_BASE_URL
-            unset OPENCODE_BASE_URL
             unset PI_BASE_URL
             unset ANTHROPIC_AUTH_TOKEN
             unset OPENAI_API_KEY
             unset ANTHROPIC_API_KEY
             unset PI_API_KEY
-            unset OPENCODE_API_KEY
 
             if [ -n "${OPENAI_API_BASE_NATIVE:-}" ]; then
                 OPENAI_BASE_URL="${OPENAI_API_BASE_NATIVE}"
             fi
             if [ -n "${ANTHROPIC_API_BASE_NATIVE:-}" ]; then
                 ANTHROPIC_BASE_URL="${ANTHROPIC_API_BASE_NATIVE}"
-            fi
-            if [ -n "${OPENCODE_API_BASE_NATIVE:-}" ]; then
-                OPENCODE_BASE_URL="${OPENCODE_API_BASE_NATIVE}"
             fi
             if [ -n "${PI_API_BASE_NATIVE:-}" ]; then
                 PI_BASE_URL="${PI_API_BASE_NATIVE}"
@@ -210,30 +183,10 @@ harness_exec_prompt_with_fallback() {
             if [ -n "${PI_API_KEY_NATIVE:-}" ]; then
                 PI_API_KEY="${PI_API_KEY_NATIVE}"
             fi
-            if [ -n "${OPENCODE_API_KEY_NATIVE:-}" ]; then
-                OPENCODE_API_KEY="${OPENCODE_API_KEY_NATIVE}"
+            if [ -n "${PI_MODEL_NATIVE:-}" ]; then
+                RALPH_MODEL="${PI_MODEL_NATIVE}"
             fi
-            case "$harness_name" in
-                opencode)
-                    if [ -n "${OPENCODE_MODEL_NATIVE:-}" ]; then
-                        RALPH_MODEL="${OPENCODE_MODEL_NATIVE}"
-                    fi
-                    if [ "${OPENCODE_FORCE_LOGOUT_ON_FALLBACK:-0}" = "1" ]; then
-                        temporarily_disable_opencode_auth
-                        opencode_auth_temporarily_disabled=1
-                    fi
-                    if [ "${OPENCODE_USE_LOGIN_FALLBACK:-0}" = "1" ] && [ -z "${OPENCODE_API_KEY_NATIVE:-}" ]; then
-                        unset OPENCODE_API_KEY
-                        unset OPENCODE_BASE_URL
-                    fi
-                    ;;
-                piagent)
-                    if [ -n "${PI_MODEL_NATIVE:-}" ]; then
-                        RALPH_MODEL="${PI_MODEL_NATIVE}"
-                    fi
-                    ;;
-            esac
-            export OPENAI_BASE_URL ANTHROPIC_BASE_URL OPENCODE_BASE_URL PI_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN PI_API_KEY OPENCODE_API_KEY RALPH_CODEX_PROFILE
+            export OPENAI_BASE_URL ANTHROPIC_BASE_URL PI_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN PI_API_KEY RALPH_CODEX_PROFILE
         fi
     done
 
@@ -249,12 +202,6 @@ harness_exec_prompt_with_fallback() {
         export ANTHROPIC_BASE_URL
     else
         unset ANTHROPIC_BASE_URL
-    fi
-    if [ -n "${saved_OPENCODE_BASE_URL:-}" ]; then
-        OPENCODE_BASE_URL="${saved_OPENCODE_BASE_URL}"
-        export OPENCODE_BASE_URL
-    else
-        unset OPENCODE_BASE_URL
     fi
     if [ -n "${saved_PI_BASE_URL:-}" ]; then
         PI_BASE_URL="${saved_PI_BASE_URL}"
@@ -286,12 +233,6 @@ harness_exec_prompt_with_fallback() {
     else
         unset PI_API_KEY
     fi
-    if [ -n "${saved_OPENCODE_API_KEY:-}" ]; then
-        OPENCODE_API_KEY="${saved_OPENCODE_API_KEY}"
-        export OPENCODE_API_KEY
-    else
-        unset OPENCODE_API_KEY
-    fi
     if [ -n "${saved_RALPH_CODEX_PROFILE:-}" ]; then
         RALPH_CODEX_PROFILE="${saved_RALPH_CODEX_PROFILE}"
         export RALPH_CODEX_PROFILE
@@ -303,9 +244,6 @@ harness_exec_prompt_with_fallback() {
         export RALPH_MODEL
     else
         unset RALPH_MODEL
-    fi
-    if [ "$opencode_auth_temporarily_disabled" -eq 1 ]; then
-        restore_opencode_auth
     fi
 
     return $exit_code

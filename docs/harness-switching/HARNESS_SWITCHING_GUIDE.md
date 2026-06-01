@@ -1,6 +1,6 @@
 # Ralph Harness Switching Guide
 
-This guide explains how to switch between different AI harnesses (Codex, Opencode, PI Agent, Claude Code) in the Ralph framework, along with model and agent selection capabilities.
+This guide explains how to switch between different AI harnesses (Codex, PI Agent, Claude Code) in the Ralph framework, along with model and agent selection capabilities.
 
 ## Overview
 
@@ -19,7 +19,6 @@ The Ralph framework has been enhanced to support seamless switching between diff
    - Central dispatcher that selects the appropriate harness based on configuration
    - Implements executors for all four harnesses:
      - Codex (original functionality preserved)
-     - Opencode (uses `opencode run` with `--dangerously-skip-permissions`)
      - PI Agent (uses `pi -p` with `PI_PERMISSION_LEVEL=bypassed`)
      - Claude Code (uses `claude -p` with `--permission-mode dontAsk`)
    - Handles model and agent selection for each harness
@@ -46,12 +45,6 @@ The Ralph framework has been enhanced to support seamless switching between diff
 Choose your default harness, model, and agent when installing Ralph:
 
 ```bash
-# Install with Opencode as default harness
-bash install.sh --harness opencode
-
-# Install with specific model and agent
-bash install.sh --harness opencode --model gpt-4 --agent coding
-
 # Install with Claude Code
 bash install.sh --harness claude_code --model claude-3-opus
 ```
@@ -70,15 +63,12 @@ RALPH_HARNESS=piagent ./scripts/ralph/ralph.sh
 RALPH_HARNESS=claude_code RALPH_MODEL=claude-3-sonnet ./scripts/ralph/ralph.sh
 
 # Combine with other ralph.sh options
-RALPH_HARNESS=opencode RALPH_MODEL=gpt-4-turbo ./scripts/ralph/ralph.sh --max-stories 10 --continue-on-failure
+RALPH_HARNESS=piagent RALPH_MODEL=gpt-4-turbo ./scripts/ralph/ralph.sh --max-stories 10 --continue-on-failure
 ```
 
 #### Using ralph-story-run.sh (direct story execution)
 
 ```bash
-# Execute a story with Opencode
-./scripts/ralph/ralph-story-run.sh --harness opencode --story path/to/story.json
-
 # Execute with Claude Code and specific model/agent
 ./scripts/ralph/ralph-story-run.sh --harness claude_code --model claude-3-opus --agent research --story path/to/story.json
 
@@ -92,7 +82,7 @@ For maximum flexibility, you can also use environment variables directly:
 
 ```bash
 # Temporary override for a single command
-RALPH_HARNESS=opencode RALPH_MODEL=gpt-4 RALPH_AGENT=coding ./scripts/ralph/ralph.sh
+RALPH_HARNESS=piagent RALPH_MODEL=gpt-4 RALPH_AGENT=coding ./scripts/ralph/ralph.sh
 
 # Set for multiple commands in a session
 export RALPH_HARNESS=piagent
@@ -133,12 +123,6 @@ When `RALPH_AGENT` is not explicitly set, Ralph can infer an agent automatically
 - Uses `--yolo` when available, falls back to `--dangerously-bypass-approvals-and-sandbox`
 - Profile support via `RALPH_CODEX_PROFILE` environment variable
 
-#### Opencode
-- Uses `opencode run` for non-interactive execution
-- Permission bypass: `--dangerously-skip-permissions`
-- Supports `--model` and `--agent` flags (if available in your Opencode version)
-- Accepts additional flags like `--continue`, `--max-turns`, etc.
-
 #### PI Agent
 - Uses `pi -p` for print/non-interactive mode
 - Permission bypass: `PI_PERMISSION_LEVEL=bypassed` environment variable
@@ -149,20 +133,20 @@ When `RALPH_AGENT` is not explicitly set, Ralph can infer an agent automatically
 - Uses `claude -p` for print/non-interactive mode
 - Permission bypass: `--permission-mode dontAsk` (avoids initial interactive dialog)
 - Supports `--model` flag
-- Note: Claude Code doesn't have explicit agent selection like Codex/Opencode, but supports different behaviors via permission modes
+- Note: Claude Code doesn't have explicit agent selection like Codex, but supports different behaviors via permission modes
 
 ## Provider Configuration
 
 Ralph does not manage provider selection or API keys—it merely passes the model string and relies on the harness to interpret it. To use OpenRouter (or any custom provider), you would:
 
-1. Set the appropriate environment variables for the harness (e.g., `OPENAI_BASE_URL=https://openrouter.ai/api/v1` and `OPENAI_API_KEY=<your‑openrouter‑key>` for Codex‑like harnesses, or the equivalent for Opencode/PI‑Agent/Claude‑Code).
+1. Set the appropriate environment variables for the harness (e.g., `OPENAI_BASE_URL=https://openrouter.ai/api/v1` and `OPENAI_API_KEY=<your‑openrouter‑key>` for Codex‑like harnesses, or the equivalent for PI‑Agent/Claude‑Code).
 2. Provide the full model identifier that the harness expects when targeting OpenRouter (often `openrouter/<provider>/<model>` or similar—check the harness’s documentation).
 
 Ralph also supports automatic fallback to native provider API keys when the primary provider fails:
 
 ### Automatic Fallback Mechanism
 
-If you set `*_API_KEY_NATIVE` environment variables (e.g., `OPENAI_API_KEY_NATIVE`, `ANTHROPIC_API_KEY_NATIVE`, `OPENCODE_API_KEY_NATIVE`), Ralph will automatically attempt one fallback on failure:
+If you set `*_API_KEY_NATIVE` environment variables (e.g., `OPENAI_API_KEY_NATIVE`, `ANTHROPIC_API_KEY_NATIVE`), Ralph will automatically attempt one fallback on failure:
 
 1. **First attempt**: Uses the configured provider (e.g., OpenRouter via `OPENAI_BASE_URL`)
 2. **On failure** (non-zero exit):
@@ -179,11 +163,6 @@ export OPENAI_API_KEY_NATIVE="sk-..."
 export ANTHROPIC_API_KEY_NATIVE="sk-ant-..."
 ```
 
-To fall back to Opencode Zen Setup for Opencode and PI Agent:
-```bash
-export OPENCODE_API_KEY_NATIVE="sk-op-..."
-```
-
 If you leave the matching `*_NATIVE` variable unset, Ralph will stop after the first failure instead of using stored harness auth.
 
 If you want Ralph to validate or document provider‑specific requirements, you could extend `harness-capabilities.json` with a `provider` field and perhaps a `requires_base_url` flag, but that is optional; the current capability model already lets you specify which models are available per harness, and you can simply add the OpenRouter‑qualified model strings to the `available_models` list.
@@ -196,10 +175,10 @@ To verify your configuration is working correctly:
 
 ```bash
 # Test harness selection with dry-run
-RALPH_HARNESS=opencode ./scripts/ralph/ralph-story-run.sh --story path/to/story.json --dry-run
+RALPH_HARNESS=piagent ./scripts/ralph/ralph-story-run.sh --story path/to/story.json --dry-run
 
 # Check that the correct harness is reported in the output
-# You should see: "Running story cycle via opencode: primary"
+# You should see: "Running story cycle via piagent: primary"
 
 # Test argument passing
 RALPH_MODEL=gpt-4 RALPH_AGENT=coding ./scripts/ralph/ralph-story-run.sh --story path/to/story.json --dry-run 2>&1 | rg "\--model gpt\-4|\--agent coding"
@@ -210,7 +189,6 @@ RALPH_MODEL=gpt-4 RALPH_AGENT=coding ./scripts/ralph/ralph-story-run.sh --story 
 For actual end-to-end testing with AI execution:
 
 1. **Ensure your target harness is installed and authenticated**:
-   - Opencode: `opencode auth login`
    - PI Agent: `pi login` (or equivalent)
    - Claude Code: `claude auth login`
 
@@ -265,13 +243,12 @@ For actual end-to-end testing with AI execution:
    EOF
 
    # Execute with your chosen harness
-   RALPH_HARNESS=opencode ./scripts/ralph/ralph-story-run.sh --story test-story.json
+   RALPH_HARNESS=piagent ./scripts/ralph/ralph-story-run.sh --story test-story.json
    ```
 
 ## Troubleshooting
 
 1. **Harness not found**: Ensure the harness CLI is installed and in your PATH
-   - Opencode: `which opencode`
    - PI Agent: `which pi`
    - Claude Code: `which claude`
 
@@ -308,9 +285,6 @@ export RALPH_MODEL=claude-3-opus
 RALPH_HARNESS=codex ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh
 
-# Run sprint 2 with Opencode for comparison
-RALPH_HARNESS=opencode ./scripts/ralph/ralph.sh
-./scripts/ralph/ralph-sprint-commit.sh
 ```
 
 ### Specialized Agent Usage

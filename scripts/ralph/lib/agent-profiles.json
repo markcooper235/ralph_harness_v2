@@ -4,7 +4,6 @@
       "description": "Investigation, debugging, exploration tasks requiring deep analysis",
       "models": {
         "codex": "gpt-5.5",
-        "opencode": "gpt-5.5",
         "piagent": "gpt-5.5",
         "claude_code": "claude-opus-4-8"
       },
@@ -16,7 +15,6 @@
       "description": "Simple features, bug fixes, typos, and straightforward implementation tasks",
       "models": {
         "codex": "gpt-5.4-mini",
-        "opencode": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
         "claude_code": "claude-haiku-4-5"
       },
@@ -28,7 +26,6 @@
       "description": "Complex features, architecture decisions, refactoring, and performance optimization",
       "models": {
         "codex": "gpt-5.4",
-        "opencode": "gpt-5.4",
         "piagent": "gpt-5.4",
         "claude_code": "claude-sonnet-4-6"
       },
@@ -40,7 +37,6 @@
       "description": "Security patches, vulnerability fixes, and security-focused implementations",
       "models": {
         "codex": "gpt-5.5",
-        "opencode": "gpt-5.5",
         "piagent": "gpt-5.5",
         "claude_code": "claude-opus-4-8"
       },
@@ -52,7 +48,6 @@
       "description": "Code review, change assessment, regression risk identification, and implementation critique",
       "models": {
         "codex": "gpt-5.4",
-        "opencode": "gpt-5.4",
         "piagent": "gpt-5.4",
         "claude_code": "claude-sonnet-4-6"
       },
@@ -64,7 +59,6 @@
       "description": "Test creation, validation, verification, and quality assurance tasks",
       "models": {
         "codex": "gpt-5.4-mini",
-        "opencode": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
         "claude_code": "claude-haiku-4-5"
       },
@@ -76,7 +70,6 @@
       "description": "Infrastructure, deployment, CI/CD, and system administration tasks",
       "models": {
         "codex": "gpt-5.4-mini",
-        "opencode": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
         "claude_code": "claude-haiku-4-5"
       },
@@ -88,7 +81,6 @@
       "description": "Documentation, comments, explanations, and educational content",
       "models": {
         "codex": "gpt-5.4-mini",
-        "opencode": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
         "claude_code": "claude-haiku-4-5"
       },
@@ -100,7 +92,6 @@
       "description": "General purpose agent for tasks that don't fit other categories",
       "models": {
         "codex": "gpt-5.4",
-        "opencode": "gpt-5.4",
         "piagent": "gpt-5.4",
         "claude_code": "claude-sonnet-4-6"
       },

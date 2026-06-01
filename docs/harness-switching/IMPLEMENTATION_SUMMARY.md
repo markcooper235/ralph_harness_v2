@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document summarizes the implementation of harness switching capability in the Ralph framework, allowing users to switch between different AI backends (Codex, Opencode, PI Agent, Claude Code) at both install time and runtime, along with model and agent selection.
+This document summarizes the implementation of harness switching capability in the Ralph framework, allowing users to switch between different AI backends (Codex, PI Agent, Claude Code) at both install time and runtime, along with model and agent selection.
 
 Current baseline note: Ralph assumes `rg` (ripgrep) is available for shell text-matching examples and generated checks.
 
@@ -20,9 +20,8 @@ The original Ralph framework was tightly coupled to the Codex CLI, making it dif
 
 1. **`scripts/ralph/lib/harness-exec.sh`** - New shared library
    - Provides `harness_exec_prompt()` dispatcher function
-   - Implements executors for all four harnesses:
+   - Implements executors for the supported harnesses:
      - Codex (original functionality preserved)
-     - Opencode (uses `opencode run` with `--dangerously-skip-permissions`)
      - PI Agent (uses `pi -p` with `PI_PERMISSION_LEVEL=bypassed`)
      - Claude Code (uses `claude -p` with `--permission-mode dontAsk`)
    - Handles model and agent selection for each harness
@@ -37,7 +36,7 @@ The original Ralph framework was tightly coupled to the Codex CLI, making it dif
    - Maintains all existing functionality (dry-run, retries, etc.)
 
 3. **`scripts/ralph/install.sh`** - Enhanced
-   - Added `--harness HARNESS` option (codex|opencode|piagent|claude_code, default: codex)
+   - Added `--harness HARNESS` option (codex|piagent|claude_code, default: codex)
    - Added `--model MODEL` option (default: harness-specific)
    - Added `--agent AGENT` option (default: harness-specific)
    - Sets `RALPH_HARNESS`, `RALPH_MODEL`, `RALPH_AGENT` environment variables in installed copies
@@ -55,12 +54,6 @@ The original Ralph framework was tightly coupled to the Codex CLI, making it dif
 ### 1. Install-Time Selection (Persistent Default)
 
 ```bash
-# Install with Opencode as the default harness
-bash install.sh --harness opencode
-
-# Install with specific model and agent
-bash install.sh --harness opencode --model gpt-4 --agent coding
-
 # Install with Claude Code
 bash install.sh --harness claude_code --model claude-3-opus
 ```
@@ -76,9 +69,6 @@ RALPH_HARNESS=piagent ./scripts/ralph/ralph.sh
 # Use Claude Code with a specific model
 RALPH_HARNESS=claude_code RALPH_MODEL=claude-3-sonnet ./scripts/ralph/ralph.sh
 
-# Combine with other Ralph options
-RALPH_HARNESS=opencode RALPH_MODEL=gpt-4-turbo ./scripts/ralph/ralph.sh --max-stories 10 --continue-on-failure
-
 # Set for multiple commands in a session
 export RALPH_HARNESS=piagent
 export RALPH_MODEL=gpt-4
@@ -90,9 +80,6 @@ export RALPH_AGENT=assistant
 ### 3. Runtime Selection via Command-Line Options (Per-Invocation Control)
 
 ```bash
-# Execute a specific story with Opencode
-./scripts/ralph/ralph-story-run.sh --harness opencode --story path/to/story.json
-
 # Execute with Claude Code and specific model/agent
 ./scripts/ralph/ralph-story-run.sh --harness claude_code --model claude-3-opus --agent research --story path/to/story.json
 
@@ -116,15 +103,6 @@ export RALPH_AGENT=assistant
 - Agent selection: `--agent` flag (when available)
 - Profile support: `RALPH_CODEX_PROFILE` environment variable
 - Working directory: Changed via `-C` flag
-
-### Opencode Executor
-- Command: `opencode run`
-- Permission bypass: `--dangerously-skip-permissions`
-- Model selection: `--model` flag (when available)
-- Agent selection: `--agent` flag (when available)
-- Additional flags: Passthrough of all additional arguments
-- Working directory: Changed via internal `cd` command
-- Input: Prompt provided via stdin
 
 ### PI Agent Executor
 - Command: `pi -p` (print/non-interactive mode)
@@ -189,9 +167,6 @@ export RALPH_AGENT=research
 RALPH_HARNESS=codex ./scripts/ralph/ralph.sh
 ./scripts/ralph/ralph-sprint-commit.sh
 
-# Run next sprint with Opencode (comparison)
-RALPH_HARNESS=opencode ./scripts/ralph/ralph.sh
-./scripts/ralph/ralph-sprint-commit.sh
 ```
 
 ### Specialized Task Execution
@@ -235,14 +210,14 @@ To add support for a new AI harness:
 
 ### Supported Features Matrix
 
-| Feature | Codex | Opencode | PI Agent | Claude Code |
-|---------|-------|----------|----------|-------------|
-| Permission Bypass | ✓ | ✓ | ✓ | ✓ |
-| Model Selection | ✓ | ✓ | ✓ | ✓ |
-| Agent Selection | ✓ | ✓ | ✓ | △* |
-| Non-Interactive Mode | ✓ | ✓ | ✓ | ✓ |
-| Additional Args Passthrough | ✓ | ✓ | ✓ | ✓ |
-| Working Directory Control | ✓ | ✓ | ✓ | ✓ |
+| Feature | Codex | PI Agent | Claude Code |
+|---------|-------|----------|-------------|
+| Permission Bypass | ✓ | ✓ | ✓ |
+| Model Selection | ✓ | ✓ | ✓ |
+| Agent Selection | ✓ | ✓ | △* |
+| Non-Interactive Mode | ✓ | ✓ | ✓ |
+| Additional Args Passthrough | ✓ | ✓ | ✓ |
+| Working Directory Control | ✓ | ✓ | ✓ |
 
 *Claude Code uses permission modes rather than explicit agent selection
 

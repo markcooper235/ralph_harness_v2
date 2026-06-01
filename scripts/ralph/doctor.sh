@@ -39,9 +39,6 @@ case "$RALPH_HARNESS" in
   codex)
     require_cmd "$CODEX_BIN"
     ;;
-  opencode)
-    require_cmd opencode
-    ;;
   piagent)
     require_cmd pi
     ;;
@@ -137,9 +134,6 @@ case "$RALPH_HARNESS" in
     else
       echo "OK: codex --yolo available"
     fi
-    ;;
-  opencode)
-    echo "OK: opencode CLI available"
     ;;
   piagent)
     echo "OK: pi CLI available"

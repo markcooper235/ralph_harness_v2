@@ -219,11 +219,6 @@ _fetch_openai_compatible_models_json() {
     | jq -c '[.data[]?.id?] | map(select(type == "string" and length > 0)) | unique' 2>/dev/null
 }
 
-_fetch_opencode_models_json() {
-  command -v opencode >/dev/null 2>&1 || return 1
-  opencode models 2>/dev/null | _normalize_model_list_json 2>/dev/null
-}
-
 _fetch_models_for_harness_json() {
   local harness="$1"
   local models_json=""
@@ -231,12 +226,6 @@ _fetch_models_for_harness_json() {
   case "$harness" in
     codex)
       models_json="$(_fetch_openai_compatible_models_json "${OPENAI_BASE_URL:-https://api.openai.com/v1}" "${OPENAI_API_KEY:-}")" || true
-      ;;
-    opencode)
-      models_json="$(_fetch_opencode_models_json)" || true
-      if [ -z "$models_json" ] || [ "$models_json" = "[]" ]; then
-        models_json="$(_fetch_openai_compatible_models_json "${OPENCODE_BASE_URL:-${OPENAI_BASE_URL:-}}" "${OPENCODE_API_KEY:-${OPENAI_API_KEY:-}}")" || true
-      fi
       ;;
     piagent)
       models_json="$(_fetch_openai_compatible_models_json "${PI_BASE_URL:-}" "${PI_API_KEY:-}")" || true

@@ -86,7 +86,7 @@ Options:
    --max-retries N         Max targeted remediation cycles after the main story cycle (default: 1)
    --skip-fallow           Deprecated compatibility flag; no effect
    --dry-run               Print plan without executing
-   --harness HARNESS       Specify harness to use (codex|opencode|piagent|claude_code) (default: codex)
+   --harness HARNESS       Specify harness to use (codex|piagent|claude_code) (default: codex)
    --model MODEL           Specify model to use with the harness (default: harness-specific)
    --agent AGENT           Specify agent/subagent type to use (default: harness-specific)
    -h, --help              Show this help

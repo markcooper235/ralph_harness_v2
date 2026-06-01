@@ -1,7 +1,7 @@
 #!/bin/bash
 # lib/harness-exec.sh — Shared harness exec helper (sourced, not executed directly)
 #
-# Provides a dispatcher for executing prompts via different harnesses (Codex, Opencode, etc.)
+# Provides a dispatcher for executing prompts via different harnesses (Codex, PI Agent, Claude Code)
 # Respects RALPH_HARNESS, RALPH_HARNESS_OVERRIDE, RALPH_MODEL, RALPH_AGENT env vars.
 # Also provides automatic agent selection based on story content.
 
@@ -50,7 +50,7 @@ _load_json_value() {
 # Get agent profile suggestion (model, system_prompt, etc.) for a specific harness
 _get_agent_profile() {
   local agent_name="$1"
-  local harness_name="$2"  # e.g., "codex", "opencode", etc.
+  local harness_name="$2"  # e.g., "codex" or "piagent"
   local profile_key="${3:-}"   # e.g., ".models.codex" or ".system_prompt_addition"
 
   if [ ! -f "$AGENT_PROFILES_FILE" ] || ! command -v jq >/dev/null 2>&1; then
@@ -62,44 +62,6 @@ _get_agent_profile() {
     | if . == null then empty else . end
     | if has("models") then .models[$harness_name] // empty else empty end
   ' "$AGENT_PROFILES_FILE" 2>/dev/null
-}
-
-_resolve_opencode_model() {
-  local requested_model="$1"
-  [ -n "$requested_model" ] || return 0
-
-  case "$requested_model" in
-    */*)
-      echo "$requested_model"
-      return
-      ;;
-  esac
-
-  local provider_base="${OPENCODE_BASE_URL:-${OPENAI_BASE_URL:-}}"
-  case "$provider_base" in
-    *openrouter.ai*)
-      case "$requested_model" in
-        gpt-3.5-turbo|gpt-4|gpt-4-turbo|gpt-4o|gpt-4.1|gpt-4.1-mini|gpt-4.1-nano|gpt-5|gpt-5-mini|gpt-5-nano|gpt-5-pro|gpt-5.4|gpt-5.4-mini|gpt-5.4-pro|gpt-5.5|gpt-5.5-pro|gpt-5-codex|gpt-5.1-codex|gpt-5.1-codex-mini|gpt-5.2-codex)
-          echo "openrouter/openai/$requested_model"
-          return
-          ;;
-        claude-3-haiku|claude-haiku-4-5|claude-haiku-4.5)
-          echo "openrouter/anthropic/claude-haiku-4.5"
-          return
-          ;;
-        claude-3-sonnet|claude-sonnet-4-6|claude-sonnet-4.6)
-          echo "openrouter/anthropic/claude-sonnet-4.6"
-          return
-          ;;
-        claude-3-opus|claude-opus-4-8|claude-opus-4.8)
-          echo "openrouter/anthropic/claude-opus-4.8"
-          return
-          ;;
-      esac
-      ;;
-  esac
-
-  echo "$requested_model"
 }
 
 _resolve_codex_model() {
@@ -214,9 +176,6 @@ _resolve_model_for_harness() {
   case "$harness_name" in
     codex)
       _resolve_codex_model "$requested_model"
-      ;;
-    opencode)
-      _resolve_opencode_model "$requested_model"
       ;;
     piagent)
       _resolve_piagent_model "$requested_model"
@@ -367,11 +326,10 @@ _score_model_for_agent() {
   local agent_name="$1"
   local harness_name="$2"
   local model="$3"
-  local priority lower score=0 provider_base complexity_tier
+  local priority lower score=0 complexity_tier
 
   priority="$(_agent_selection_priority "$agent_name")"
   lower="$(_model_family_name "$model")"
-  provider_base="${OPENCODE_BASE_URL:-${OPENAI_BASE_URL:-}}"
   complexity_tier="$(_story_complexity_tier_from_score "${RALPH_STORY_COMPLEXITY_SCORE:-0}")"
 
   case "$lower" in
@@ -392,16 +350,6 @@ _score_model_for_agent() {
           ;;
         */*)
           score=$((score - 75))
-          ;;
-      esac
-      ;;
-    opencode)
-      case "$provider_base" in
-        *openrouter.ai*)
-          case "$model" in
-            openrouter/*) score=$((score + 400)) ;;
-            opencode/*)   score=$((score - 200)) ;;
-          esac
           ;;
       esac
       ;;
@@ -794,33 +742,6 @@ _codex_exec_prompt() {
   fi
 }
 
-# Opencode executor
-_opencode_exec_prompt() {
-  local prompt="$1"
-  local workspace="${2:-$PWD}"
-  shift 2 || true
-  
-  # Opencode uses `opencode run` for non-interactive execution
-  # --dangerously-skip-permissions to bypass approvals
-  local opencode_args=("--dangerously-skip-permissions")
-  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && opencode_args+=("--format" "json")
-  
-  # Add model selection if specified
-  [ -n "${RALPH_MODEL:-}" ] && opencode_args+=("--model" "$RALPH_MODEL")
-  
-  # Add agent selection if specified
-  [ -n "${RALPH_AGENT:-}" ] && opencode_args+=("--agent" "$RALPH_AGENT")
-  
-  # Pass through any additional arguments (like -c/--continue, etc.)
-  opencode_args+=("$@")
-  
-  # Change to workspace directory and run opencode with prompt via stdin
-  (
-    cd "$workspace"
-    printf '%s\n' "$prompt" | opencode run "${opencode_args[@]}" -
-  )
-}
-
 # PI Agent executor
 _piagent_exec_prompt() {
   local prompt="$1"
@@ -899,7 +820,7 @@ _claude_code_exec_prompt() {
        claude_args+=("--model" "$(_resolve_claude_code_model "$RALPH_MODEL")")
    fi
   
-  # Note: Claude Code doesn't have explicit agent selection like Codex/Opencode
+  # Note: Claude Code doesn't have explicit agent selection like Codex
   # Agent behavior is controlled via permission modes and system prompt
   
   # Pass through any additional arguments (like --max-turns, etc.)
@@ -931,33 +852,6 @@ _codex_exec_prompt() {
   else
     printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
   fi
-}
-
-# Opencode executor
-_opencode_exec_prompt() {
-  local prompt="$1"
-  local workspace="${2:-$PWD}"
-  shift 2 || true
-  
-  # Opencode uses `opencode run` for non-interactive execution
-  # --dangerously-skip-permissions to bypass approvals
-  local opencode_args=("--dangerously-skip-permissions")
-  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && opencode_args+=("--format" "json")
-  
-  # Add model selection if specified
-  [ -n "${RALPH_MODEL:-}" ] && opencode_args+=("--model" "$RALPH_MODEL")
-  
-  # Add agent selection if specified
-  [ -n "${RALPH_AGENT:-}" ] && opencode_args+=("--agent" "$RALPH_AGENT")
-  
-  # Pass through any additional arguments (like -c/--continue, etc.)
-  opencode_args+=("$@")
-  
-  # Change to workspace directory and run opencode with prompt via stdin
-  (
-    cd "$workspace"
-    printf '%s\n' "$prompt" | opencode run "${opencode_args[@]}" -
-  )
 }
 
 # PI Agent executor
@@ -1054,9 +948,6 @@ harness_exec_prompt() {
     codex)
       _codex_exec_prompt "$prompt" "$workspace" "$@"
       ;;
-    opencode)
-      _opencode_exec_prompt "$prompt" "$workspace" "$@"
-      ;;
     piagent)
       _piagent_exec_prompt "$prompt" "$workspace" "$@"
       ;;
@@ -1064,7 +955,7 @@ harness_exec_prompt() {
       _claude_code_exec_prompt "$prompt" "$workspace" "$@"
       ;;
     *)
-      echo "ERROR: Unknown harness '$harness'. Supported: codex, opencode, piagent, claude_code" >&2
+      echo "ERROR: Unknown harness '$harness'. Supported: codex, piagent, claude_code" >&2
       return 1
       ;;
   esac
