@@ -60,8 +60,10 @@ source "$SCRIPT_DIR/lib/benchmark.sh"
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
 BENCH_FILE="$BENCH_DIR/e2e-specify.tsv"
 CODEX_BIN_VALUE="${CODEX_BIN:-codex}"
-REAL_CODEX_BIN="$(command -v "$CODEX_BIN_VALUE" 2>/dev/null || true)"
-[ -n "$REAL_CODEX_BIN" ] || { echo "ERROR: codex binary not found: $CODEX_BIN_VALUE" >&2; exit 1; }
+SMOKE_HARNESS="${SMOKE_HARNESS:-${RALPH_HARNESS:-codex}}"
+SMOKE_MODEL="${SMOKE_MODEL:-${RALPH_MODEL:-}}"
+SMOKE_AGENT="${SMOKE_AGENT:-${RALPH_AGENT:-}}"
+REAL_CODEX_BIN=""
 
 KEEP=0
 MAX_RETRIES=2
@@ -93,7 +95,10 @@ PROJ_DIR="$WORK_DIR/nextjs-phone-validator"
 SMOKE_BIN_DIR="$WORK_DIR/bin"
 SMOKE_CODEX_BIN="$SMOKE_BIN_DIR/codex"
 mkdir -p "$SMOKE_BIN_DIR"
-cat > "$SMOKE_CODEX_BIN" <<EOF
+if [ "$SMOKE_HARNESS" = "codex" ]; then
+  REAL_CODEX_BIN="$(command -v "$CODEX_BIN_VALUE" 2>/dev/null || true)"
+  [ -n "$REAL_CODEX_BIN" ] || { echo "ERROR: codex binary not found: $CODEX_BIN_VALUE" >&2; exit 1; }
+  cat > "$SMOKE_CODEX_BIN" <<EOF
 #!/bin/sh
 if [ "\${1:-}" = "--yolo" ] && [ "\${2:-}" = "exec" ]; then
   shift 2
@@ -105,7 +110,11 @@ if [ "\${1:-}" = "exec" ]; then
 fi
 exec "$REAL_CODEX_BIN" "\$@"
 EOF
-chmod +x "$SMOKE_CODEX_BIN"
+  chmod +x "$SMOKE_CODEX_BIN"
+else
+  : > "$SMOKE_CODEX_BIN"
+  chmod +x "$SMOKE_CODEX_BIN"
+fi
 export PATH="$SMOKE_BIN_DIR:$PATH"
 
 # ── Cleanup ────────────────────────────────────────────────────────────────────
@@ -134,6 +143,14 @@ benchmark_init "specify" "specify-pipeline" "$BENCH_FILE"
 
 log()  { echo "[smoke] $*"; }
 fail() { echo "[smoke] FAIL: $*" >&2; exit 1; }
+
+log "harness: $SMOKE_HARNESS"
+if [ -n "$SMOKE_MODEL" ]; then
+  log "model override: $SMOKE_MODEL"
+fi
+if [ -n "$SMOKE_AGENT" ]; then
+  log "agent override: $SMOKE_AGENT"
+fi
 
 resolve_latest_runtime_sprint_log() {
   local proj_dir="$1"
@@ -202,7 +219,7 @@ ensure_specify() {
 doctor_check() {
   local dlog="$LOG_DIR/doctor.log"
   log "  Running doctor.sh..."
-  if (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$SMOKE_CODEX_BIN" ./doctor.sh) > "$dlog" 2>&1; then
+  if (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$SMOKE_CODEX_BIN" RALPH_HARNESS="$SMOKE_HARNESS" ./doctor.sh) > "$dlog" 2>&1; then
     log "  doctor.sh PASS"
   else
     cat "$dlog" >&2
@@ -675,6 +692,7 @@ for sid in S-001 S-002 S-003; do
   # STEP 6: specify — --no-generate keeps the specify phase independently testable
   log "  [$sid] Specifying..."
   if ! (cd "$PROJ_DIR/scripts/ralph" && \
+        RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" RALPH_STRUCTURED_OUTPUT=1 \
         ./ralph-story.sh specify "$sid" --no-generate) > "$slog" 2>&1; then
     cat "$slog" >&2
     fail "specify $sid failed — see $slog"
@@ -688,9 +706,11 @@ for sid in S-001 S-002 S-003; do
   # next story's specify call (dep-context fix for Bug 5)
   log "  [$sid] Generating story.json..."
   if ! (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$SMOKE_CODEX_BIN" \
+        RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" RALPH_STRUCTURED_OUTPUT=1 \
         ./ralph-story.sh generate "$sid") >> "$glog" 2>&1; then
     log "  [$sid] Retrying generate..."
     (cd "$PROJ_DIR/scripts/ralph" && CODEX_BIN="$SMOKE_CODEX_BIN" \
+      RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" RALPH_STRUCTURED_OUTPUT=1 \
       ./ralph-story.sh generate "$sid" --force) >> "$glog" 2>&1 \
       || fail "generate $sid failed — see $glog"
   fi
@@ -781,7 +801,8 @@ _run_sprint() {
   (
     cd "$PROJ_DIR/scripts/ralph"
     timeout 2700 env CODEX_BIN="$SMOKE_CODEX_BIN" \
-      ./ralph.sh --max-retries "$MAX_RETRIES" --continue-on-failure \
+      RALPH_HARNESS="$SMOKE_HARNESS" RALPH_MODEL="$SMOKE_MODEL" RALPH_AGENT="$SMOKE_AGENT" RALPH_STRUCTURED_OUTPUT=1 \
+      ./ralph.sh --max-retries "$MAX_RETRIES" --continue-on-failure --harness "$SMOKE_HARNESS" \
       > "$sprint_harness_log" 2>&1
   )
 }
@@ -961,7 +982,7 @@ benchmark_set_retries "$retry_count"
 echo ""
 echo "── efficiency metrics ────────────────────────────────────────"
 if [ "$total_tokens" -eq 0 ]; then
-  echo "  tokens: unavailable (no 'tokens used' markers in codex output)"
+  echo "  tokens: unavailable (no harness token markers found)"
 else
   echo "  tokens: specify=$specify_tokens generate=$generate_tokens sprint=$sprint_tokens total=$total_tokens"
 fi

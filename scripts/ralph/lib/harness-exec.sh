@@ -562,10 +562,11 @@ _apply_agent_profile() {
   
   # Only override model if not explicitly set via command line/environment
   if [ -z "${RALPH_MODEL:-}" ]; then
-    local suggested_model
-    suggested_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
+    local suggested_model preferred_model
+    preferred_model="$(_get_agent_profile "$agent_name" "$effective_harness" '.models')"
+    suggested_model="$preferred_model"
     if [ -z "$suggested_model" ]; then
-      suggested_model="$(_get_agent_profile "$agent_name" "$effective_harness" '.models')"
+      suggested_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
     fi
     if [ -n "$suggested_model" ]; then
       case "$effective_harness" in
@@ -579,6 +580,20 @@ _apply_agent_profile() {
           suggested_model="$(_resolve_piagent_model "$suggested_model")"
           ;;
       esac
+      if ! is_model_supported_by_harness "$effective_harness" "$suggested_model"; then
+        suggested_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
+        case "$effective_harness" in
+          codex)
+            suggested_model="$(_resolve_codex_model "$suggested_model")"
+            ;;
+          opencode)
+            suggested_model="$(_resolve_opencode_model "$suggested_model")"
+            ;;
+          piagent)
+            suggested_model="$(_resolve_piagent_model "$suggested_model")"
+            ;;
+        esac
+      fi
       RALPH_MODEL="$suggested_model"
       export RALPH_MODEL
     fi

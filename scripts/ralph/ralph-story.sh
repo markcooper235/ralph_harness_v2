@@ -15,13 +15,76 @@ ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 STORIES_FILE="${RALPH_STORIES_FILE:-}"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
-source "$SCRIPT_DIR/lib/codex-exec.sh"
+source "$SCRIPT_DIR/lib/harness-exec.sh"
 source "$SCRIPT_DIR/lib/specify.sh"
 
 fail() { echo "ERROR: $1" >&2; exit 1; }
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"; }
 require_cmd jq
+
+story_harness_profile_push() {
+  local story_meta_json="$1"
+  local current_depth="${STORY_HARNESS_PROFILE_DEPTH:-0}"
+  local effective_harness effective_agent tmp_story_meta
+
+  if [ "$current_depth" -eq 0 ]; then
+    STORY_HARNESS_PROFILE_ORIG_MODEL_SET=0
+    if [ "${RALPH_MODEL+x}" = "x" ]; then
+      STORY_HARNESS_PROFILE_ORIG_MODEL_SET=1
+      STORY_HARNESS_PROFILE_ORIG_MODEL="${RALPH_MODEL:-}"
+    else
+      STORY_HARNESS_PROFILE_ORIG_MODEL=""
+    fi
+
+    tmp_story_meta="$(mktemp)"
+    printf '%s' "$story_meta_json" | jq '{
+      title: (.title // ""),
+      description: (.goal // .description // ""),
+      tasks: [{ title: (.promptContext // "") }],
+      labels: (.labels // []),
+      tags: (.tags // []),
+      agent: (.agent // empty)
+    }' > "$tmp_story_meta"
+
+    effective_agent="$(_get_effective_agent "$tmp_story_meta")"
+    rm -f "$tmp_story_meta"
+
+    STORY_HARNESS_EFFECTIVE_AGENT="$effective_agent"
+    _apply_agent_profile "$effective_agent"
+    effective_harness="$(_get_harness)"
+
+    if [ -n "${RALPH_MODEL:-}" ]; then
+      echo "Selected harness profile: harness=$effective_harness agent=$effective_agent model=$RALPH_MODEL"
+    else
+      echo "Selected harness profile: harness=$effective_harness agent=$effective_agent"
+    fi
+  fi
+
+  STORY_HARNESS_PROFILE_DEPTH=$((current_depth + 1))
+}
+
+story_harness_profile_pop() {
+  local current_depth="${STORY_HARNESS_PROFILE_DEPTH:-0}"
+  [ "$current_depth" -gt 0 ] || return 0
+
+  current_depth=$((current_depth - 1))
+  STORY_HARNESS_PROFILE_DEPTH="$current_depth"
+
+  if [ "$current_depth" -eq 0 ]; then
+    if [ "${STORY_HARNESS_PROFILE_ORIG_MODEL_SET:-0}" -eq 1 ]; then
+      RALPH_MODEL="${STORY_HARNESS_PROFILE_ORIG_MODEL:-}"
+      export RALPH_MODEL
+    else
+      unset RALPH_MODEL
+    fi
+
+    unset STORY_HARNESS_PROFILE_ORIG_MODEL_SET
+    unset STORY_HARNESS_PROFILE_ORIG_MODEL
+    unset STORY_HARNESS_EFFECTIVE_AGENT
+    unset STORY_HARNESS_PROFILE_DEPTH
+  fi
+}
 
 timestamp_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -1364,7 +1427,7 @@ Requirements:
 PRDBRIDGE
 )"
 
-  codex_exec_prompt "$prompt" "$WORKSPACE_ROOT"
+  harness_exec_prompt "$prompt" "$WORKSPACE_ROOT"
   [ -f "$temp_prd_path" ] || return 1
   jq -e '.userStories | length > 0' "$temp_prd_path" >/dev/null 2>&1
 }
@@ -2367,6 +2430,7 @@ GENPROMPT
   prep_record_stage "$story_id" "generate" "running" "Generating story container" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0
   mkdir -p "$(dirname "$story_path_abs")"
   local deterministic_recovery=0 prd_bridge_recovery=0 fallback_reason="" temp_bridge_prd=""
+  story_harness_profile_push "$story_meta"
   if [ "$placeholder_recovery" -eq 1 ] && [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
     if parse_legacy_markdown_story_json \
       "$existing_prd_abs" \
@@ -2415,8 +2479,12 @@ GENPROMPT
   fi
 
   if [ "$deterministic_recovery" -eq 0 ] && [ "$prd_bridge_recovery" -eq 0 ]; then
-    codex_exec_prompt "$prompt" "$WORKSPACE_ROOT"
+    if ! harness_exec_prompt "$prompt" "$WORKSPACE_ROOT"; then
+      story_harness_profile_pop
+      fail "story.json generation failed for $story_id"
+    fi
   fi
+  story_harness_profile_pop
 
   if [ ! -f "$story_path_abs" ]; then
     fail "story.json was not written to: $story_path_abs"
@@ -2847,7 +2915,12 @@ SKPROMPT
 
   echo "Running SpecKit analysis for $story_id (phases: specify → plan → tasks)..."
   prep_record_stage "$story_id" "specify" "running" "Running SpecKit workflow" "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" 0
-  codex_exec_prompt "$speckit_prompt" "$WORKSPACE_ROOT"
+  story_harness_profile_push "$story_meta"
+  if ! harness_exec_prompt "$speckit_prompt" "$WORKSPACE_ROOT"; then
+    story_harness_profile_pop
+    fail "SpecKit analysis failed for $story_id"
+  fi
+  story_harness_profile_pop
 
   # Validate artifacts
   local missing=0
