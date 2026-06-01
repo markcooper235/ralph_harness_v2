@@ -66,6 +66,11 @@ Runs a heavier real-Codex UI sprint smoke scenario with:
 - multi-task story-task execution
 - browser verification requirements
 - token and iteration reporting
+
+Notes:
+- When SMOKE_HARNESS=claude_code, prefer running this script without a PTY wrapper.
+  Claude CLI can be stopped by outer PTY/job-control layers even though the smoke path
+  passes correctly with normal non-interactive pipes.
 EOF
       exit 0
       ;;
@@ -79,6 +84,9 @@ done
 mkdir -p "$TMP_HOME" "$TEST_REPO"
 benchmark_init "worst-case-ui" "ui" "$BENCH_FILE"
 echo "[worst-ui] harness: $SMOKE_HARNESS"
+if [ "$SMOKE_HARNESS" = "claude_code" ]; then
+  echo "[worst-ui] note: run claude_code smoke without a PTY wrapper for reliable non-interactive execution"
+fi
 
 extract_story_complete_count_from_log() {
   local log_file="$1"
@@ -741,7 +749,7 @@ echo "[worst-ui] running ralph-verify --full post-commit"
   cd "$SPRINT_REPO/scripts/ralph"
   ./ralph-verify.sh --full > "$WORK_DIR/verify-full.log" 2>&1
 )
-assert_contains "$WORK_DIR/verify-full.log" "full verification passed"
+assert_contains "$WORK_DIR/verify-full.log" "full-regression verification passed"
 
 loop_tokens="$(extract_tokens_from_log "$runtime_loop_log")"
 stories_completed="$(extract_story_complete_count_from_log "$runtime_loop_log")"

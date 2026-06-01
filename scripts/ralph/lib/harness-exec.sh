@@ -707,10 +707,8 @@ _claude_code_exec_prompt() {
   local workspace="${2:-$PWD}"
   shift 2 || true
   
-  # Claude Code uses `claude -p` for print/non-interactive mode
-  # For fully non-interactive/CI use, --permission-mode dontAsk is better
-  # than --dangerously-skip-permissions which may show initial dialog
-  local claude_args=("--permission-mode" "dontAsk")
+  # Claude Code needs bypassPermissions for real non-interactive edits.
+  local claude_args=("--permission-mode" "bypassPermissions")
   [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && claude_args+=("--output-format" "json")
   
    # Add model selection if specified and supported
@@ -844,10 +842,8 @@ _claude_code_exec_prompt() {
   local workspace="${2:-$PWD}"
   shift 2 || true
   
-  # Claude Code uses `claude -p` for print/non-interactive mode
-  # For fully non-interactive/CI use, --permission-mode dontAsk is better
-  # than --dangerously-skip-permissions which may show initial dialog
-  local claude_args=("--permission-mode" "dontAsk")
+  # Claude Code needs bypassPermissions for real non-interactive edits.
+  local claude_args=("--permission-mode" "bypassPermissions")
   [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && claude_args+=("--output-format" "json")
   
    # Add model selection if specified and supported
