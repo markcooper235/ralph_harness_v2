@@ -12,6 +12,7 @@ RALPH_HARNESS_DEFAULT="${RALPH_HARNISH_DEFAULT:-codex}"
 # Paths to configuration files (relative to this library directory)
 HARNESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_PROFILES_FILE="$HARNESS_LIB_DIR/agent-profiles.json"
+COMPOSITE_PROFILES_FILE="$HARNESS_LIB_DIR/composite-profiles.json"
 LABEL_MAPPING_FILE="$HARNESS_LIB_DIR/label-to-agent-mapping.json"
 HARNESS_CAPABILITIES_FILE="$HARNESS_LIB_DIR/harness-capabilities.json"
 
@@ -47,8 +48,8 @@ _load_json_value() {
   fi
 }
 
-# Get agent profile suggestion (model, system_prompt, etc.) for a specific harness
-_get_agent_profile() {
+# Get a field from an agent profile for a specific harness
+_get_agent_profile_field() {
   local agent_name="$1"
   local harness_name="$2"  # e.g., "codex" or "piagent"
   local profile_key="${3:-}"   # e.g., ".models.codex" or ".system_prompt_addition"
@@ -57,11 +58,44 @@ _get_agent_profile() {
     return 0
   fi
 
-  jq -r --arg agent_name "$agent_name" --arg harness_name "$harness_name" '
+  jq -cr --arg agent_name "$agent_name" --arg harness_name "$harness_name" --arg profile_key "$profile_key" '
     .profiles[$agent_name]
     | if . == null then empty else . end
-    | if has("models") then .models[$harness_name] // empty else empty end
+    | if $profile_key == ".models" then
+        if has("models") then .models[$harness_name] // empty else empty end
+      elif $profile_key == "." then
+        .
+      else
+        getpath(($profile_key | ltrimstr(".") | split("."))) // empty
+      end
   ' "$AGENT_PROFILES_FILE" 2>/dev/null
+}
+
+# Backwards-compatible model lookup for agent profiles
+_get_agent_profile() {
+  _get_agent_profile_field "$1" "$2" ".models"
+}
+
+# Get a field from a static composite profile
+_get_composite_profile_field() {
+  local composite_name="$1"
+  local field_path="${2:-}"
+
+  if [ ! -f "$COMPOSITE_PROFILES_FILE" ] || ! command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+
+  jq -cr --arg composite_name "$composite_name" --arg field_path "$field_path" '
+    .profiles[$composite_name]
+    | if . == null then empty else . end
+    | if $field_path == "" then . else getpath(($field_path | ltrimstr(".") | split("."))) // empty end
+  ' "$COMPOSITE_PROFILES_FILE" 2>/dev/null
+}
+
+_get_composite_profile() {
+  local composite_name="$1"
+  [ -n "$composite_name" ] || return 0
+  _get_composite_profile_field "$composite_name" ""
 }
 
 _resolve_codex_model() {
@@ -674,11 +708,54 @@ _get_effective_agent() {
 # Apply agent profile settings (model, etc.)
 _apply_agent_profile() {
   local agent_name="$1"
-  
+  local profile_json composite_profile composite_shape composite_required_extensions composite_subagent_roles composite_steps piagent_role
+
   # Determine effective harness (same logic as in harness_exec_prompt)
   local effective_harness
   effective_harness="$(_get_harness)"
-  
+
+  profile_json="$(_get_agent_profile_field "$agent_name" "$effective_harness" ".")"
+  if [ -n "$profile_json" ]; then
+    piagent_role="$(printf '%s' "$profile_json" | jq -r '.piagent_agent // empty' 2>/dev/null)"
+    if [ "$effective_harness" = "piagent" ] && [ -n "$piagent_role" ]; then
+      RALPH_PIAGENT_ROLE="$piagent_role"
+      export RALPH_PIAGENT_ROLE
+    else
+      unset RALPH_PIAGENT_ROLE
+    fi
+    composite_profile="$(printf '%s' "$profile_json" | jq -r '.composite_profile // empty' 2>/dev/null)"
+    if [ "${RALPH_ENABLE_COMPOSITES:-0}" = "1" ] && [ "${RALPH_DISABLE_COMPOSITES:-0}" != "1" ]; then
+      if [ -n "$composite_profile" ]; then
+        composite_shape="$( _get_composite_profile_field "$composite_profile" ".shape" )"
+        composite_required_extensions="$( _get_composite_profile_field "$composite_profile" ".required_extensions" )"
+        composite_subagent_roles="$( _get_composite_profile_field "$composite_profile" ".subagent_roles" )"
+        composite_steps="$( _get_composite_profile_field "$composite_profile" ".steps" )"
+
+        RALPH_COMPOSITE_PROFILE="$composite_profile"
+        RALPH_COMPOSITE_PROFILE_JSON="$(_get_composite_profile "$composite_profile")"
+        RALPH_COMPOSITE_SHAPE="$composite_shape"
+        RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON="$composite_required_extensions"
+        RALPH_COMPOSITE_SUBAGENT_ROLES_JSON="$composite_subagent_roles"
+        RALPH_COMPOSITE_STEPS_JSON="$composite_steps"
+        export RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
+          RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
+          RALPH_COMPOSITE_STEPS_JSON
+      else
+        unset RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
+          RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
+          RALPH_COMPOSITE_STEPS_JSON
+      fi
+    else
+      unset RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
+        RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
+        RALPH_COMPOSITE_STEPS_JSON
+    fi
+  else
+    unset RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
+      RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
+      RALPH_COMPOSITE_STEPS_JSON
+  fi
+
   # Only override model if not explicitly set via command line/environment
   if [ -z "${RALPH_MODEL:-}" ]; then
     local suggested_model="" preferred_model preferred_score dynamic_model dynamic_score
@@ -754,6 +831,27 @@ _piagent_exec_prompt() {
   # Build arguments array
   local pi_args=()
   [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && pi_args+=("--mode" "json")
+  if [ -n "${RALPH_PIAGENT_ROLE:-}" ]; then
+    local role_hint=""
+    case "$RALPH_PIAGENT_ROLE" in
+      researcher)
+        role_hint="Use the researcher subagent for parallel investigation and synthesis when that improves the result."
+        ;;
+      reviewer)
+        role_hint="Use the reviewer subagent for critique, risk analysis, and regression checks."
+        ;;
+      oracle)
+        role_hint="Use the oracle subagent for a second opinion before making risky decisions."
+        ;;
+      worker)
+        role_hint="Use the worker subagent for implementation, testing, and follow-through."
+        ;;
+      delegate)
+        role_hint="Use the delegate subagent for light orchestration and controlled handoffs."
+        ;;
+    esac
+    [ -n "$role_hint" ] && pi_args+=("--append-system-prompt" "$role_hint")
+  fi
 
   local pi_provider="${PI_PROVIDER:-}"
   local resolved_model="${RALPH_MODEL:-}"
@@ -790,9 +888,6 @@ _piagent_exec_prompt() {
   # Add model selection if specified (if supported by PI Agent)
   [ -n "$pi_provider" ] && pi_args+=("--provider" "$pi_provider")
   [ -n "$resolved_model" ] && pi_args+=("--model" "$resolved_model")
-
-  # Add agent selection if specified (if supported by PI Agent)
-  [ -n "${RALPH_AGENT:-}" ] && pi_args+=("--agent" "$RALPH_AGENT")
 
   # Pass through any additional arguments
   pi_args+=("$@")

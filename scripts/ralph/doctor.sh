@@ -137,6 +137,12 @@ case "$RALPH_HARNESS" in
     ;;
   piagent)
     echo "OK: pi CLI available"
+    if pi list 2>/dev/null | rg -q '^pi-subagents\b'; then
+      echo "OK: pi-subagents extension installed"
+    else
+      echo "WARN: pi-subagents extension not found"
+      echo "      Install it with: pi install npm:pi-subagents"
+    fi
     ;;
   claude_code)
     echo "OK: claude CLI available"

@@ -814,6 +814,44 @@ build_execution_bundle() {
   write_execution_summary
 }
 
+build_composite_prompt_addition() {
+  local composite_profile="${RALPH_COMPOSITE_PROFILE:-}"
+  [ "${RALPH_ENABLE_COMPOSITES:-0}" != "1" ] && return 0
+  [ -n "$composite_profile" ] || return 0
+
+  local harness
+  harness="$(_get_harness)"
+  local required_extensions subagent_roles steps
+  required_extensions="$(printf '%s' "${RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON:-[]}" | jq -r 'join(", ")' 2>/dev/null || echo "")"
+  subagent_roles="$(printf '%s' "${RALPH_COMPOSITE_SUBAGENT_ROLES_JSON:-[]}" | jq -r 'join(", ")' 2>/dev/null || echo "")"
+  steps="$(printf '%s' "${RALPH_COMPOSITE_STEPS_JSON:-[]}" | jq -r 'join(" -> ")' 2>/dev/null || echo "")"
+
+  cat <<PROMPT
+
+Composite strategy:
+- profile: $composite_profile
+- shape: ${RALPH_COMPOSITE_SHAPE:-unknown}
+- required extensions: ${required_extensions:-none}
+- subagent roles: ${subagent_roles:-none}
+- steps: ${steps:-none}
+
+$(if [ "$harness" = "piagent" ]; then
+  cat <<'HINT'
+Harness: piagent
+- The `pi-subagents` package is installed.
+- Use the `subagent` tool to delegate fanout/chain steps and let Pi manage child-agent orchestration.
+HINT
+else
+  cat <<'HINT'
+Use the composite profile as a concise execution strategy.
+- If the harness supports fanout, run the listed roles in parallel where useful.
+- If the harness supports chain, follow the steps in order and verify each handoff.
+- If the harness does not support direct orchestration, emulate the same structure with a short plan, evidence checkpoints, and explicit verification before finishing.
+HINT
+fi)
+PROMPT
+}
+
 build_story_prompt() {
   local effective_agent="${1:-default}"
 
@@ -822,10 +860,13 @@ build_story_prompt() {
   # Build system prompt addition from agent profile if available
   local agent_system_prompt_addition=""
   agent_system_prompt_addition="$(_load_json_value "$AGENT_PROFILES_FILE" ".profiles.${effective_agent}.system_prompt_addition // empty")"
+  local composite_prompt_addition=""
+  composite_prompt_addition="$(build_composite_prompt_addition)"
   
   cat <<PROMPT
 Execute this Ralph story.
 ${agent_system_prompt_addition:+$agent_system_prompt_addition}
+${composite_prompt_addition}
 
 Read these files in order:
 1. $(execution_baseline_path)
@@ -1178,6 +1219,8 @@ build_remediation_prompt() {
   task_scope="$(filtered_task_scope_json "$task_id" | jq -r 'join(", ")')"
   checks_text="$(jq -r '.[]' <<< "$checks_json" 2>/dev/null || printf '%s\n' "$checks_json")"
   failure_summary="$(cat "$failure_summary_path" 2>/dev/null || echo "Failure summary unavailable.")"
+  local composite_prompt_addition=""
+  composite_prompt_addition="$(build_composite_prompt_addition)"
   cat <<PROMPT
 Repair the remaining failing story checks.
 
@@ -1195,6 +1238,8 @@ Failure bundle: $failure_bundle_path
 
 Compact error context:
 $failure_summary
+
+${composite_prompt_addition}
 
 Rules:
 - Make only the minimal code and story.json changes needed to satisfy the failing checks.

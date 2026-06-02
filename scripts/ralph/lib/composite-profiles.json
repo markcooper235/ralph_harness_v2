@@ -1,0 +1,105 @@
+{
+  "profiles": {
+    "fanout_research_v1": {
+      "shape": "fanout",
+      "description": "Parallel investigation and synthesis for research-heavy work",
+      "required_extensions": [
+        "subagent"
+      ],
+      "subagent_roles": [
+        "scout",
+        "researcher",
+        "planner"
+      ],
+      "steps": [
+        "fan out on the problem",
+        "synthesize findings",
+        "verify the result"
+      ]
+    },
+    "fanout_security_v1": {
+      "shape": "fanout",
+      "description": "Parallel security analysis and validation",
+      "required_extensions": [
+        "subagent"
+      ],
+      "subagent_roles": [
+        "scout",
+        "reviewer",
+        "oracle"
+      ],
+      "steps": [
+        "analyze attack surface",
+        "cross-check mitigations",
+        "verify the fix"
+      ]
+    },
+    "chain_implement_verify_v1": {
+      "shape": "chain",
+      "description": "Implement a change, verify it, then fix gaps",
+      "required_extensions": [
+        "subagent"
+      ],
+      "subagent_roles": [
+        "worker",
+        "reviewer"
+      ],
+      "steps": [
+        "implement the change",
+        "run validation",
+        "repair issues",
+        "re-verify"
+      ]
+    },
+    "chain_review_v1": {
+      "shape": "chain",
+      "description": "Review changes in sequence and produce risk-focused feedback",
+      "required_extensions": [
+        "subagent"
+      ],
+      "subagent_roles": [
+        "reviewer",
+        "oracle"
+      ],
+      "steps": [
+        "inspect the diff",
+        "analyze risk",
+        "report findings"
+      ]
+    },
+    "chain_verify_v1": {
+      "shape": "chain",
+      "description": "Write or update tests, then verify behavior and repair failures",
+      "required_extensions": [
+        "subagent"
+      ],
+      "subagent_roles": [
+        "worker",
+        "reviewer"
+      ],
+      "steps": [
+        "create or update checks",
+        "run the checks",
+        "fix failures",
+        "confirm pass"
+      ]
+    },
+    "toolchain_devops_v1": {
+      "shape": "toolchain",
+      "description": "Operational workflow that chains shell, repo, and CI-oriented actions",
+      "required_extensions": [
+        "subagent"
+      ],
+      "subagent_roles": [
+        "worker",
+        "delegate",
+        "reviewer"
+      ],
+      "steps": [
+        "inspect the operational state",
+        "apply the change",
+        "validate deployment behavior"
+      ]
+    }
+  }
+}

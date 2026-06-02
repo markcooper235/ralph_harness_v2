@@ -191,6 +191,7 @@ copy_file "$RUNTIME_SOURCE_DIR/ralph-sprint-test.sh.example" "$DEST_DIR_REL/ralp
 copy_file "$RUNTIME_SOURCE_DIR/execution-baseline.md" "$DEST_DIR_REL/execution-baseline.md"
 copy_file "$RUNTIME_SOURCE_DIR/lib/codex-exec.sh" "$DEST_DIR_REL/lib/codex-exec.sh"
 copy_file "$RUNTIME_SOURCE_DIR/lib/agent-profiles.json" "$DEST_DIR_REL/lib/agent-profiles.json"
+copy_file "$RUNTIME_SOURCE_DIR/lib/composite-profiles.json" "$DEST_DIR_REL/lib/composite-profiles.json"
 copy_file "$RUNTIME_SOURCE_DIR/lib/harness-capabilities.json" "$DEST_DIR_REL/lib/harness-capabilities.json"
 copy_file "$RUNTIME_SOURCE_DIR/lib/harness-capabilities.sh" "$DEST_DIR_REL/lib/harness-capabilities.sh"
 copy_file "$RUNTIME_SOURCE_DIR/lib/harness-exec.sh" "$DEST_DIR_REL/lib/harness-exec.sh"

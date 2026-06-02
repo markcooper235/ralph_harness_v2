@@ -82,6 +82,51 @@ else
   echo "✗ Expected senior-dev agent, got $AGENT"
 fi
 
+# Test composite profile attachment only when explicitly enabled
+unset RALPH_MODEL RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE
+unset RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON RALPH_COMPOSITE_STEPS_JSON
+unset RALPH_ENABLE_COMPOSITES RALPH_DISABLE_COMPOSITES
+RALPH_HARNESS=codex
+export RALPH_HARNESS
+_apply_agent_profile researcher
+if [ -z "${RALPH_COMPOSITE_PROFILE:-}" ] && [ -z "${RALPH_COMPOSITE_PROFILE_JSON:-}" ]; then
+  echo "✓ Composite profiles stay off by default"
+else
+  echo "✗ Composite profiles should be off by default, got ${RALPH_COMPOSITE_PROFILE:-<none>}"
+fi
+
+export RALPH_ENABLE_COMPOSITES=1
+_apply_agent_profile researcher
+echo "Composite profile for researcher: ${RALPH_COMPOSITE_PROFILE:-<none>}"
+if [ "${RALPH_COMPOSITE_PROFILE:-}" = "fanout_research_v1" ] && [ "${RALPH_COMPOSITE_SHAPE:-}" = "fanout" ]; then
+  echo "✓ Correctly attached fanout_research_v1 composite profile"
+else
+  echo "✗ Expected fanout_research_v1 composite profile, got ${RALPH_COMPOSITE_PROFILE:-<none>}"
+fi
+
+unset RALPH_MODEL RALPH_AGENT RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE
+unset RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON RALPH_COMPOSITE_STEPS_JSON
+unset RALPH_ENABLE_COMPOSITES RALPH_DISABLE_COMPOSITES
+RALPH_HARNESS=piagent
+export RALPH_HARNESS
+_apply_agent_profile researcher
+if [ "${RALPH_PIAGENT_ROLE:-}" = "researcher" ]; then
+  echo "✓ Pi harness derives role hint from the researcher profile"
+else
+  echo "✗ Expected piagent researcher role hint, got ${RALPH_PIAGENT_ROLE:-<none>}"
+fi
+
+unset RALPH_MODEL RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE
+unset RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON RALPH_COMPOSITE_STEPS_JSON
+export RALPH_DISABLE_COMPOSITES=1
+_apply_agent_profile researcher
+if [ -z "${RALPH_COMPOSITE_PROFILE:-}" ] && [ -z "${RALPH_COMPOSITE_PROFILE_JSON:-}" ]; then
+  echo "✓ Composite profiles are suppressed when RALPH_DISABLE_COMPOSITES=1"
+else
+  echo "✗ Composite profiles should be suppressed, got ${RALPH_COMPOSITE_PROFILE:-<none>}"
+fi
+unset RALPH_ENABLE_COMPOSITES RALPH_DISABLE_COMPOSITES
+
 # Clean up temporary files
 rm -f /tmp/test-story.json /tmp/test-story-labels.json /tmp/test-story-explicit.json
 

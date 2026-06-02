@@ -2,6 +2,8 @@
   "profiles": {
     "researcher": {
       "description": "Investigation, debugging, exploration tasks requiring deep analysis",
+      "composite_profile": "fanout_research_v1",
+      "piagent_agent": "researcher",
       "models": {
         "codex": "gpt-5.5",
         "piagent": "gpt-5.5",
@@ -13,6 +15,7 @@
     },
     "junior-dev": {
       "description": "Simple features, bug fixes, typos, and straightforward implementation tasks",
+      "piagent_agent": "worker",
       "models": {
         "codex": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
@@ -24,6 +27,8 @@
     },
     "senior-dev": {
       "description": "Complex features, architecture decisions, refactoring, and performance optimization",
+      "composite_profile": "chain_implement_verify_v1",
+      "piagent_agent": "worker",
       "models": {
         "codex": "gpt-5.4",
         "piagent": "gpt-5.4",
@@ -35,6 +40,8 @@
     },
     "security": {
       "description": "Security patches, vulnerability fixes, and security-focused implementations",
+      "composite_profile": "fanout_security_v1",
+      "piagent_agent": "oracle",
       "models": {
         "codex": "gpt-5.5",
         "piagent": "gpt-5.5",
@@ -46,6 +53,8 @@
     },
     "reviewer": {
       "description": "Code review, change assessment, regression risk identification, and implementation critique",
+      "composite_profile": "chain_review_v1",
+      "piagent_agent": "reviewer",
       "models": {
         "codex": "gpt-5.4",
         "piagent": "gpt-5.4",
@@ -57,6 +66,8 @@
     },
     "qa-test": {
       "description": "Test creation, validation, verification, and quality assurance tasks",
+      "composite_profile": "chain_verify_v1",
+      "piagent_agent": "worker",
       "models": {
         "codex": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
@@ -68,6 +79,8 @@
     },
     "devops": {
       "description": "Infrastructure, deployment, CI/CD, and system administration tasks",
+      "composite_profile": "toolchain_devops_v1",
+      "piagent_agent": "worker",
       "models": {
         "codex": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
@@ -79,6 +92,7 @@
     },
     "documentation": {
       "description": "Documentation, comments, explanations, and educational content",
+      "piagent_agent": "delegate",
       "models": {
         "codex": "gpt-5.4-mini",
         "piagent": "gpt-5.4-mini",
@@ -90,6 +104,7 @@
     },
     "default": {
       "description": "General purpose agent for tasks that don't fit other categories",
+      "piagent_agent": "delegate",
       "models": {
         "codex": "gpt-5.4",
         "piagent": "gpt-5.4",

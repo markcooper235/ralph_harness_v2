@@ -7,13 +7,14 @@ BENCH_DIR="$SCRIPT_DIR/.benchmarks"
 
 # Suite name → benchmark TSV. Keep these two lists in sync (parallel arrays so
 # this works on Bash 3.2, which macOS ships by default).
-SUITE_NAMES=(sanity specify calendar worst-case-ui upgrade)
+SUITE_NAMES=(sanity specify calendar worst-case-ui upgrade profile-benchmark)
 SUITE_FILES=(
   "$BENCH_DIR/e2e-history.tsv"
   "$BENCH_DIR/e2e-specify.tsv"
   "$BENCH_DIR/e2e-calendar.tsv"
   "$BENCH_DIR/worst-case-ui.tsv"
   "$BENCH_DIR/e2e-upgrade.tsv"
+  "$BENCH_DIR/e2e-profile-benchmark.tsv"
 )
 
 usage() {
@@ -28,7 +29,7 @@ Commands:
   list        List all known benchmark files and whether they exist
 
 Options:
-  --suite NAME   Which suite to query: sanity (default), specify, calendar, worst-case-ui, upgrade
+  --suite NAME   Which suite to query: sanity (default), specify, calendar, worst-case-ui, upgrade, profile-benchmark
 USAGE
 }
 
