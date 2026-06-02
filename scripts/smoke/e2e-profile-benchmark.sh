@@ -4,9 +4,9 @@
 # Phase 1 (baseline): codex + claude_code with composites disabled.
 # Phase 2 (composite): piagent with composites enabled.
 #
-# Each run reuses the existing smoke suites so we can compare:
-# - spec generation quality/performance (e2e-specify)
-# - implementation/verification quality/performance (e2e-worst-case-ui)
+# Each run executes the fixed daily-work benchmark corpus from
+# e2e-profile-corpus.sh so we compare the same representative stories across
+# harnesses and phases.
 #
 # The suite writes a consolidated TSV at scripts/smoke/.benchmarks/e2e-profile-benchmark.tsv.
 
@@ -64,7 +64,7 @@ run_smoke_suite() {
   local harness="$3"
   local composite_enabled="$4"
   local child_log="$LOG_DIR/${suite_name}-${harness}.log"
-  local child_bench_file
+  local child_bench_file="$BENCH_DIR/e2e-profile-corpus.tsv"
   local status="pass"
   local before_count after_count
   local row schema ts source_scenario source_mode source_status planning execution remediation total stories story_cycles remediation_cycles retries notes
@@ -74,12 +74,6 @@ run_smoke_suite() {
   [ "$KEEP" -eq 1 ] || suite_args=()
 
   log "running $suite_name with harness=$harness composites=$composite_enabled"
-
-  case "$suite_name" in
-    specify) child_bench_file="$BENCH_DIR/e2e-specify.tsv" ;;
-    worst-case-ui) child_bench_file="$BENCH_DIR/worst-case-ui.tsv" ;;
-    *) fail "unknown suite name: $suite_name" ;;
-  esac
 
   before_count=0
   [ -f "$child_bench_file" ] && before_count="$(wc -l < "$child_bench_file" | tr -d ' ')"
@@ -131,14 +125,11 @@ run_phase() {
   local phase="$1"
   case "$phase" in
     baseline)
-      run_smoke_suite "$SCRIPT_DIR/e2e-specify.sh" "specify" "codex" "0"
-      run_smoke_suite "$SCRIPT_DIR/e2e-worst-case-ui.sh" "worst-case-ui" "codex" "0"
-      run_smoke_suite "$SCRIPT_DIR/e2e-specify.sh" "specify" "claude_code" "0"
-      run_smoke_suite "$SCRIPT_DIR/e2e-worst-case-ui.sh" "worst-case-ui" "claude_code" "0"
+      run_smoke_suite "$SCRIPT_DIR/e2e-profile-corpus.sh" "corpus" "codex" "0"
+      run_smoke_suite "$SCRIPT_DIR/e2e-profile-corpus.sh" "corpus" "claude_code" "0"
       ;;
     composite)
-      run_smoke_suite "$SCRIPT_DIR/e2e-specify.sh" "specify" "piagent" "1"
-      run_smoke_suite "$SCRIPT_DIR/e2e-worst-case-ui.sh" "worst-case-ui" "piagent" "1"
+      run_smoke_suite "$SCRIPT_DIR/e2e-profile-corpus.sh" "corpus" "piagent" "1"
       ;;
     all)
       run_phase baseline

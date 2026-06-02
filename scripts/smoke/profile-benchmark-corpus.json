@@ -1,0 +1,53 @@
+{
+  "project": "nextjs-phone-validator",
+  "stories": [
+    {
+      "id": "S-001",
+      "title": "PhoneValidatorService",
+      "agent": "junior-dev",
+      "goal": "Implement a phone number validation library in lib/phone-validator.ts with formatting helpers and unit tests.",
+      "promptContext": "Create lib/phone-validator.ts. Export isValidFormat(phone: string): boolean for common US formats like (555) 867-5309, 555-867-5309, and +15558675309. Export normalize(phone: string): string to return digits only. Export getType(phone: string): 'mobile' | 'landline' | 'toll-free' | 'unknown' and treat numbers starting with 800/888/877/866/855/844/833 as toll-free. Export stripFormatting(phone: string): string to remove spaces, dashes, parens, and dots. Add unit tests in __tests__/phone-validator.test.ts.",
+      "depends_on": []
+    },
+    {
+      "id": "S-002",
+      "title": "Phone validation regression tests",
+      "agent": "qa-test",
+      "goal": "Expand validation coverage with edge cases, invalid formats, and regression tests for the phone utility module.",
+      "promptContext": "Add parameterized test coverage for invalid lengths, punctuation edge cases, toll-free boundaries, and normalization behavior. Strengthen the existing phone validator tests in __tests__/phone-validator.test.ts so the suite catches regressions quickly.",
+      "depends_on": ["S-001"]
+    },
+    {
+      "id": "S-003",
+      "title": "PhoneInput React component",
+      "agent": "senior-dev",
+      "goal": "Build a controlled PhoneInput React component in components/PhoneInput.tsx and wire it into the app with a maintainable structure.",
+      "promptContext": "Create components/PhoneInput.tsx with a 'use client' directive. Props: value: string, onChange: (v: string) => void, onValidationChange?: (valid: boolean) => void. Render an input with data-testid='phone-input', a validation message span with data-testid='validation-message', and a clear button with data-testid='clear-button'. Import the phone validator module for validation. Add React Testing Library coverage in __tests__/PhoneInput.test.tsx using @jest-environment jsdom.",
+      "depends_on": ["S-001", "S-002"]
+    },
+    {
+      "id": "S-004",
+      "title": "Usage docs and examples",
+      "agent": "documentation",
+      "goal": "Document the phone validation library, component usage, and test workflow in the README.",
+      "promptContext": "Update README.md with install, usage, and testing examples for the phone validator library and PhoneInput component. Explain the validation rules, include short code samples, and keep the language concise and practical for day-to-day contributors.",
+      "depends_on": ["S-003"]
+    },
+    {
+      "id": "S-005",
+      "title": "Validation audit and hardening",
+      "agent": "reviewer",
+      "goal": "Audit the validation implementation against the contract, then harden it where the audit exposes gaps.",
+      "promptContext": "Treat this story as a two-aspect workflow: first audit the phone validation flow against the stated contract and record a pass/fail verdict with evidence, then harden the implementation and tests only where the audit exposes a real gap. The audit aspect must produce a small findings artifact or a clear pass verdict, and every execute task must include at least one concrete shell verification check. Focus on edge cases, risky assumptions, missing checks, and test coverage gaps that materially affect trust in the validator.",
+      "depends_on": ["S-003"]
+    },
+    {
+      "id": "S-006",
+      "title": "CI and quality checks",
+      "agent": "devops",
+      "goal": "Add a simple CI workflow and developer scripts so the project can be verified consistently in automation.",
+      "promptContext": "Add a GitHub Actions workflow under .github/workflows that runs build, test, and typecheck. Update package.json scripts or supporting config only as needed to keep the checks reliable and easy to run locally.",
+      "depends_on": ["S-003", "S-004", "S-005"]
+    }
+  ]
+}

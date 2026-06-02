@@ -864,6 +864,7 @@ Import-prd options:
 Add options:
   --id S-XXX                 Explicit story ID (default: next sequential)
   --title TEXT               Story title (required)
+  --agent NAME               Explicit agent/profile name
   --priority N               Priority (default: next available)
   --effort N                 Effort: 1, 2, 3, or 5 (default: 3)
   --status STATUS            planned|ready (default: planned)
@@ -2142,6 +2143,7 @@ cmd_add() {
   local new_priority=""
   local new_effort=3
   local new_status="planned"
+  local new_agent=""
   local -a new_depends=()
   local new_goal=""
   local new_prompt_context=""
@@ -2153,6 +2155,7 @@ cmd_add() {
       --priority)       new_priority="${2:-}"; shift 2 ;;
       --effort)         new_effort="${2:-3}"; shift 2 ;;
       --status)         new_status="${2:-planned}"; shift 2 ;;
+      --agent)          new_agent="${2:-}"; shift 2 ;;
       --depends-on)     new_depends+=("${2:-}"); shift 2 ;;
       --goal)           new_goal="${2:-}"; shift 2 ;;
       --prompt-context) new_prompt_context="${2:-}"; shift 2 ;;
@@ -2197,6 +2200,7 @@ cmd_add() {
     --argjson priority "$new_priority" \
     --argjson effort "$new_effort" \
     --arg status "$new_status" \
+    --arg agent "$new_agent" \
     --argjson depends "$deps_json" \
     --arg goal "$new_goal" \
     --arg ctx "$new_prompt_context" \
@@ -2208,6 +2212,7 @@ cmd_add() {
       "effort": $effort,
       "planningSource": "local",
       "status": $status,
+      "agent": $agent,
       "sprint": $sprint,
       "depends_on": $depends,
       "story_path": $path,
