@@ -1,7 +1,7 @@
 #!/bin/bash
 # lib/harness-exec.sh — Shared harness exec helper (sourced, not executed directly)
 #
-# Provides a dispatcher for executing prompts via different harnesses (Codex, PI Agent, Claude Code)
+# Provides a dispatcher for executing prompts via different harnesses (Codex, PI Agent)
 # Respects RALPH_HARNESS, RALPH_HARNESS_OVERRIDE, RALPH_MODEL, RALPH_AGENT env vars.
 # Also provides automatic agent selection based on story content.
 
@@ -176,33 +176,6 @@ _resolve_piagent_model() {
   printf '%s\n' "$requested_model"
 }
 
-_resolve_claude_code_model() {
-  local requested_model="$1"
-  [ -n "$requested_model" ] || return 0
-
-  local provider_base="${ANTHROPIC_BASE_URL:-}"
-  case "$provider_base" in
-    *openrouter.ai/api*)
-      case "$requested_model" in
-        openrouter/anthropic/claude-haiku-*|anthropic/claude-haiku-*|claude-haiku-*|haiku)
-          printf '%s\n' "haiku"
-          return
-          ;;
-        openrouter/anthropic/claude-sonnet-*|anthropic/claude-sonnet-*|claude-sonnet-*|sonnet)
-          printf '%s\n' "sonnet"
-          return
-          ;;
-        openrouter/anthropic/claude-opus-*|anthropic/claude-opus-*|claude-opus-*|opus)
-          printf '%s\n' "opus"
-          return
-          ;;
-      esac
-      ;;
-  esac
-
-  printf '%s\n' "$requested_model"
-}
-
 _resolve_model_for_harness() {
   local requested_model="$1"
   local harness_name="$2"
@@ -213,9 +186,6 @@ _resolve_model_for_harness() {
       ;;
     piagent)
       _resolve_piagent_model "$requested_model"
-      ;;
-    claude_code)
-      _resolve_claude_code_model "$requested_model"
       ;;
     *)
       printf '%s\n' "$requested_model"
@@ -900,34 +870,6 @@ _piagent_exec_prompt() {
   )
 }
 
-# Claude Code executor
-_claude_code_exec_prompt() {
-  local prompt="$1"
-  local workspace="${2:-$PWD}"
-  shift 2 || true
-  
-  # Claude Code needs bypassPermissions for real non-interactive edits.
-  local claude_args=("--permission-mode" "bypassPermissions")
-  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && claude_args+=("--output-format" "json")
-  
-   # Add model selection if specified and supported
-   if [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "claude_code"; then
-       claude_args+=("--model" "$(_resolve_claude_code_model "$RALPH_MODEL")")
-   fi
-  
-  # Note: Claude Code doesn't have explicit agent selection like Codex
-  # Agent behavior is controlled via permission modes and system prompt
-  
-  # Pass through any additional arguments (like --max-turns, etc.)
-  claude_args+=("$@")
-  
-  # Change to workspace directory and run claude with prompt
-  (
-    cd "$workspace"
-    claude -p "$prompt" "${claude_args[@]}"
-  )
-}
-
 # Harness-specific execution functions
 
 # Original Codex executor (from codex-exec.sh)
@@ -1008,31 +950,6 @@ _piagent_exec_prompt() {
   )
 }
 
-# Claude Code executor
-_claude_code_exec_prompt() {
-  local prompt="$1"
-  local workspace="${2:-$PWD}"
-  shift 2 || true
-  
-  # Claude Code needs bypassPermissions for real non-interactive edits.
-  local claude_args=("--permission-mode" "bypassPermissions")
-  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && claude_args+=("--output-format" "json")
-  
-   # Add model selection if specified and supported
-   if [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "claude_code"; then
-     claude_args+=("--model" "$(_resolve_claude_code_model "$RALPH_MODEL")")
-   fi
-  
-  # Pass through any additional arguments (like --max-turns, etc.)
-  claude_args+=("$@")
-  
-  # Change to workspace directory and run claude with prompt
-  (
-    cd "$workspace"
-    claude -p "$prompt" "${claude_args[@]}"
-  )
-}
-
 # Dispatcher function
 harness_exec_prompt() {
   local prompt="$1"
@@ -1046,11 +963,8 @@ harness_exec_prompt() {
     piagent)
       _piagent_exec_prompt "$prompt" "$workspace" "$@"
       ;;
-    claude_code)
-      _claude_code_exec_prompt "$prompt" "$workspace" "$@"
-      ;;
     *)
-      echo "ERROR: Unknown harness '$harness'. Supported: codex, piagent, claude_code" >&2
+      echo "ERROR: Unknown harness '$harness'. Supported: codex, piagent" >&2
       return 1
       ;;
   esac

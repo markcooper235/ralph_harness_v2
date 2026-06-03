@@ -1,7 +1,7 @@
 #!/bin/bash
 # e2e-profile-benchmark.sh — Compare baseline harnesses against composite-enabled runs.
 #
-# Phase 1 (baseline): codex + claude_code with composites disabled.
+# Phase 1 (baseline): codex + piagent with composites disabled.
 # Phase 2 (composite): piagent with composites enabled.
 #
 # Each run executes the fixed daily-work benchmark corpus from
@@ -32,7 +32,7 @@ usage() {
 Usage: scripts/smoke/e2e-profile-benchmark.sh [--keep] [--phase baseline|composite|all]
 
 Phases:
-  baseline    Run codex and claude_code with composites disabled.
+  baseline    Run codex and piagent with composites disabled.
   composite   Run piagent with composites enabled.
   all         Run both phases (default).
 USAGE
@@ -126,7 +126,7 @@ run_phase() {
   case "$phase" in
     baseline)
       run_smoke_suite "$SCRIPT_DIR/e2e-profile-corpus.sh" "corpus" "codex" "0"
-      run_smoke_suite "$SCRIPT_DIR/e2e-profile-corpus.sh" "corpus" "claude_code" "0"
+      run_smoke_suite "$SCRIPT_DIR/e2e-profile-corpus.sh" "corpus" "piagent" "0"
       ;;
     composite)
       run_smoke_suite "$SCRIPT_DIR/e2e-profile-corpus.sh" "corpus" "piagent" "1"

@@ -7,11 +7,11 @@
 # This provides a single API key to access multiple model providers.
 # export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
 # export OPENAI_API_KEY="sk-or-..."   # Your OpenRouter API key
-# Claude Code uses Anthropic gateway semantics with OpenRouter:
+# Claude Code is no longer a Ralph harness, so the Anthropic/OpenRouter
+# Claude routing lines are intentionally left commented out for reference only.
 # export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
 # export ANTHROPIC_AUTH_TOKEN="sk-or-..."
 # export ANTHROPIC_API_KEY=""   # Must be explicitly blank to avoid auth conflicts
-# Optional Claude/OpenRouter model aliases:
 # export ANTHROPIC_DEFAULT_HAIKU_MODEL="~anthropic/claude-haiku-latest"
 # export ANTHROPIC_DEFAULT_SONNET_MODEL="~anthropic/claude-sonnet-latest"
 # export ANTHROPIC_DEFAULT_OPUS_MODEL="~anthropic/claude-opus-latest"
@@ -29,8 +29,7 @@
 # For Codex fallback to OpenAI native API:
 #   export OPENAI_API_KEY_NATIVE="sk-..."   # Your OpenAI API key
 #
-# For Claude Code fallback to Anthropic native API:
-#   export ANTHROPIC_API_KEY_NATIVE="sk-ant-..." # Your Anthropic API key
+# Claude Code-specific fallback settings are intentionally omitted.
 #
 # For Opencode fallback:
 #   export OPENCODE_API_KEY_NATIVE="sk-op-..."   # OpenCode Zen key
@@ -47,9 +46,10 @@
 #
 # --- Optional: Provider-specific overrides per harness ---
 # If a harness requires different variables, set them here.
-# Example for Opencode (if it uses distinct vars):
-# export OPENTCODE_BASE_URL="https://openrouter.ai/api/v1"
-# export OPENTCODE_API_KEY="sk-or-..."
+# Opencode is no longer a Ralph harness, so these override lines are left
+# commented out for reference only.
+# export OPENCODE_BASE_URL="https://openrouter.ai/api/v1"
+# export OPENCODE_API_KEY="sk-or-..."
 # Example for PI Agent:
 # export PI_BASE_URL="https://openrouter.ai/api/v1"
 # export PI_API_KEY="sk-or-..."
@@ -65,9 +65,8 @@
 # but framework runs should rely on explicit env vars so behavior stays deterministic.
 # 
 # Examples:
-#   # To fall back to native OpenAI/Anthropic API keys:
+#   # To fall back to native OpenAI API keys:
 #   export OPENAI_API_KEY_NATIVE="sk-..."
-#   export ANTHROPIC_API_KEY_NATIVE="sk-ant-..."
 #
 #   # To fall back for Opencode:
 #   export OPENCODE_API_KEY_NATIVE="sk-op-..."

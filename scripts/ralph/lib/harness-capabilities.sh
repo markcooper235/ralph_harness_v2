@@ -230,9 +230,6 @@ _fetch_models_for_harness_json() {
     piagent)
       models_json="$(_fetch_openai_compatible_models_json "${PI_BASE_URL:-}" "${PI_API_KEY:-}")" || true
       ;;
-    claude_code)
-      models_json=""
-      ;;
   esac
 
   if [ -n "$models_json" ] && [ "$models_json" != "[]" ]; then

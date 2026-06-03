@@ -58,9 +58,9 @@ We'll define a set of standard agent types with their characteristics:
 
 | Agent Type | Best For | Suggested Model | Characteristics |
 |------------|----------|-----------------|-----------------|
-| `researcher` | Investigation, debugging, exploration | Strong model (gpt-4, claude-3-opus) | Analytical, thorough, curious |
-| `junior-dev` | Simple features, bug fixes, typos | Weaker/faster model (gpt-3.5-turbo, claude-3-haiku) | Quick, efficient, focused on small changes |
-| `senior-dev` | Complex features, architecture, refactoring | Strong model (gpt-4, claude-3-opus) | Experienced, considers long-term implications |
+| `researcher` | Investigation, debugging, exploration | Strong model (gpt-5.5, gpt-5.4) | Analytical, thorough, curious |
+| `junior-dev` | Simple features, bug fixes, typos | Weaker/faster model (gpt-5.4-mini) | Quick, efficient, focused on small changes |
+| `senior-dev` | Complex features, architecture, refactoring | Strong model (gpt-5.4, gpt-5.5) | Experienced, considers long-term implications |
 | `security` | Security patches, vulnerability fixes, audits | Strong model with safety focus | Security-conscious, threat-aware |
 | `qa-test` | Test creation, validation, verification | Balanced model | Detail-oriented, systematic |
 | `devops` | Infrastructure, deployment, CI/CD | Balanced model | System-focused, automation-oriented |

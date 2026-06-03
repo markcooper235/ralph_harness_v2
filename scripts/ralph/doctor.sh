@@ -35,15 +35,12 @@ echo "harness: $RALPH_HARNESS"
 require_cmd git
 require_cmd jq
 
-case "$RALPH_HARNESS" in
+  case "$RALPH_HARNESS" in
   codex)
     require_cmd "$CODEX_BIN"
     ;;
   piagent)
     require_cmd pi
-    ;;
-  claude_code)
-    require_cmd claude
     ;;
   *)
     fail "Unknown harness: $RALPH_HARNESS"
@@ -143,9 +140,6 @@ case "$RALPH_HARNESS" in
       echo "WARN: pi-subagents extension not found"
       echo "      Install it with: pi install npm:pi-subagents"
     fi
-    ;;
-  claude_code)
-    echo "OK: claude CLI available"
     ;;
 esac
 

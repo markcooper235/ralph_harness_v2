@@ -1,0 +1,53 @@
+{
+  "project": "nextjs-phone-validator",
+  "stories": [
+    {
+      "id": "S-001",
+      "title": "Validator compatibility surface",
+      "agent": "senior-dev",
+      "goal": "Map the existing validator API surface, preserve backward compatibility, and add a thin adapter where needed without duplicating parsing logic.",
+      "promptContext": "Treat this as an unfamiliar-codebase task. Inspect the current validator exports and all direct consumers before editing anything. If there is a mismatch between function-style helpers and a service-style consumer, add a thin compatibility layer rather than rewriting the validation rules in two places. Keep the shared parsing and normalization logic in one place, add tests that prove both entry points behave consistently, and document the compatibility guarantee if the surface changes.",
+      "depends_on": []
+    },
+    {
+      "id": "S-002",
+      "title": "Cross-file PhoneInput integration",
+      "agent": "senior-dev",
+      "goal": "Build a controlled PhoneInput component and wire it into the app in a maintainable, accessible way.",
+      "promptContext": "Implement components/PhoneInput.tsx as a controlled client component that uses the shared validator as its only source of truth. Update app/page.tsx to render the component and surface validity state without duplicating business rules. Keep the UI accessible, include a clear button, and add React Testing Library coverage that exercises the controlled flow, the validation feedback, and the callback contract.",
+      "depends_on": ["S-001"]
+    },
+    {
+      "id": "S-003",
+      "title": "Batch validation and summary",
+      "agent": "researcher",
+      "goal": "Add a batch validation module and integrate it into the demo flow so the codebase demonstrates a multi-file feature spanning logic and presentation.",
+      "promptContext": "Create lib/batch-validator.ts with a small, deterministic API that validates arrays of numbers and returns a summary object or string. Reuse the shared phone validator instead of duplicating rules. Update the app or an example page to show how the batch summary is consumed, and add tests that cover valid, invalid, and mixed inputs. Keep the implementation readable and easy to extend.",
+      "depends_on": ["S-001", "S-002"]
+    },
+    {
+      "id": "S-004",
+      "title": "CI and toolchain hardening",
+      "agent": "devops",
+      "goal": "Add a simple CI workflow and keep the project scripts reliable for automated verification.",
+      "promptContext": "Add a GitHub Actions workflow under .github/workflows that runs typecheck, lint, test, and build on push and pull_request. Adjust package scripts or supporting config only if needed to make those checks reliable in CI and locally. Keep the workflow minimal, readable, and easy for future maintainers to follow. If a command ordering or working-directory issue appears, fix it directly rather than papering over it.",
+      "depends_on": ["S-002", "S-003"]
+    },
+    {
+      "id": "S-005",
+      "title": "Validation audit and hardening",
+      "agent": "reviewer",
+      "goal": "Audit the implementation against the contract, then harden any gaps and verify the corrections.",
+      "promptContext": "Treat this story as a contract audit first and a correction loop second. Produce a pass/fail audit result with evidence for the validator and the component behavior, then harden only the areas where the audit finds a real gap. Every task that changes code must include shell verification checks, and the final result should demonstrate that the contract is met without duplicating logic. Favor maintainability and clear invariants over clever code.",
+      "depends_on": ["S-003", "S-004"]
+    },
+    {
+      "id": "S-006",
+      "title": "Regression triage and cleanup",
+      "agent": "qa-test",
+      "goal": "Investigate an unfamiliar regression path, tighten the regression coverage, and make the smallest safe implementation fix.",
+      "promptContext": "Start from the existing code paths and trace the failure mode before making changes. Add or update regression tests that prove the issue is fixed, keep the change set minimal, and rely on the shared validator rather than duplicating rules in the UI. This story should emphasize root-cause analysis, test-driven correction, and clean verification of the final result.",
+      "depends_on": ["S-004", "S-005"]
+    }
+  ]
+}

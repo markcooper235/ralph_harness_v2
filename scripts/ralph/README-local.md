@@ -242,7 +242,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 - `--continue-on-failure` — continue to next story when a story fails (default: stop)
 - `--skip-fallow` — deprecated compatibility flag; no effect
 - `--dry-run` — print plan without executing
-- `--harness NAME` — select the execution harness (`codex`, `piagent`, `claude_code`)
+- `--harness NAME` — select the execution harness (`codex`, `piagent`)
 - `--model MODEL` — pass a model override to the selected harness
 - `--agent AGENT` — pass an agent/subagent override when the harness supports it
 
@@ -251,7 +251,7 @@ bash /path/to/ralph/install.sh [--project PATH] [--dest RELDIR] [--force] \
 - `--task-id ID` — limit execution to one task for focused repair
 - `--max-retries N` — targeted remediation cycles after the main story cycle (default: 1)
 - `--dry-run` — print the assembled prompt without executing the harness
-- `--harness NAME` — select the execution harness (`codex`, `piagent`, `claude_code`)
+- `--harness NAME` — select the execution harness (`codex`, `piagent`)
 - `--model MODEL` — pass a model override to the selected harness
 - `--agent AGENT` — pass an agent/subagent override when the harness supports it
 

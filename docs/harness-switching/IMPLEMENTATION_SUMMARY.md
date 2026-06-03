@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document summarizes the implementation of harness switching capability in the Ralph framework, allowing users to switch between different AI backends (Codex, PI Agent, Claude Code) at both install time and runtime, along with model and agent selection.
+This document summarizes the implementation of harness switching capability in the Ralph framework, allowing users to switch between different AI backends (Codex and PI Agent) at both install time and runtime, along with model and agent selection.
 
 Current baseline note: Ralph assumes `rg` (ripgrep) is available for shell text-matching examples and generated checks.
 
@@ -23,7 +23,6 @@ The original Ralph framework was tightly coupled to the Codex CLI, making it dif
    - Implements executors for the supported harnesses:
      - Codex (original functionality preserved)
      - PI Agent (uses `pi -p` with `PI_PERMISSION_LEVEL=bypassed`)
-     - Claude Code (uses `claude -p` with `--permission-mode dontAsk`)
    - Handles model and agent selection for each harness
    - Includes shared helper functions (like Codex's `--yolo` support check)
    - Exports configuration variables for subprocesses
@@ -36,7 +35,7 @@ The original Ralph framework was tightly coupled to the Codex CLI, making it dif
    - Maintains all existing functionality (dry-run, retries, etc.)
 
 3. **`scripts/ralph/install.sh`** - Enhanced
-   - Added `--harness HARNESS` option (codex|piagent|claude_code, default: codex)
+   - Added `--harness HARNESS` option (codex|piagent, default: codex)
    - Added `--model MODEL` option (default: harness-specific)
    - Added `--agent AGENT` option (default: harness-specific)
    - Sets `RALPH_HARNESS`, `RALPH_MODEL`, `RALPH_AGENT` environment variables in installed copies
@@ -54,8 +53,8 @@ The original Ralph framework was tightly coupled to the Codex CLI, making it dif
 ### 1. Install-Time Selection (Persistent Default)
 
 ```bash
-# Install with Claude Code
-bash install.sh --harness claude_code --model claude-3-opus
+# Install with PI Agent
+bash install.sh --harness piagent --model gpt-5.4
 ```
 
 These settings become the default for all Ralph commands in that installation unless overridden at runtime.
@@ -66,8 +65,8 @@ These settings become the default for all Ralph commands in that installation un
 # Use Pi Agent for this specific Ralph execution
 RALPH_HARNESS=piagent ./scripts/ralph/ralph.sh
 
-# Use Claude Code with a specific model
-RALPH_HARNESS=claude_code RALPH_MODEL=claude-3-sonnet ./scripts/ralph/ralph.sh
+# Use PI Agent with a specific model
+RALPH_HARNESS=piagent RALPH_MODEL=gpt-5.4 ./scripts/ralph/ralph.sh
 
 # Set for multiple commands in a session
 export RALPH_HARNESS=piagent
@@ -80,8 +79,8 @@ export RALPH_AGENT=assistant
 ### 3. Runtime Selection via Command-Line Options (Per-Invocation Control)
 
 ```bash
-# Execute with Claude Code and specific model/agent
-./scripts/ralph/ralph-story-run.sh --harness claude_code --model claude-3-opus --agent research --story path/to/story.json
+# Execute with PI Agent and specific model/agent
+./scripts/ralph/ralph-story-run.sh --harness piagent --model gpt-5.4 --agent research --story path/to/story.json
 
 # Combine with other ralph-story-run.sh options
 ./scripts/ralph/ralph-story-run.sh --harness piagent --model gpt-3.5 --agent assistant --story path/to/story.json --max-retries 3 --dry-run
@@ -110,14 +109,6 @@ export RALPH_AGENT=assistant
 - Model selection: `--model` flag (when available)
 - Agent selection: `--agent` flag (when available)
 - Additional flags: Passthrough of all additional arguments
-- Working directory: Changed via internal `cd` command
-
-### Claude Code Executor
-- Command: `claude -p` (print/non-interactive mode)
-- Permission bypass: `--permission-mode dontAsk` (avoids initial interactive dialog)
-- Model selection: `--model` flag (when available)
-- Agent selection: Not directly supported (Claude Code uses permission modes instead)
-- Additional flags: Passthrough of all additional arguments (like `--max-turns`)
 - Working directory: Changed via internal `cd` command
 
 ## Benefits
@@ -155,8 +146,8 @@ The implementation has been verified through:
 ### CI/CD Pipeline Integration
 ```bash
 # In your CI/CD configuration
-export RALPH_HARNESS=claude_code
-export RALPH_MODEL=claude-3-opus
+export RALPH_HARNESS=piagent
+export RALPH_MODEL=gpt-5.4
 export RALPH_AGENT=research
 ./scripts/ralph/ralph.sh --max-stories 5
 ```
@@ -175,7 +166,7 @@ RALPH_HARNESS=codex ./scripts/ralph/ralph.sh
 RALPH_MODEL=gpt-4-turbo ./scripts/ralph/ralph-story-run.sh --story implementation-story.json
 
 # Use a research-oriented model for exploration stories
-RALPH_MODEL=claude-3-opus ./scripts/ralph/ralph-story-run.sh --story exploration-story.json
+RALPH_MODEL=gpt-5.5 ./scripts/ralph/ralph-story-run.sh --story exploration-story.json
 
 # Use a debugging-specialized agent for bug-fixing stories
 RALPH_AGENT=debugger ./scripts/ralph/ralph-story-run.sh --story bugfix-story.json
@@ -210,16 +201,14 @@ To add support for a new AI harness:
 
 ### Supported Features Matrix
 
-| Feature | Codex | PI Agent | Claude Code |
-|---------|-------|----------|-------------|
-| Permission Bypass | ✓ | ✓ | ✓ |
-| Model Selection | ✓ | ✓ | ✓ |
-| Agent Selection | ✓ | ✓ | △* |
-| Non-Interactive Mode | ✓ | ✓ | ✓ |
-| Additional Args Passthrough | ✓ | ✓ | ✓ |
-| Working Directory Control | ✓ | ✓ | ✓ |
-
-*Claude Code uses permission modes rather than explicit agent selection
+| Feature | Codex | PI Agent |
+|---------|-------|----------|
+| Permission Bypass | ✓ | ✓ |
+| Model Selection | ✓ | ✓ |
+| Agent Selection | ✓ | ✓ |
+| Non-Interactive Mode | ✓ | ✓ |
+| Additional Args Passthrough | ✓ | ✓ |
+| Working Directory Control | ✓ | ✓ |
 
 ## Conclusion
 

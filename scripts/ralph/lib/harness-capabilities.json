@@ -36,22 +36,6 @@
       ],
       "model_parameter": "--model",
       "agent_parameter": null
-    },
-    "claude_code": {
-      "name": "Anthropic Claude Code",
-      "provider": "anthropic",
-      "access_method": "api",
-      "supports_model_selection": true,
-      "supports_agent_selection": false,
-      "default_agent": "default",
-  "default_model": "claude-sonnet-4-6",
-      "available_models": [
-        "claude-haiku-4-5",
-        "claude-sonnet-4-6",
-        "claude-opus-4-8"
-      ],
-      "model_parameter": "--model",
-      "agent_parameter": null
     }
   }
 }

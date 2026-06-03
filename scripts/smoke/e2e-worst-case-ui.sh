@@ -68,9 +68,7 @@ Runs a heavier real-Codex UI sprint smoke scenario with:
 - token and iteration reporting
 
 Notes:
-- When SMOKE_HARNESS=claude_code, prefer running this script without a PTY wrapper.
-  Claude CLI can be stopped by outer PTY/job-control layers even though the smoke path
-  passes correctly with normal non-interactive pipes.
+- Run the smoke path with a normal non-interactive shell pipeline for reliable results.
 EOF
       exit 0
       ;;
@@ -84,9 +82,6 @@ done
 mkdir -p "$TMP_HOME" "$TEST_REPO"
 benchmark_init "worst-case-ui" "ui" "$BENCH_FILE"
 echo "[worst-ui] harness: $SMOKE_HARNESS"
-if [ "$SMOKE_HARNESS" = "claude_code" ]; then
-  echo "[worst-ui] note: run claude_code smoke without a PTY wrapper for reliable non-interactive execution"
-fi
 
 extract_story_complete_count_from_log() {
   local log_file="$1"

@@ -135,9 +135,6 @@ harness_exec_prompt_with_fallback() {
         codex)
             [ -n "${OPENAI_API_KEY_NATIVE:-}" ] && native_fallback_available=1
             ;;
-        claude_code)
-            [ -n "${ANTHROPIC_API_KEY_NATIVE:-}" ] && native_fallback_available=1
-            ;;
         piagent)
             [ -n "${PI_API_KEY_NATIVE:-}" ] && native_fallback_available=1
             ;;

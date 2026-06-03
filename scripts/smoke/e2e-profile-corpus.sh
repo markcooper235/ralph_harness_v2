@@ -2,16 +2,14 @@
 # e2e-profile-corpus.sh — Purpose-built benchmark corpus for profile mapping.
 #
 # This suite creates a small, fixed Next.js project and exercises a realistic
-# story corpus that mirrors day-to-day work:
-# - implementation
-# - tests / verification
-# - refactoring
-# - documentation
-# - code review hardening
-# - devops / CI checks
+# story corpus. The corpus and suite slug are intentionally overridable so we
+# can reuse the same execution harness for different benchmark shapes:
+# - day-to-day work
+# - Claude-strengths hard mode
+# - future focused corpora
 #
-# The corpus is defined in scripts/smoke/profile-benchmark-corpus.json and is
-# intentionally stable so harness comparisons produce meaningful numbers.
+# The default corpus is defined in scripts/smoke/profile-benchmark-corpus.json
+# and is intentionally stable so harness comparisons produce meaningful numbers.
 
 set -euo pipefail
 
@@ -27,7 +25,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CORPUS_FILE="$SCRIPT_DIR/profile-benchmark-corpus.json"
+CORPUS_FILE="${PROFILE_BENCH_CORPUS_FILE:-$SCRIPT_DIR/profile-benchmark-corpus.json}"
+CORPUS_LABEL="${PROFILE_BENCH_CORPUS_LABEL:-$(basename "$CORPUS_FILE" .json)}"
 
 # shellcheck source=./assert.sh
 source "$SCRIPT_DIR/assert.sh"
@@ -37,7 +36,10 @@ source "$SCRIPT_DIR/lib/token-parser.sh"
 source "$SCRIPT_DIR/lib/benchmark.sh"
 
 BENCH_DIR="$REPO_ROOT/scripts/smoke/.benchmarks"
-BENCH_FILE="$BENCH_DIR/e2e-profile-corpus.tsv"
+BENCH_SLUG="${PROFILE_BENCH_SLUG:-corpus}"
+BENCH_FILE="$BENCH_DIR/e2e-profile-${BENCH_SLUG}.tsv"
+STORY_BENCH_FILE="$BENCH_DIR/e2e-profile-${BENCH_SLUG}-stories.tsv"
+SUITE_LABEL="${PROFILE_BENCH_LABEL:-profile-$BENCH_SLUG}"
 WORK_DIR="$(mktemp -d /tmp/ralph-profile-corpus.XXXXXX)"
 LOG_DIR="$WORK_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -225,12 +227,66 @@ validate_story_json() {
   [ -z "$bad_tasks" ] || fail "[$story_file] tasks with no checks: $bad_tasks"
 }
 
+extract_selected_profile_field() {
+  local log_file="$1"
+  local field="$2"
+  local line
+
+  line="$(grep -m1 '^Selected harness profile:' "$log_file" 2>/dev/null || true)"
+  [ -n "$line" ] || return 0
+
+  case "$field" in
+    harness)   sed -n 's/.*harness=\([^ ]*\).*/\1/p' <<<"$line" ;;
+    agent)     sed -n 's/.*agent=\([^ ]*\).*/\1/p' <<<"$line" ;;
+    model)     sed -n 's/.*model=\([^ ]*\).*/\1/p' <<<"$line" ;;
+    composite) sed -n 's/.*composite=\([^ ]*\).*/\1/p' <<<"$line" ;;
+    complexity)
+      sed -n 's/.*complexity=\([^ ]*\).*/\1/p' <<<"$line"
+      ;;
+    *) return 0 ;;
+  esac
+}
+
+append_story_stats_row() {
+  local story_id="$1"
+  local story_title="$2"
+  local story_profile="$3"
+  local harness="$4"
+  local status="$5"
+  local spec_log="$6"
+  local generate_log="$7"
+
+  local spec_tokens generate_tokens total_tokens
+  local resolved_harness resolved_agent resolved_model resolved_composite resolved_complexity
+
+  spec_tokens="$(extract_tokens_from_log "$spec_log")"
+  generate_tokens="$(extract_tokens_from_log "$generate_log")"
+  total_tokens=$((spec_tokens + generate_tokens))
+
+  resolved_harness="$(extract_selected_profile_field "$spec_log" harness)"
+  resolved_agent="$(extract_selected_profile_field "$spec_log" agent)"
+  resolved_model="$(extract_selected_profile_field "$spec_log" model)"
+  resolved_composite="$(extract_selected_profile_field "$spec_log" composite)"
+  resolved_complexity="$(extract_selected_profile_field "$spec_log" complexity)"
+
+  benchmark_init "$SUITE_LABEL" "story/$story_id" "$STORY_BENCH_FILE"
+  benchmark_set_planning_tokens "$total_tokens"
+  benchmark_set_execution_tokens 0
+  benchmark_set_tokens "$total_tokens"
+  benchmark_set_stories 1
+  benchmark_set_story_cycles 1
+  benchmark_set_notes "corpus=$CORPUS_LABEL;story=$story_id;title=$story_title;profile=$story_profile;harness=${resolved_harness:-$harness};agent=${resolved_agent:-$story_profile};model=${resolved_model:-${SMOKE_MODEL:-}};composite=${resolved_composite:-none};complexity=${resolved_complexity:-unknown};specify_tokens=$spec_tokens;generate_tokens=$generate_tokens;story_tokens=$total_tokens"
+  benchmark_append_row "$status" "$STORY_BENCH_FILE"
+}
+
 run_story_pipeline() {
   local proj_dir="$1"
   local story_id="$2"
-  local harness="$3"
-  local model="${4:-}"
-  local agent="${5:-}"
+  local story_title="$3"
+  local story_profile="$4"
+  local harness="$5"
+  local model="${6:-}"
+  local agent="${7:-}"
   local spec_log="$LOG_DIR/specify-${story_id}.log"
   local generate_log="$LOG_DIR/generate-${story_id}.log"
   local story_path="$proj_dir/scripts/ralph/sprints/sprint-1/stories/$story_id/story.json"
@@ -242,6 +298,7 @@ run_story_pipeline() {
     ./ralph-story.sh specify "$story_id" --no-generate
   ) > "$spec_log" 2>&1; then
     cat "$spec_log" >&2
+    append_story_stats_row "$story_id" "$story_title" "$story_profile" "$harness" "fail" "$spec_log" "$generate_log"
     fail "specify $story_id failed — see $spec_log"
   fi
 
@@ -255,11 +312,13 @@ run_story_pipeline() {
     ./ralph-story.sh generate "$story_id"
   ) >> "$generate_log" 2>&1; then
     cat "$generate_log" >&2
+    append_story_stats_row "$story_id" "$story_title" "$story_profile" "$harness" "fail" "$spec_log" "$generate_log"
     fail "generate $story_id failed — see $generate_log"
   fi
 
   validate_story_json "$story_path"
   log "  [$story_id] generate PASS"
+  append_story_stats_row "$story_id" "$story_title" "$story_profile" "$harness" "pass" "$spec_log" "$generate_log"
 }
 
 write_story_corpus() {
@@ -298,18 +357,13 @@ main() {
   fi
 
   local proj_dir="$WORK_DIR/nextjs-phone-validator"
-  local benchmark_label
-  benchmark_label="$(basename "$BENCH_FILE" .tsv)"
-
-  benchmark_init "profile-corpus" "$SMOKE_HARNESS" "$BENCH_FILE"
+  benchmark_init "$SUITE_LABEL" "$SMOKE_HARNESS" "$BENCH_FILE"
   trap 'code=$?; if [ "$KEEP" -eq 1 ] || [ "$code" -ne 0 ]; then echo ""; echo "[profile-corpus] work dir retained: $WORK_DIR"; else rm -rf "$WORK_DIR"; fi' EXIT
   log "work dir: $WORK_DIR"
   log "benchmark file: $BENCH_FILE"
   log "harness: $SMOKE_HARNESS"
   [ -n "$SMOKE_MODEL" ] && log "model override: $SMOKE_MODEL"
   [ -n "$SMOKE_AGENT" ] && log "agent override: $SMOKE_AGENT"
-
-  benchmark_init "$benchmark_label" "$SMOKE_HARNESS" "$BENCH_FILE"
 
   setup_project "$proj_dir"
   install_ralph "$proj_dir"
@@ -323,11 +377,13 @@ main() {
 
   log "=== SpecKit specify + generate per corpus story ==="
   while IFS= read -r story_json; do
-    local sid harness_model harness_agent
+    local sid title agent harness_model harness_agent
     sid="$(jq -r '.id' <<<"$story_json")"
+    title="$(jq -r '.title' <<<"$story_json")"
+    agent="$(jq -r '.agent' <<<"$story_json")"
     harness_model="$SMOKE_MODEL"
     harness_agent=""
-    run_story_pipeline "$proj_dir" "$sid" "$SMOKE_HARNESS" "$harness_model" "$harness_agent"
+    run_story_pipeline "$proj_dir" "$sid" "$title" "$agent" "$SMOKE_HARNESS" "$harness_model" "$harness_agent"
   done < <(jq -c '.stories[]' "$CORPUS_FILE")
 
   log "  All corpus stories: specify + generate complete"
@@ -364,6 +420,14 @@ main() {
     git add scripts/ralph/sprints/sprint-1/stories scripts/ralph/sprints/sprint-1/stories.json
     if ! git diff --cached --quiet; then
       git commit -m "chore(ralph): commit prepared benchmark corpus" >/dev/null
+    fi
+  )
+
+  (
+    cd "$proj_dir"
+    git add -A
+    if ! git diff --cached --quiet; then
+      git commit -m "chore: snapshot benchmark workspace" >/dev/null
     fi
   )
 
@@ -440,7 +504,7 @@ main() {
 
   local status="pass"
   [ "$PREPARE_EXIT" -eq 0 ] && [ "$SPRINT_EXIT" -eq 0 ] && [ "$COMMIT_EXIT" -eq 0 ] && [ "$VERIFY_EXIT" -eq 0 ] || status="fail"
-  benchmark_set_notes "corpus=profile-benchmark-corpus;harness=$SMOKE_HARNESS"
+  benchmark_set_notes "corpus=$CORPUS_LABEL;harness=$SMOKE_HARNESS;model=${SMOKE_MODEL:-none}"
   benchmark_append_row "$status"
 
   if [ "$status" = "pass" ]; then

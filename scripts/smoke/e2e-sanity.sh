@@ -102,7 +102,7 @@ Options:
   --mock-codex  Force mock codex binary
   --with-loop   Run the sprint story-task loop with the selected harness
   --app-mode    App profile: console (default) or ui
-  --harness     Harness for the real loop run (codex|piagent|claude_code)
+  --harness     Harness for the real loop run (codex|piagent)
   --model       Optional model override passed to ralph.sh
   --agent       Optional agent override passed to ralph.sh when supported
 USAGE

@@ -1,6 +1,6 @@
 # Ralph Harness Switching Guide
 
-This guide explains how to switch between different AI harnesses (Codex, PI Agent, Claude Code) in the Ralph framework, along with model and agent selection capabilities.
+This guide explains how to switch between different AI harnesses (Codex and PI Agent) in the Ralph framework, along with model and agent selection capabilities.
 
 ## Overview
 
@@ -17,10 +17,9 @@ The Ralph framework has been enhanced to support seamless switching between diff
 
 1. **Added `scripts/ralph/lib/harness-exec.sh`**:
    - Central dispatcher that selects the appropriate harness based on configuration
-   - Implements executors for all four harnesses:
+   - Implements executors for the supported harnesses:
      - Codex (original functionality preserved)
      - PI Agent (uses `pi -p` with `PI_PERMISSION_LEVEL=bypassed`)
-     - Claude Code (uses `claude -p` with `--permission-mode dontAsk`)
    - Handles model and agent selection for each harness
    - Provides consistent argument passing and environment variable handling
 
@@ -45,8 +44,8 @@ The Ralph framework has been enhanced to support seamless switching between diff
 Choose your default harness, model, and agent when installing Ralph:
 
 ```bash
-# Install with Claude Code
-bash install.sh --harness claude_code --model claude-3-opus
+# Install with PI Agent
+bash install.sh --harness piagent --model gpt-5.4
 ```
 
 ### Runtime Selection (Recommended for Flexibility)
@@ -59,8 +58,8 @@ Override the install-time defaults at runtime using command-line options or envi
 # Use Pi Agent for this sprint execution
 RALPH_HARNESS=piagent ./scripts/ralph/ralph.sh
 
-# Use Claude Code with specific model
-RALPH_HARNESS=claude_code RALPH_MODEL=claude-3-sonnet ./scripts/ralph/ralph.sh
+# Use PI Agent with specific model
+RALPH_HARNESS=piagent RALPH_MODEL=gpt-5.4 ./scripts/ralph/ralph.sh
 
 # Combine with other ralph.sh options
 RALPH_HARNESS=piagent RALPH_MODEL=gpt-4-turbo ./scripts/ralph/ralph.sh --max-stories 10 --continue-on-failure
@@ -69,8 +68,8 @@ RALPH_HARNESS=piagent RALPH_MODEL=gpt-4-turbo ./scripts/ralph/ralph.sh --max-sto
 #### Using ralph-story-run.sh (direct story execution)
 
 ```bash
-# Execute with Claude Code and specific model/agent
-./scripts/ralph/ralph-story-run.sh --harness claude_code --model claude-3-opus --agent research --story path/to/story.json
+# Execute with PI Agent and specific model/agent
+./scripts/ralph/ralph-story-run.sh --harness piagent --model gpt-5.4 --agent research --story path/to/story.json
 
 # Combine with other ralph-story-run.sh options
 ./scripts/ralph/ralph-story-run.sh --harness piagent --model gpt-3.5 --agent assistant --story path/to/story.json --max-retries 3
@@ -129,12 +128,6 @@ When `RALPH_AGENT` is not explicitly set, Ralph can infer an agent automatically
 - Supports `--model` and `--agent` flags (if available in your PI Agent version)
 - Accepts additional PI Agent-specific flags
 
-#### Claude Code
-- Uses `claude -p` for print/non-interactive mode
-- Permission bypass: `--permission-mode dontAsk` (avoids initial interactive dialog)
-- Supports `--model` flag
-- Note: Claude Code doesn't have explicit agent selection like Codex, but supports different behaviors via permission modes
-
 ## Provider Configuration
 
 Ralph does not manage provider selection or API keys—it merely passes the model string and relies on the harness to interpret it. To use OpenRouter (or any custom provider), you would:
@@ -190,7 +183,6 @@ For actual end-to-end testing with AI execution:
 
 1. **Ensure your target harness is installed and authenticated**:
    - PI Agent: `pi login` (or equivalent)
-   - Claude Code: `claude auth login`
 
 2. **Run a simple test story**:
    ```bash
@@ -250,7 +242,6 @@ For actual end-to-end testing with AI execution:
 
 1. **Harness not found**: Ensure the harness CLI is installed and in your PATH
    - PI Agent: `which pi`
-   - Claude Code: `which claude`
 
 2. **Permission errors**: Verify the permission bypass flags are correct for your harness version
 
@@ -274,8 +265,8 @@ For actual end-to-end testing with AI execution:
 ### CI/CD Pipeline
 ```bash
 # In your CI script
-export RALPH_HARNESS=claude_code
-export RALPH_MODEL=claude-3-opus
+export RALPH_HARNESS=piagent
+export RALPH_MODEL=gpt-5.4
 ./scripts/ralph/ralph.sh --max-stories 5
 ```
 
