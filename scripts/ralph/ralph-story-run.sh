@@ -308,6 +308,7 @@ EXEC_BUNDLE_CHECKS_PATH=""
 EXECUTION_COMPAT_PATH=""
 VERIFY_FAILED_BUNDLE_PATH=""
 VERIFY_FAILED_SUMMARY_PATH=""
+STORY_EXECUTION_PROFILE_JSON="null"
 
 ensure_story_runtime_dir() {
   local run_root="${RALPH_SPRINT_RUN_DIR:-}"
@@ -348,6 +349,7 @@ write_story_runtime_manifest() {
     --arg failed_task_id "$VERIFY_FAILED_TASK_ID" \
     --arg failure_bundle_path "$VERIFY_FAILED_BUNDLE_PATH" \
     --arg failure_summary_path "$VERIFY_FAILED_SUMMARY_PATH" \
+    --argjson execution_profile "${STORY_EXECUTION_PROFILE_JSON:-null}" \
     '{
       story_id: $story_id,
       title: $title,
@@ -356,6 +358,7 @@ write_story_runtime_manifest() {
       log_dir: $log_dir,
       phase: $phase,
       updated_at: $updated_at,
+      execution_profile: (if $execution_profile == null then null else $execution_profile end),
       failed_task_id: (if $failed_task_id == "" then null else $failed_task_id end),
       failure_bundle_path: (if $failure_bundle_path == "" then null else $failure_bundle_path end),
       failure_summary_path: (if $failure_summary_path == "" then null else $failure_summary_path end)
@@ -1254,6 +1257,22 @@ acquire_lock
 
 STORY_ID="$(jq -r '.storyId' "$STORY_FILE")"
 STORY_TITLE="$(jq -r '.title' "$STORY_FILE")"
+if [ -n "${RALPH_AGENT:-}" ]; then
+  RALPH_AGENT_SELECTION_SOURCE="explicit"
+else
+  RALPH_AGENT_SELECTION_SOURCE=""
+fi
+effective_agent="$(_get_effective_agent "$STORY_FILE")"
+if [ -z "${RALPH_AGENT_SELECTION_SOURCE:-}" ]; then
+  if [ "$effective_agent" != "default" ]; then
+    RALPH_AGENT_SELECTION_SOURCE="inferred"
+  else
+    RALPH_AGENT_SELECTION_SOURCE="default"
+  fi
+fi
+export RALPH_AGENT_SELECTION_SOURCE
+_apply_agent_profile "$effective_agent"
+STORY_EXECUTION_PROFILE_JSON="$(get_execution_profile_json "$effective_agent")"
 ensure_story_runtime_dir
 write_story_runtime_manifest "started"
 
@@ -1261,6 +1280,7 @@ log ""
 log "=== ralph-story-run: $STORY_ID — $STORY_TITLE ==="
 log "Story file: $STORY_FILE"
 log "Runtime journal: $STORY_RUNTIME_DIR"
+log "Execution profile: $(printf '%s' "$STORY_EXECUTION_PROFILE_JSON" | jq -c '.')"
 log ""
 
 if reconcile_completed_story_if_needed; then
@@ -1275,8 +1295,6 @@ fi
 baseline_fp_file="$(mktemp)"
 capture_failing_fingerprints "$baseline_fp_file"
 
-effective_agent="$(_get_effective_agent "$STORY_FILE")"
-_apply_agent_profile "$effective_agent"
 primary_prompt="$(build_story_prompt "$effective_agent")"
 run_story_cycle "primary" "$primary_prompt"
 

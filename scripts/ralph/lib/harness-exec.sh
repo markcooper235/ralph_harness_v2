@@ -36,6 +36,16 @@ _get_harness() {
   fi
 }
 
+_get_harness_selection_source() {
+  if [ -n "${RALPH_HARNESS_OVERRIDE:-}" ]; then
+    echo "override"
+  elif [ -n "${RALPH_HARNESS:-}" ]; then
+    echo "explicit"
+  else
+    echo "default"
+  fi
+}
+
 # Load JSON value safely (handles missing files or invalid JSON)
 _load_json_value() {
   local file="$1"
@@ -743,14 +753,54 @@ _get_effective_agent() {
   echo "default"
 }
 
+get_execution_profile_json() {
+  local effective_agent="${1:-${RALPH_AGENT:-default}}"
+  local effective_harness model_value composite_value codex_profile
+  effective_harness="$(_get_harness)"
+  model_value="${RALPH_MODEL:-}"
+  composite_value="${RALPH_COMPOSITE_PROFILE:-}"
+  codex_profile="${RALPH_CODEX_PROFILE:-}"
+
+  jq -nc \
+    --arg harness "$effective_harness" \
+    --arg harness_source "$(_get_harness_selection_source)" \
+    --arg model "$model_value" \
+    --arg model_source "${RALPH_MODEL_SELECTION_SOURCE:-}" \
+    --arg agent "$effective_agent" \
+    --arg agent_source "${RALPH_AGENT_SELECTION_SOURCE:-}" \
+    --arg composite_profile "$composite_value" \
+    --arg codex_profile "$codex_profile" \
+    --arg pi_role "${RALPH_PIAGENT_ROLE:-}" \
+    --arg complexity_tier "${STORY_COMPLEXITY_TIER:-}" \
+    --argjson complexity_score "${STORY_COMPLEXITY_SCORE:-0}" \
+    '{
+      harness: $harness,
+      harness_source: $harness_source,
+      model: (if $model == "" then null else $model end),
+      model_source: (if $model_source == "" then null else $model_source end),
+      agent: (if $agent == "" then null else $agent end),
+      agent_source: (if $agent_source == "" then null else $agent_source end),
+      composite_profile: (if $composite_profile == "" then null else $composite_profile end),
+      codex_profile: (if $codex_profile == "" then null else $codex_profile end),
+      piagent_role: (if $pi_role == "" then null else $pi_role end),
+      complexity_tier: (if $complexity_tier == "" then null else $complexity_tier end),
+      complexity_score: (if $complexity_tier == "" then null else $complexity_score end)
+    }'
+}
+
 # Apply agent profile settings (model, etc.)
 _apply_agent_profile() {
   local agent_name="$1"
   local profile_json composite_profile composite_shape composite_required_extensions composite_subagent_roles composite_steps piagent_role
+  local model_was_explicit=0
 
   # Determine effective harness (same logic as in harness_exec_prompt)
   local effective_harness
   effective_harness="$(_get_harness)"
+
+  if [ -n "${RALPH_MODEL:-}" ]; then
+    model_was_explicit=1
+  fi
 
   profile_json="$(_get_agent_profile_field "$agent_name" "$effective_harness" ".")"
   if [ -n "$profile_json" ]; then
@@ -827,8 +877,34 @@ _apply_agent_profile() {
     if [ -n "$suggested_model" ]; then
       RALPH_MODEL="$suggested_model"
       export RALPH_MODEL
+      if [ -n "$dynamic_model" ] && [ "$suggested_model" = "$dynamic_model" ]; then
+        RALPH_MODEL_SELECTION_SOURCE="dynamic"
+      elif [ -n "$preferred_model" ] && [ "$suggested_model" = "$preferred_model" ]; then
+        RALPH_MODEL_SELECTION_SOURCE="agent-profile"
+      else
+        RALPH_MODEL_SELECTION_SOURCE="default"
+      fi
+    else
+      RALPH_MODEL_SELECTION_SOURCE="default"
     fi
+  elif [ "$model_was_explicit" -eq 1 ]; then
+    RALPH_MODEL_SELECTION_SOURCE="explicit"
   fi
+  export RALPH_MODEL_SELECTION_SOURCE
+
+  case "${RALPH_AGENT_SELECTION_SOURCE:-}" in
+    explicit|inferred|default) ;;
+    *)
+      if [ -n "${RALPH_AGENT:-}" ]; then
+        RALPH_AGENT_SELECTION_SOURCE="explicit"
+      elif [ "$agent_name" != "default" ]; then
+        RALPH_AGENT_SELECTION_SOURCE="inferred"
+      else
+        RALPH_AGENT_SELECTION_SOURCE="default"
+      fi
+      ;;
+  esac
+  export RALPH_AGENT_SELECTION_SOURCE
   
   # Note: System prompt additions would need to be handled by modifying the prompt itself
   # This is more complex and would require changes to the prompt building logic

@@ -68,6 +68,48 @@ latest_prep_summary_for_sprint() {
   find "$prep_root" -type f -name 'prepare-run.json' -path "*-${sprint}-*/prepare-run.json" 2>/dev/null | sort | tail -n1
 }
 
+latest_sprint_run_manifest_for_sprint() {
+  local sprint="$1"
+  local runs_root="$SCRIPT_DIR/runtime/sprint-runs"
+  [ -d "$runs_root" ] || return 1
+  find "$runs_root" -type f -name 'sprint-run.json' -path "*-${sprint}/sprint-run.json" 2>/dev/null | sort | tail -n1
+}
+
+active_execution_profile_path() {
+  local sprint="$1"
+  local active_story_id="$2"
+  [ -n "$active_story_id" ] || return 1
+  local sprint_manifest sprint_run_dir
+  sprint_manifest="$(latest_sprint_run_manifest_for_sprint "$sprint" || true)"
+  [ -n "$sprint_manifest" ] || return 1
+  sprint_run_dir="$(jq -r '.run_dir // empty' "$sprint_manifest" 2>/dev/null || true)"
+  [ -n "$sprint_run_dir" ] || return 1
+  local story_manifest="$sprint_run_dir/stories/$active_story_id/story-summary.json"
+  [ -f "$story_manifest" ] || return 1
+  printf '%s\n' "$story_manifest"
+}
+
+print_execution_profile_line() {
+  local story_manifest_path="$1"
+  [ -f "$story_manifest_path" ] || return 0
+  local rendered
+  rendered="$(jq -r '
+    .execution_profile as $p
+    | if ($p == null) then empty else
+        "Execution profile: "
+        + "harness=" + ($p.harness // "unknown")
+        + (if ($p.model // "") == "" then "" else " model=" + $p.model end)
+        + (if ($p.agent // "") == "" then "" else " agent=" + $p.agent end)
+        + (if ($p.composite_profile // "") == "" then "" else " composite=" + $p.composite_profile end)
+        + (if ($p.codex_profile // "") == "" then "" else " codex-profile=" + $p.codex_profile end)
+        + (if ($p.harness_source // "") == "" then "" else " harness-source=" + $p.harness_source end)
+        + (if ($p.model_source // "") == "" then "" else " model-source=" + $p.model_source end)
+        + (if ($p.agent_source // "") == "" then "" else " agent-source=" + $p.agent_source end)
+      end
+  ' "$story_manifest_path" 2>/dev/null || true)"
+  [ -n "$rendered" ] && printf '%s\n' "$rendered"
+}
+
 prep_status_line() {
   local sprint="$1"
   local prep_details="${2:-0}"
@@ -134,6 +176,14 @@ prep_story_stage_detail_lines() {
     | "Prep detail " + $story_id + " " + .key + ": "
       + (.value.status // "unknown")
       + (if (.value.detail // "") == "" then "" else " - " + .value.detail end)
+      + (if (.value.execution_profile // null) == null then "" else
+          " [harness="
+          + (.value.execution_profile.harness // "unknown")
+          + (if (.value.execution_profile.model // "") == "" then "" else " model=" + .value.execution_profile.model end)
+          + (if (.value.execution_profile.agent // "") == "" then "" else " agent=" + .value.execution_profile.agent end)
+          + (if (.value.execution_profile.composite_profile // "") == "" then "" else " composite=" + .value.execution_profile.composite_profile end)
+          + "]"
+        end)
       + " (duration-ms=" + ((.value.duration_ms // 0) | tostring) + ", updated=" + (.value.updated_at // "unknown") + ")"
   ' --argjson limit "$story_limit" "$summary_path" 2>/dev/null || true
 }
@@ -345,6 +395,11 @@ main() {
   if [ -f "$stories_file" ]; then
     if [ -n "$sprint_story_id" ]; then
       active_sprint_story_line "$stories_file" "$sprint_story_id"
+      local active_profile_manifest
+      active_profile_manifest="$(active_execution_profile_path "$active_sprint" "$sprint_story_id" || true)"
+      if [ -n "$active_profile_manifest" ]; then
+        print_execution_profile_line "$active_profile_manifest"
+      fi
     else
       echo "Active story: (none)"
     fi

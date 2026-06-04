@@ -89,7 +89,20 @@ story_harness_profile_push() {
       agent: (.agent // empty)
     }' > "$tmp_story_meta"
 
+    if [ -n "${RALPH_AGENT:-}" ]; then
+      RALPH_AGENT_SELECTION_SOURCE="explicit"
+    else
+      RALPH_AGENT_SELECTION_SOURCE=""
+    fi
     effective_agent="$(_get_effective_agent "$tmp_story_meta")"
+    if [ -z "${RALPH_AGENT_SELECTION_SOURCE:-}" ]; then
+      if [ "$effective_agent" != "default" ]; then
+        RALPH_AGENT_SELECTION_SOURCE="inferred"
+      else
+        RALPH_AGENT_SELECTION_SOURCE="default"
+      fi
+    fi
+    export RALPH_AGENT_SELECTION_SOURCE
     local complexity_pair complexity_score complexity_tier
     complexity_pair="$(_story_complexity_score "$story_meta_json")"
     complexity_score="${complexity_pair%%:*}"
@@ -99,9 +112,12 @@ story_harness_profile_push() {
     STORY_HARNESS_EFFECTIVE_AGENT="$effective_agent"
     STORY_COMPLEXITY_SCORE="$complexity_score"
     STORY_COMPLEXITY_TIER="$complexity_tier"
+    STORY_EXECUTION_PROFILE_JSON=""
     export STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER
     _apply_agent_profile "$effective_agent"
     effective_harness="$(_get_harness)"
+    STORY_EXECUTION_PROFILE_JSON="$(get_execution_profile_json "$effective_agent")"
+    export STORY_EXECUTION_PROFILE_JSON
 
     if [ -n "${RALPH_MODEL:-}" ]; then
       if [ -n "${RALPH_COMPOSITE_PROFILE:-}" ]; then
@@ -173,6 +189,9 @@ story_harness_profile_pop() {
     unset STORY_HARNESS_EFFECTIVE_AGENT
     unset STORY_COMPLEXITY_SCORE
     unset STORY_COMPLEXITY_TIER
+    unset STORY_EXECUTION_PROFILE_JSON
+    unset RALPH_MODEL_SELECTION_SOURCE
+    unset RALPH_AGENT_SELECTION_SOURCE
     unset STORY_HARNESS_PROFILE_DEPTH
   fi
 }
@@ -284,6 +303,7 @@ prep_record_stage() {
   local detail="${4:-}"
   local artifacts_json="${5:-[]}"
   local duration_ms="${6:-0}"
+  local execution_profile_json="${7:-${STORY_EXECUTION_PROFILE_JSON:-null}}"
   local stage_path
   stage_path="$(prep_stage_status_path "$story_id" "$stage" 2>/dev/null || true)"
   [ -n "$stage_path" ] || return 0
@@ -296,6 +316,7 @@ prep_record_stage() {
     --arg updated_at "$(timestamp_utc)" \
     --argjson artifacts "$artifacts_json" \
     --argjson duration_ms "$duration_ms" \
+    --argjson execution_profile "$execution_profile_json" \
     '{
       storyId: $storyId,
       stage: $stage,
@@ -303,7 +324,8 @@ prep_record_stage() {
       detail: $detail,
       artifacts: $artifacts,
       duration_ms: $duration_ms,
-      updated_at: $updated_at
+      updated_at: $updated_at,
+      execution_profile: (if $execution_profile == null then null else $execution_profile end)
     }' > "$stage_path"
 }
 
