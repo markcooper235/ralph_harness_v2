@@ -832,7 +832,7 @@ Commands:
   specify-all [--force] [--jobs N]  Run SpecKit for all pending stories (default: serial)
   generate <ID>              Generate story.json (uses SpecKit artifacts when present)
   generate-all [--force] [--jobs N] Generate story.json for all stories with SpecKit artifacts
-  prepare-all [--force] [--jobs N]  specify-all + generate-all + health + promote to ready
+  prepare-all [--force] [--jobs N]  specify-all + generate-all + health only
   prep-status [options]      Show latest prep journal summary for a sprint
   import-prd [PATH]          Import prd.json userStories into sprint backlog
   import-story <ID> <PATH|-] Import a story.json via framework validation
@@ -3294,24 +3294,20 @@ cmd_prepare_all() {
     generate_failed=1
   fi
   echo ""
-  echo "=== prepare-all: health + promote ==="
-  local promoted=0 health_failed=0
+  echo "=== prepare-all: health ==="
+  local ready_candidates=0 health_failed=0
   while IFS= read -r sid; do
     local raw_path story_path_abs
     raw_path="$(jq -r --arg id "$sid" '.stories[] | select(.id == $id) | .story_path // ""' "$STORIES_FILE")"
     [[ "$raw_path" != /* ]] && story_path_abs="$WORKSPACE_ROOT/$raw_path" || story_path_abs="$raw_path"
 
     if _health_story "$sid"; then
-      # Only promote planned stories that have a valid story.json
+      # Count planned stories that are healthy and structurally ready for mark-ready.
       local cur_status
       cur_status="$(jq -r --arg id "$sid" '.stories[] | select(.id == $id) | .status' "$STORIES_FILE")"
       if [ "$cur_status" = "planned" ] && [ -f "$story_path_abs" ] \
           && jq -e '.tasks | length > 0' "$story_path_abs" >/dev/null 2>&1; then
-        local tmp
-        tmp="$(mktemp)"
-        jq --arg id "$sid" '(.stories[] | select(.id == $id) | .status) = "ready"' "$STORIES_FILE" > "$tmp"
-        mv "$tmp" "$STORIES_FILE"
-        promoted=$((promoted + 1))
+        ready_candidates=$((ready_candidates + 1))
       fi
     else
       health_failed=$((health_failed + 1))
@@ -3319,22 +3315,9 @@ cmd_prepare_all() {
   done < <(jq -r '.stories[] | select(.status != "done" and .status != "abandoned") | .id' "$STORIES_FILE")
 
   echo ""
-  [ "$promoted" -gt 0 ]      && echo "Promoted $promoted story/stories to ready."
+  [ "$ready_candidates" -gt 0 ] && echo "$ready_candidates story/stories passed prep health and are ready candidates for ./ralph-sprint.sh mark-ready."
   [ "$health_failed" -gt 0 ] && echo "WARN: $health_failed story/stories have health issues — fix before mark-ready."
-
-  # Auto-mark sprint ready when all active stories are ready
-  local not_ready_count
-  not_ready_count="$(jq '[.stories[] | select((.status != "done") and (.status != "abandoned") and (.status != "ready"))] | length' "$STORIES_FILE")"
-  local current_sprint_status
-  current_sprint_status="$(jq -r '.status // "planned"' "$STORIES_FILE")"
-  if [ "$not_ready_count" -eq 0 ] && [ "$current_sprint_status" = "planned" ]; then
-    local tmp
-    tmp="$(mktemp)"
-    jq '.status = "ready"' "$STORIES_FILE" > "$tmp"
-    mv "$tmp" "$STORIES_FILE"
-    echo "All stories ready — sprint automatically marked ready."
-    echo "To activate: ./ralph-sprint.sh use <sprint-name>"
-  fi
+  [ "$ready_candidates" -gt 0 ] && [ "$health_failed" -eq 0 ] && echo "Next step: ./ralph-sprint.sh mark-ready $sprint_name"
 
   local final_status="passed"
   if [ "$specify_failed" -ne 0 ] || [ "$generate_failed" -ne 0 ] || [ "$health_failed" -ne 0 ]; then
