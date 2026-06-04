@@ -362,6 +362,11 @@ write_story_runtime_manifest() {
     }' > "$STORY_MANIFEST_PATH"
 }
 
+set_story_runtime_phase() {
+  local phase="$1"
+  write_story_runtime_manifest "$phase"
+}
+
 story_is_complete() {
   jq -e '
     (.status // "") == "done"
@@ -886,6 +891,8 @@ run_story_cycle() {
   local log_file="$STORY_LOG_DIR/${cycle_kind}.log"
   local cycle_exit=0
 
+  set_story_runtime_phase "running-${cycle_kind}"
+
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[DRY RUN] Would run story cycle: $cycle_kind"
     log "--- prompt ---"
@@ -999,6 +1006,7 @@ VERIFY_FAILED_SUMMARY_PATH=""
 
 verify_story() {
   local baseline_fp_file="$1"
+  set_story_runtime_phase "verifying"
   VERIFY_FAILED_TASK_ID=""
   VERIFY_FAILED_CHECKS_JSON="[]"
   VERIFY_FAILED_STRUCTURAL=0
