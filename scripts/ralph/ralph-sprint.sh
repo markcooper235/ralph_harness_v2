@@ -21,7 +21,7 @@ Commands:
   create <sprint-name> [--no-activate]  Create sprint structure and stories.json scaffold
   remove <sprint-name> [options]    Remove sprint (archive by default)
   use <sprint-name>                 Activate sprint (requires status=ready, previous=closed)
-  mark-ready <sprint-name>          Mark sprint ready for activation (all stories must be ready)
+  mark-ready <sprint-name> [--no-commit]  Mark sprint ready for activation (all stories must be ready)
   restage <sprint-name>             Reset sprint + story statuses to planned for lifecycle reruns
   next [--activate]                 Show the next ready sprint, optionally activate it
   branch <sprint-name>              Ensure sprint branch exists (ralph/sprint/<sprint-name>)
@@ -180,6 +180,19 @@ set_sprint_status() {
   tmp="$(mktemp)"
   jq --arg s "$new_status" '.status = $s' "$sf" > "$tmp"
   mv "$tmp" "$sf"
+}
+
+commit_sprint_ready_checkpoint() {
+  local sprint="$1"
+  local sprint_dir stories_file
+
+  sprint_dir="$SCRIPT_DIR/sprints/$sprint"
+  stories_file="$(sprint_stories_file "$sprint")"
+
+  git add "$stories_file" "$sprint_dir" 2>/dev/null || true
+  if ! git diff --cached --quiet 2>/dev/null; then
+    git commit -m "chore(ralph): ready sprint $sprint"
+  fi
 }
 
 get_active_sprint() {
@@ -440,11 +453,18 @@ cmd_create() {
 }
 
 cmd_mark_ready() {
-  local sprint
+  local sprint auto_commit=1
 
-  [ $# -eq 1 ] || fail "Usage: mark-ready <sprint-name>"
+  [ $# -ge 1 ] || fail "Usage: mark-ready <sprint-name> [--no-commit]"
   sprint="$(normalize_sprint_name "$1")"
   [ -n "$sprint" ] || fail "Invalid sprint name."
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-commit) auto_commit=0; shift ;;
+      *) fail "Unknown mark-ready option: $1" ;;
+    esac
+  done
 
   local sf
   sf="$(sprint_stories_file "$sprint")"
@@ -473,6 +493,9 @@ cmd_mark_ready() {
   fi
 
   set_sprint_status "$sprint" "ready"
+  if [ "$auto_commit" -eq 1 ]; then
+    commit_sprint_ready_checkpoint "$sprint"
+  fi
   echo "Sprint '$sprint' marked ready."
   echo "To activate: ./ralph-sprint.sh use $sprint"
 }
