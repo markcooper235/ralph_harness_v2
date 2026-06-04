@@ -216,6 +216,7 @@ rm -f \
   "$DEST_DIR_REL/ralph-archive.sh" \
   "$DEST_DIR_REL/ralph-spec-check.sh" \
   "$DEST_DIR_REL/ralph-spec-strengthen.sh"
+rm -rf "$DEST_DIR_REL/__tests__"
 chmod +x \
   "$DEST_DIR_REL/ralph.sh" \
   "$DEST_DIR_REL/doctor.sh" \
