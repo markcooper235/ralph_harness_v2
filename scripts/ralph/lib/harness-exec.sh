@@ -855,6 +855,7 @@ _codex_exec_prompt() {
     (
       _ensure_ralph_runtime_home
       export HOME="$RALPH_RUNTIME_HOME_DIR"
+      export CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex"
       export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
       export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
       export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
@@ -865,6 +866,7 @@ _codex_exec_prompt() {
     (
       _ensure_ralph_runtime_home
       export HOME="$RALPH_RUNTIME_HOME_DIR"
+      export CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex"
       export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
       export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
       export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
@@ -956,6 +958,7 @@ _piagent_exec_prompt() {
     cd "$workspace"
     _ensure_ralph_runtime_home
     export HOME="$RALPH_RUNTIME_HOME_DIR"
+    export PI_CODING_AGENT_DIR="$RALPH_RUNTIME_HOME_DIR/.pi/agent"
     export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
     export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
     export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
@@ -983,6 +986,7 @@ _codex_exec_prompt() {
     (
       _ensure_ralph_runtime_home
       HOME="$RALPH_RUNTIME_HOME_DIR" \
+      CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex" \
       XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
       XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
       XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
@@ -993,6 +997,7 @@ _codex_exec_prompt() {
     (
       _ensure_ralph_runtime_home
       HOME="$RALPH_RUNTIME_HOME_DIR" \
+      CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex" \
       XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
       XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
       XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
@@ -1065,6 +1070,7 @@ _piagent_exec_prompt() {
     cd "$workspace"
     _ensure_ralph_runtime_home
     HOME="$RALPH_RUNTIME_HOME_DIR" \
+    PI_CODING_AGENT_DIR="$RALPH_RUNTIME_HOME_DIR/.pi/agent" \
     XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
     XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
     XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
