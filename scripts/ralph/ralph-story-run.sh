@@ -136,7 +136,7 @@ harness_exec_prompt_with_fallback() {
             [ -n "${OPENAI_API_KEY_NATIVE:-}" ] && native_fallback_available=1
             ;;
         piagent)
-            [ -n "${PI_API_KEY_NATIVE:-}" ] && native_fallback_available=1
+            [ -n "${OPENAI_API_KEY_NATIVE:-}" ] && native_fallback_available=1
             ;;
     esac
 
@@ -164,12 +164,11 @@ harness_exec_prompt_with_fallback() {
 
             if [ -n "${OPENAI_API_BASE_NATIVE:-}" ]; then
                 OPENAI_BASE_URL="${OPENAI_API_BASE_NATIVE}"
+            else
+                OPENAI_BASE_URL="https://api.openai.com/v1"
             fi
             if [ -n "${ANTHROPIC_API_BASE_NATIVE:-}" ]; then
                 ANTHROPIC_BASE_URL="${ANTHROPIC_API_BASE_NATIVE}"
-            fi
-            if [ -n "${PI_API_BASE_NATIVE:-}" ]; then
-                PI_BASE_URL="${PI_API_BASE_NATIVE}"
             fi
             if [ -n "${OPENAI_API_KEY_NATIVE:-}" ]; then
                 OPENAI_API_KEY="${OPENAI_API_KEY_NATIVE}"
@@ -177,13 +176,7 @@ harness_exec_prompt_with_fallback() {
             if [ -n "${ANTHROPIC_API_KEY_NATIVE:-}" ]; then
                 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY_NATIVE}"
             fi
-            if [ -n "${PI_API_KEY_NATIVE:-}" ]; then
-                PI_API_KEY="${PI_API_KEY_NATIVE}"
-            fi
-            if [ -n "${PI_MODEL_NATIVE:-}" ]; then
-                RALPH_MODEL="${PI_MODEL_NATIVE}"
-            fi
-            export OPENAI_BASE_URL ANTHROPIC_BASE_URL PI_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN PI_API_KEY RALPH_CODEX_PROFILE
+            export OPENAI_BASE_URL ANTHROPIC_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN RALPH_CODEX_PROFILE
         fi
     done
 

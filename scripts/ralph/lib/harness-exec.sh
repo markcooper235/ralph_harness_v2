@@ -15,6 +15,12 @@ AGENT_PROFILES_FILE="$HARNESS_LIB_DIR/agent-profiles.json"
 COMPOSITE_PROFILES_FILE="$HARNESS_LIB_DIR/composite-profiles.json"
 LABEL_MAPPING_FILE="$HARNESS_LIB_DIR/label-to-agent-mapping.json"
 HARNESS_CAPABILITIES_FILE="$HARNESS_LIB_DIR/harness-capabilities.json"
+RALPH_RUNTIME_HOME_DIR="${RALPH_HOME_DIR:-$HARNESS_LIB_DIR/../runtime/home}"
+RALPH_REPO_ROOT="$(cd "$HARNESS_LIB_DIR/../../.." && pwd)"
+RALPH_RUNTIME_HOME_CONFIG_FILE="$RALPH_RUNTIME_HOME_DIR/.codex/config.toml"
+RALPH_RUNTIME_PI_AGENT_DIR="$RALPH_RUNTIME_HOME_DIR/.pi/agent"
+RALPH_RUNTIME_PI_SETTINGS_FILE="$RALPH_RUNTIME_PI_AGENT_DIR/settings.json"
+RALPH_RUNTIME_PI_MODELS_FILE="$RALPH_RUNTIME_PI_AGENT_DIR/models.json"
 
 # Source harness capabilities helpers
 source "$HARNESS_LIB_DIR/harness-capabilities.sh"
@@ -199,6 +205,68 @@ _model_family_name() {
   lower="$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')"
   lower="${lower##*/}"
   printf '%s\n' "$lower"
+}
+
+_ensure_ralph_runtime_home() {
+  mkdir -p \
+    "$RALPH_RUNTIME_HOME_DIR" \
+    "$RALPH_RUNTIME_HOME_DIR/.config" \
+    "$RALPH_RUNTIME_HOME_DIR/.cache" \
+    "$RALPH_RUNTIME_HOME_DIR/.local/state" \
+    "$RALPH_RUNTIME_HOME_DIR/.local/share" \
+    "$RALPH_RUNTIME_HOME_DIR/.codex" \
+    "$RALPH_RUNTIME_PI_AGENT_DIR"
+}
+
+_seed_ralph_runtime_home_config() {
+  _ensure_ralph_runtime_home
+
+  if [ -f "$RALPH_RUNTIME_HOME_CONFIG_FILE" ]; then
+    return 0
+  fi
+
+  cat > "$RALPH_RUNTIME_HOME_CONFIG_FILE" <<EOF
+model = 'gpt-5.4'
+model_reasoning_effort = 'medium'
+
+[projects."$RALPH_REPO_ROOT"]
+trust_level = "trusted"
+
+[notice]
+hide_full_access_warning = true
+EOF
+}
+
+_seed_ralph_runtime_pi_config() {
+  _ensure_ralph_runtime_home
+
+  cat > "$RALPH_RUNTIME_PI_SETTINGS_FILE" <<'EOF'
+{
+  "lastChangelogVersion": "0.76.0",
+  "defaultProvider": "openai-native",
+  "defaultModel": "gpt-5.4",
+  "defaultThinkingLevel": "medium",
+  "packages": [
+    "npm:pi-subagents"
+  ]
+}
+EOF
+
+  cat > "$RALPH_RUNTIME_PI_MODELS_FILE" <<'EOF'
+{
+  "providers": {
+    "openai-native": {
+      "baseUrl": "https://api.openai.com/v1",
+      "api": "openai-responses",
+      "apiKey": "OPENAI_API_KEY",
+      "models": [
+        { "id": "gpt-5.4" },
+        { "id": "gpt-5.5" }
+      ]
+    }
+  }
+}
+EOF
 }
 
 _story_complexity_text() {
@@ -781,11 +849,28 @@ _codex_exec_prompt() {
   [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "codex" && model_args=(--model "$RALPH_MODEL")
   local agent_args=()
   [ -n "${RALPH_AGENT:-}" ] && harness_supports_agent_selection "codex" && agent_args=(--agent "$RALPH_AGENT")
+  _seed_ralph_runtime_home_config
   
   if _supports_codex_yolo; then
-    printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    (
+      _ensure_ralph_runtime_home
+      export HOME="$RALPH_RUNTIME_HOME_DIR"
+      export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
+      export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
+      export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
+      export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    )
   else
-    printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    (
+      _ensure_ralph_runtime_home
+      export HOME="$RALPH_RUNTIME_HOME_DIR"
+      export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
+      export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
+      export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
+      export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    )
   fi
 }
 
@@ -826,6 +911,7 @@ _piagent_exec_prompt() {
   local pi_provider="${PI_PROVIDER:-}"
   local resolved_model="${RALPH_MODEL:-}"
   local pi_provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+  _seed_ralph_runtime_home_config
   if [ -z "$pi_provider" ] && [ -n "$resolved_model" ]; then
     case "$resolved_model" in
       opencode/*)
@@ -853,6 +939,8 @@ _piagent_exec_prompt() {
 
   if [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *openrouter.ai* ]]; then
     pi_provider="openrouter"
+  elif [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *api.openai.com* ]]; then
+    pi_provider="openai-native"
   fi
 
   # Add model selection if specified (if supported by PI Agent)
@@ -866,6 +954,12 @@ _piagent_exec_prompt() {
   # Change to workspace directory and run pi with prompt
   (
     cd "$workspace"
+    _ensure_ralph_runtime_home
+    export HOME="$RALPH_RUNTIME_HOME_DIR"
+    export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
+    export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
+    export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
+    export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
     PI_PERMISSION_LEVEL=bypassed pi -p "${pi_args[@]}"
   )
 }
@@ -883,11 +977,28 @@ _codex_exec_prompt() {
   [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "codex" && model_args=(--model "$RALPH_MODEL")
   local agent_args=()
   [ -n "${RALPH_AGENT:-}" ] && harness_supports_agent_selection "codex" && agent_args=(--agent "$RALPH_AGENT")
+  _seed_ralph_runtime_home_config
   
   if _supports_codex_yolo; then
-    printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    (
+      _ensure_ralph_runtime_home
+      HOME="$RALPH_RUNTIME_HOME_DIR" \
+      XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
+      XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
+      XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
+      XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    )
   else
-    printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    (
+      _ensure_ralph_runtime_home
+      HOME="$RALPH_RUNTIME_HOME_DIR" \
+      XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
+      XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
+      XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
+      XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+    )
   fi
 }
 
@@ -907,6 +1018,7 @@ _piagent_exec_prompt() {
   local pi_provider="${PI_PROVIDER:-}"
   local resolved_model="${RALPH_MODEL:-}"
   local pi_provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+  local pi_api_key="${PI_API_KEY:-${OPENROUTER_API_KEY:-${OPENAI_API_KEY:-${ANTHROPIC_API_KEY:-}}}}"
   if [ -z "$pi_provider" ] && [ -n "$resolved_model" ]; then
     case "$resolved_model" in
       openrouter/*)
@@ -930,14 +1042,19 @@ _piagent_exec_prompt() {
 
   if [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *openrouter.ai* ]]; then
     pi_provider="openrouter"
+  elif [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *api.openai.com* ]]; then
+    pi_provider="openai-native"
   fi
 
   # Add model selection if specified (if supported by PI Agent)
   [ -n "$pi_provider" ] && pi_args+=("--provider" "$pi_provider")
   [ -n "$resolved_model" ] && pi_args+=("--model" "$resolved_model")
+  [ -n "$pi_api_key" ] && pi_args+=("--api-key" "$pi_api_key")
 
   # Add agent selection if specified (if supported by PI Agent)
   [ -n "${RALPH_AGENT:-}" ] && pi_args+=("--agent" "$RALPH_AGENT")
+  _seed_ralph_runtime_home_config
+  _seed_ralph_runtime_pi_config
 
   # Pass through any additional arguments
   pi_args+=("$@")
@@ -946,6 +1063,12 @@ _piagent_exec_prompt() {
   # Change to workspace directory and run pi with prompt
   (
     cd "$workspace"
+    _ensure_ralph_runtime_home
+    HOME="$RALPH_RUNTIME_HOME_DIR" \
+    XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
+    XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
+    XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
+    XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
     PI_PERMISSION_LEVEL=bypassed pi -p "${pi_args[@]}"
   )
 }

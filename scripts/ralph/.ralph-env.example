@@ -1,6 +1,11 @@
 # Ralph Environment Variables
 # Copy this file to $HOME/.ralph-env or scripts/ralph/.ralph-env and fill in your values.
 # This file is NOT tracked by git.
+#
+# Ralph runs harnesses inside an isolated home directory under
+# `scripts/ralph/runtime/home` by default so login state stays local to the
+# project. Ralph seeds only minimal Codex/Pi config there; auth stays external.
+# You can override that by setting `RALPH_HOME_DIR`.
 
 # --- To use a consolidated provider (e.g., OpenRouter) ---
 # Uncomment the following lines to route all harnesses through OpenRouter.
@@ -23,31 +28,20 @@
 #   * OpenRouter base URL overrides are removed
 #   * Native API keys are applied for the selected harness only
 #   * Ralph does NOT fall back to stored harness OAuth/account auth
-# If no matching *_NATIVE variable is set for a harness, Ralph will fail after the
-# OpenRouter attempt instead of trying account-based auth inside the framework.
-# 
+# For the framework, the native retry path uses OPENAI_API_KEY_NATIVE.
+# If no matching native key is set, Ralph will fail after the OpenRouter attempt
+# instead of trying account-based auth inside the framework.
+#
 # For Codex fallback to OpenAI native API:
+#   export OPENAI_API_BASE_NATIVE="https://api.openai.com/v1"
 #   export OPENAI_API_KEY_NATIVE="sk-..."   # Your OpenAI API key
 #
-# Claude Code-specific fallback settings are intentionally omitted.
-#
-# For Opencode fallback:
-#   export OPENCODE_API_KEY_NATIVE="sk-op-..."   # OpenCode Zen key
-#   export OPENCODE_API_BASE_NATIVE="https://opencode.ai/zen/v1/chat/completions"
-#   export OPENCODE_MODEL_NATIVE="opencode/deepseek-v4-flash-free"
-#   export OPENCODE_USE_LOGIN_FALLBACK="0"
-#   export OPENCODE_FORCE_LOGOUT_ON_FALLBACK="1"
-#   # Temporarily disables ~/.local/share/opencode/auth.json during the retry so stored provider auth does not override env-based Zen auth.
-#
-# For PI Agent fallback:
-#   export PI_API_KEY_NATIVE="sk-op-..."         # OpenCode Zen key used by PI's opencode provider
-#   export PI_API_BASE_NATIVE="https://opencode.ai/zen/v1/chat/completions"
-#   export PI_MODEL_NATIVE="opencode/nemotron-3-super-free"
+# PI Agent-specific Zen settings are intentionally omitted from Ralph fallback.
+# If you want to burn remaining OpenCode Zen credits, use PI standalone outside
+# the framework with its own environment/session.
 #
 # --- Optional: Provider-specific overrides per harness ---
 # If a harness requires different variables, set them here.
-# Opencode is no longer a Ralph harness, so these override lines are left
-# commented out for reference only.
 # export OPENCODE_BASE_URL="https://openrouter.ai/api/v1"
 # export OPENCODE_API_KEY="sk-or-..."
 # Example for PI Agent:
@@ -68,11 +62,10 @@
 #   # To fall back to native OpenAI API keys:
 #   export OPENAI_API_KEY_NATIVE="sk-..."
 #
-#   # To fall back for Opencode:
-#   export OPENCODE_API_KEY_NATIVE="sk-op-..."
-#
-#   # To fall back for PI Agent:
-#   export PI_API_KEY_NATIVE="sk-..."
+#   # To use PI Zen outside Ralph:
+#   # export PI_API_KEY_NATIVE="sk-op-..."
+#   # export PI_API_BASE_NATIVE="https://opencode.ai/zen/v1/chat/completions"
+#   # export PI_MODEL_NATIVE="opencode/nemotron-3-super-free"
 #
 #   # To disable native fallback for a harness:
 #   # Leave the matching *_NATIVE variable unset
