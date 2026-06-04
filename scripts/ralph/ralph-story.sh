@@ -27,8 +27,8 @@ load_ralph_env() {
 }
 
 # Load Ralph env so specify/generate use the same provider routing as story runs.
-if ! load_ralph_env "${HOME}/.ralph-env"; then
-  load_ralph_env "${SCRIPT_DIR}/.ralph-env" || true
+if ! load_ralph_env "${SCRIPT_DIR}/.ralph-env"; then
+  load_ralph_env "${HOME}/.ralph-env" || true
 fi
 
 source "$SCRIPT_DIR/lib/harness-exec.sh"
@@ -204,6 +204,30 @@ epoch_seconds() {
   date +%s
 }
 
+prep_heartbeat_start() {
+  local label="$1"
+  prep_heartbeat_stop
+  (
+    local started_epoch
+    started_epoch="$(epoch_seconds)"
+    while true; do
+      sleep "${RALPH_HEARTBEAT_INTERVAL_SECONDS:-45}" || exit 0
+      local elapsed
+      elapsed=$(( $(epoch_seconds) - started_epoch ))
+      echo "Heartbeat: prep phase=${RALPH_PREP_PHASE:-unknown} label=$label elapsed=${elapsed}s"
+    done
+  ) &
+  RALPH_PREP_HEARTBEAT_PID=$!
+}
+
+prep_heartbeat_stop() {
+  if [ -n "${RALPH_PREP_HEARTBEAT_PID:-}" ] && kill -0 "$RALPH_PREP_HEARTBEAT_PID" 2>/dev/null; then
+    kill "$RALPH_PREP_HEARTBEAT_PID" 2>/dev/null || true
+    wait "$RALPH_PREP_HEARTBEAT_PID" 2>/dev/null || true
+  fi
+  RALPH_PREP_HEARTBEAT_PID=""
+}
+
 compact_text() {
   local value="${1:-}"
   local max_chars="${2:-280}"
@@ -269,6 +293,12 @@ ensure_prep_run_dir() {
   "mode": "$mode",
   "sprint": "$sprint",
   "started_at": "$(timestamp_utc)",
+  "updated_at": "$(timestamp_utc)",
+  "last_progress_at": "$(timestamp_utc)",
+  "phase": "started",
+  "active_story_id": null,
+  "active_stage": null,
+  "execution_profile": null,
   "stories": {}
 }
 EOF
@@ -327,6 +357,33 @@ prep_record_stage() {
       updated_at: $updated_at,
       execution_profile: (if $execution_profile == null then null else $execution_profile end)
     }' > "$stage_path"
+  prep_touch_summary "${RALPH_PREP_PHASE:-$stage}" "$story_id" "$stage" "$execution_profile_json"
+}
+
+prep_touch_summary() {
+  local phase="${1:-}"
+  local active_story_id="${2:-}"
+  local active_stage="${3:-}"
+  local execution_profile_json="${4:-null}"
+  local summary_path tmp
+  summary_path="$(prep_summary_path 2>/dev/null || true)"
+  [ -n "$summary_path" ] && [ -f "$summary_path" ] || return 0
+  tmp="$(mktemp)"
+  jq \
+    --arg updated_at "$(timestamp_utc)" \
+    --arg phase "$phase" \
+    --arg active_story_id "$active_story_id" \
+    --arg active_stage "$active_stage" \
+    --argjson execution_profile "$execution_profile_json" \
+    '
+      .updated_at = $updated_at
+      | .last_progress_at = $updated_at
+      | .phase = (if $phase == "" then (.phase // "running") else $phase end)
+      | .active_story_id = (if $active_story_id == "" then null else $active_story_id end)
+      | .active_stage = (if $active_stage == "" then null else $active_stage end)
+      | .execution_profile = (if $execution_profile == null then (.execution_profile // null) else $execution_profile end)
+    ' "$summary_path" > "$tmp"
+  mv "$tmp" "$summary_path"
 }
 
 prep_finalize_summary() {
@@ -350,7 +407,8 @@ prep_finalize_summary() {
                   detail: $entry.detail,
                   artifacts: $entry.artifacts,
                   duration_ms: ($entry.duration_ms // 0),
-                  updated_at: $entry.updated_at
+                  updated_at: $entry.updated_at,
+                  execution_profile: ($entry.execution_profile // null)
                 }
               })
             )
@@ -383,7 +441,15 @@ prep_finalize_summary() {
     --arg finished_at "$(timestamp_utc)" \
     --argjson stories "$stories_json" \
     --argjson metrics "$metrics_json" \
-    '.status = $status | .finished_at = $finished_at | .stories = $stories | .metrics = $metrics' \
+    '.status = $status
+      | .phase = $status
+      | .finished_at = $finished_at
+      | .updated_at = $finished_at
+      | .last_progress_at = $finished_at
+      | .active_story_id = null
+      | .active_stage = null
+      | .stories = $stories
+      | .metrics = $metrics' \
     "$summary_path" > "$tmp"
   mv "$tmp" "$summary_path"
 }
@@ -2597,10 +2663,13 @@ GENPROMPT
   fi
 
   if [ "$deterministic_recovery" -eq 0 ] && [ "$prd_bridge_recovery" -eq 0 ]; then
+    prep_heartbeat_start "generate:$story_id"
     if ! harness_exec_prompt "$prompt" "$WORKSPACE_ROOT"; then
+      prep_heartbeat_stop
       story_harness_profile_pop
       fail "story.json generation failed for $story_id"
     fi
+    prep_heartbeat_stop
   fi
   story_harness_profile_pop
 
@@ -3034,10 +3103,13 @@ SKPROMPT
   echo "Running SpecKit analysis for $story_id (phases: specify → plan → tasks)..."
   prep_record_stage "$story_id" "specify" "running" "Running SpecKit workflow" "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" 0
   story_harness_profile_push "$story_meta"
+  prep_heartbeat_start "specify:$story_id"
   if ! harness_exec_prompt "$speckit_prompt" "$WORKSPACE_ROOT"; then
+    prep_heartbeat_stop
     story_harness_profile_pop
     fail "SpecKit analysis failed for $story_id"
   fi
+  prep_heartbeat_stop
   story_harness_profile_pop
 
   # Validate artifacts
@@ -3080,6 +3152,8 @@ cmd_specify_all() {
   sprint_name="$(jq -r '.sprint // empty' "$STORIES_FILE")"
   require_story_sprint "$sprint_name" "specify-all"
   ensure_prep_run_dir "$sprint_name" "specify-all" >/dev/null
+  RALPH_PREP_PHASE="specify-all"
+  prep_touch_summary "specify-all" "" ""
 
   local force_flag=()
   [ "$force" -eq 1 ] && force_flag+=(--force)
@@ -3166,6 +3240,8 @@ cmd_generate_all() {
   sprint_name="$(jq -r '.sprint // empty' "$STORIES_FILE")"
   require_story_sprint "$sprint_name" "generate-all"
   ensure_prep_run_dir "$sprint_name" "generate-all" >/dev/null
+  RALPH_PREP_PHASE="generate-all"
+  prep_touch_summary "generate-all" "" ""
 
   local force_flag=()
   [ "$force" -eq 1 ] && force_flag+=(--force)
@@ -3304,19 +3380,24 @@ cmd_prepare_all() {
   sprint_name="$(jq -r '.sprint // empty' "$STORIES_FILE")"
   require_story_sprint "$sprint_name" "prepare-all"
   ensure_prep_run_dir "$sprint_name" "prepare-all" >/dev/null
+  RALPH_PREP_PHASE="prepare-all"
+  prep_touch_summary "prepare-all" "" ""
 
   local specify_failed=0 generate_failed=0
   echo "=== prepare-all: specify ==="
+  prep_touch_summary "specify-all" "" ""
   if ! cmd_specify_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs"; then
     specify_failed=1
   fi
   echo ""
   echo "=== prepare-all: generate ==="
+  prep_touch_summary "generate-all" "" ""
   if ! cmd_generate_all "${force_flag[@]+"${force_flag[@]}"}" --jobs "$jobs"; then
     generate_failed=1
   fi
   echo ""
   echo "=== prepare-all: health ==="
+  prep_touch_summary "health" "" ""
   local ready_candidates=0 health_failed=0
   while IFS= read -r sid; do
     local raw_path story_path_abs

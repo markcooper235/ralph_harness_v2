@@ -61,6 +61,34 @@ loop_status() {
   fi
 }
 
+loop_phase_for_sprint() {
+  local sprint="$1"
+  local sprint_manifest
+  sprint_manifest="$(latest_sprint_run_manifest_for_sprint "$sprint" || true)"
+  [ -n "$sprint_manifest" ] || return 1
+  jq -r '.phase // empty' "$sprint_manifest" 2>/dev/null || true
+}
+
+render_loop_line() {
+  local sprint="${1:-}"
+  local loop_state phase
+  loop_state="$(loop_status)"
+  if [ -z "$sprint" ]; then
+    printf 'Loop: %s\n' "$loop_state"
+    return 0
+  fi
+  phase="$(loop_phase_for_sprint "$sprint" || true)"
+  if [ -n "$phase" ]; then
+    if [ "$loop_state" = "running" ]; then
+      printf 'Loop: %s (phase=%s)\n' "$loop_state" "$phase"
+    else
+      printf 'Loop: %s (last-phase=%s)\n' "$loop_state" "$phase"
+    fi
+  else
+    printf 'Loop: %s\n' "$loop_state"
+  fi
+}
+
 latest_prep_summary_for_sprint() {
   local sprint="$1"
   local prep_root="$SCRIPT_DIR/runtime/prep-runs"
@@ -110,6 +138,30 @@ print_execution_profile_line() {
   [ -n "$rendered" ] && printf '%s\n' "$rendered"
 }
 
+print_story_runtime_line() {
+  local story_manifest_path="$1"
+  [ -f "$story_manifest_path" ] || return 0
+  jq -r '
+    "Story runtime: phase=" + (.phase // "unknown")
+    + (if (.attempt // 0) > 0 then " attempt=" + ((.attempt // 0) | tostring) else "" end)
+    + (if (.current_task_id // "") == "" then "" else " task=" + .current_task_id end)
+    + (if (.current_check // "") == "" then "" else " check=" + (((.current_check_index // 0) | tostring) + "/" + ((.current_check_total // 0) | tostring)) end)
+    + (if (.last_progress_at // "") == "" then "" else " progress=" + .last_progress_at end)
+  ' "$story_manifest_path" 2>/dev/null || true
+}
+
+print_sprint_runtime_line() {
+  local sprint="$1"
+  local sprint_manifest
+  sprint_manifest="$(latest_sprint_run_manifest_for_sprint "$sprint" || true)"
+  [ -n "$sprint_manifest" ] && [ -f "$sprint_manifest" ] || return 0
+  jq -r '
+    "Sprint runtime: phase=" + (.phase // "unknown")
+    + (if (.active_story_id // "") == "" then "" else " active-story=" + .active_story_id end)
+    + (if (.updated_at // "") == "" then "" else " updated=" + .updated_at end)
+  ' "$sprint_manifest" 2>/dev/null || true
+}
+
 prep_status_line() {
   local sprint="$1"
   local prep_details="${2:-0}"
@@ -121,9 +173,12 @@ prep_status_line() {
     return 0
   fi
 
-  local mode status finished_at story_count failed_count skipped_count passed_count total_duration_ms
+  local mode status phase active_story_id active_stage finished_at story_count failed_count skipped_count passed_count total_duration_ms
   mode="$(jq -r '.mode // "prep"' "$summary_path" 2>/dev/null || echo "prep")"
   status="$(jq -r '.status // "running"' "$summary_path" 2>/dev/null || echo "running")"
+  phase="$(jq -r '.phase // empty' "$summary_path" 2>/dev/null || true)"
+  active_story_id="$(jq -r '.active_story_id // empty' "$summary_path" 2>/dev/null || true)"
+  active_stage="$(jq -r '.active_stage // empty' "$summary_path" 2>/dev/null || true)"
   finished_at="$(jq -r '.finished_at // .started_at // ""' "$summary_path" 2>/dev/null || true)"
   story_count="$(jq -r '(.stories // {}) | length' "$summary_path" 2>/dev/null || echo 0)"
   failed_count="$(jq -r '.metrics.failed_stages // ([.stories[]?[]? | select(.status == "failed")] | length)' "$summary_path" 2>/dev/null || echo 0)"
@@ -131,7 +186,10 @@ prep_status_line() {
   passed_count="$(jq -r '.metrics.passed_stages // ([.stories[]?[]? | select(.status == "passed")] | length)' "$summary_path" 2>/dev/null || echo 0)"
   total_duration_ms="$(jq -r '.metrics.total_duration_ms // 0' "$summary_path" 2>/dev/null || echo 0)"
 
-  printf 'Prep: %s (%s, stories=%s, passed-stages=%s, failed-stages=%s, skipped-stages=%s, duration-ms=%s)\n' "$status" "$mode" "$story_count" "$passed_count" "$failed_count" "$skipped_count" "$total_duration_ms"
+  printf 'Prep: %s (%s, phase=%s, stories=%s, passed-stages=%s, failed-stages=%s, skipped-stages=%s, duration-ms=%s)\n' "$status" "$mode" "${phase:-unknown}" "$story_count" "$passed_count" "$failed_count" "$skipped_count" "$total_duration_ms"
+  if [ -n "$active_story_id" ] || [ -n "$active_stage" ]; then
+    printf 'Prep active: story=%s stage=%s\n' "${active_story_id:-none}" "${active_stage:-none}"
+  fi
   [ -n "$finished_at" ] && printf 'Prep updated: %s\n' "$finished_at"
   printf 'Prep journal: %s\n' "$summary_path"
   prep_story_stage_lines "$summary_path" "$prep_story_limit"
@@ -367,7 +425,7 @@ main() {
 
   if [ -z "$active_sprint" ]; then
     echo "Active sprint: (none)"
-    echo "Loop: $(loop_status)"
+    render_loop_line
     echo "Worktree: $(worktree_status)"
     echo "Next action: run ./scripts/ralph/ralph-sprint.sh use <sprint-name>."
     exit 0
@@ -389,8 +447,9 @@ main() {
   echo "Active sprint: $active_sprint"
   echo "Sprint branch: $sprint_branch"
   echo "Current branch: ${current_branch:-'(detached)'}"
-  echo "Loop: $loop_state"
+  render_loop_line "$active_sprint"
   echo "Worktree: $worktree_state"
+  print_sprint_runtime_line "$active_sprint"
   prep_status_line "$active_sprint" "$prep_details" "$prep_story_limit"
   if [ -f "$stories_file" ]; then
     if [ -n "$sprint_story_id" ]; then
@@ -398,6 +457,7 @@ main() {
       local active_profile_manifest
       active_profile_manifest="$(active_execution_profile_path "$active_sprint" "$sprint_story_id" || true)"
       if [ -n "$active_profile_manifest" ]; then
+        print_story_runtime_line "$active_profile_manifest"
         print_execution_profile_line "$active_profile_manifest"
       fi
     else

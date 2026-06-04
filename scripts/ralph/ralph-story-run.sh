@@ -63,6 +63,18 @@ MAX_RETRIES=1
 DRY_RUN=0
 QUIET=0
 RUNTIME_RETENTION=3
+HEARTBEAT_INTERVAL_SECONDS="${RALPH_HEARTBEAT_INTERVAL_SECONDS:-45}"
+STORY_RUNTIME_STARTED_AT=""
+STORY_RUNTIME_STARTED_EPOCH=0
+STORY_RUNTIME_LAST_PROGRESS_AT=""
+STORY_RUNTIME_PHASE="started"
+STORY_RUNTIME_ATTEMPT=0
+STORY_RUNTIME_CURRENT_TASK_ID=""
+STORY_RUNTIME_CURRENT_CHECK=""
+STORY_RUNTIME_CURRENT_CHECK_INDEX=0
+STORY_RUNTIME_CURRENT_CHECK_TOTAL=0
+STORY_RUNTIME_LAST_COMPLETED_MILESTONE=""
+STORY_HEARTBEAT_PID=""
 
 usage() {
   cat <<'EOF'
@@ -88,6 +100,19 @@ EOF
 
 fail() { echo "ERROR: $1" >&2; exit 1; }
 log()  { [ "$QUIET" -eq 0 ] && echo "$1"; }
+
+timestamp_utc() {
+  date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+elapsed_ms_since_epoch() {
+  local started_epoch="${1:-0}"
+  if ! [[ "$started_epoch" =~ ^[0-9]+$ ]] || [ "$started_epoch" -le 0 ]; then
+    printf '0'
+    return 0
+  fi
+  printf '%s' $(( ( $(date +%s) - started_epoch ) * 1000 ))
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -338,6 +363,8 @@ ensure_story_runtime_dir() {
 
 write_story_runtime_manifest() {
   local phase="$1"
+  local manifest_tmp
+  manifest_tmp="$(mktemp)"
   jq -n \
     --arg story_id "$STORY_ID" \
     --arg title "$STORY_TITLE" \
@@ -345,10 +372,19 @@ write_story_runtime_manifest() {
     --arg runtime_dir "$STORY_RUNTIME_DIR" \
     --arg log_dir "$STORY_LOG_DIR" \
     --arg phase "$phase" \
-    --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg started_at "$STORY_RUNTIME_STARTED_AT" \
+    --arg updated_at "$(timestamp_utc)" \
+    --arg last_progress_at "$STORY_RUNTIME_LAST_PROGRESS_AT" \
+    --arg current_task_id "$STORY_RUNTIME_CURRENT_TASK_ID" \
+    --arg current_check "$STORY_RUNTIME_CURRENT_CHECK" \
+    --arg last_completed_milestone "$STORY_RUNTIME_LAST_COMPLETED_MILESTONE" \
     --arg failed_task_id "$VERIFY_FAILED_TASK_ID" \
     --arg failure_bundle_path "$VERIFY_FAILED_BUNDLE_PATH" \
     --arg failure_summary_path "$VERIFY_FAILED_SUMMARY_PATH" \
+    --argjson attempt "${STORY_RUNTIME_ATTEMPT:-0}" \
+    --argjson current_check_index "${STORY_RUNTIME_CURRENT_CHECK_INDEX:-0}" \
+    --argjson current_check_total "${STORY_RUNTIME_CURRENT_CHECK_TOTAL:-0}" \
+    --argjson elapsed_ms "$(elapsed_ms_since_epoch "$STORY_RUNTIME_STARTED_EPOCH")" \
     --argjson execution_profile "${STORY_EXECUTION_PROFILE_JSON:-null}" \
     '{
       story_id: $story_id,
@@ -357,17 +393,82 @@ write_story_runtime_manifest() {
       runtime_dir: $runtime_dir,
       log_dir: $log_dir,
       phase: $phase,
+      started_at: (if $started_at == "" then null else $started_at end),
       updated_at: $updated_at,
+      last_progress_at: (if $last_progress_at == "" then null else $last_progress_at end),
+      elapsed_ms: $elapsed_ms,
+      attempt: $attempt,
+      current_task_id: (if $current_task_id == "" then null else $current_task_id end),
+      current_check: (if $current_check == "" then null else $current_check end),
+      current_check_index: (if $current_check_index <= 0 then null else $current_check_index end),
+      current_check_total: (if $current_check_total <= 0 then null else $current_check_total end),
+      last_completed_milestone: (if $last_completed_milestone == "" then null else $last_completed_milestone end),
       execution_profile: (if $execution_profile == null then null else $execution_profile end),
       failed_task_id: (if $failed_task_id == "" then null else $failed_task_id end),
       failure_bundle_path: (if $failure_bundle_path == "" then null else $failure_bundle_path end),
       failure_summary_path: (if $failure_summary_path == "" then null else $failure_summary_path end)
-    }' > "$STORY_MANIFEST_PATH"
+    }' > "$manifest_tmp"
+  mv "$manifest_tmp" "$STORY_MANIFEST_PATH"
+}
+
+touch_story_runtime_progress() {
+  local milestone="${1:-}"
+  STORY_RUNTIME_LAST_PROGRESS_AT="$(timestamp_utc)"
+  if [ -n "$milestone" ]; then
+    STORY_RUNTIME_LAST_COMPLETED_MILESTONE="$milestone"
+  fi
+  write_story_runtime_manifest "$STORY_RUNTIME_PHASE"
 }
 
 set_story_runtime_phase() {
   local phase="$1"
-  write_story_runtime_manifest "$phase"
+  local milestone="${2:-}"
+  STORY_RUNTIME_PHASE="$phase"
+  touch_story_runtime_progress "$milestone"
+}
+
+set_story_runtime_check_context() {
+  local task_id="${1:-}"
+  local check_index="${2:-0}"
+  local check_total="${3:-0}"
+  local check_command="${4:-}"
+  STORY_RUNTIME_CURRENT_TASK_ID="$task_id"
+  STORY_RUNTIME_CURRENT_CHECK_INDEX="$check_index"
+  STORY_RUNTIME_CURRENT_CHECK_TOTAL="$check_total"
+  STORY_RUNTIME_CURRENT_CHECK="$check_command"
+  touch_story_runtime_progress
+}
+
+clear_story_runtime_check_context() {
+  STORY_RUNTIME_CURRENT_TASK_ID=""
+  STORY_RUNTIME_CURRENT_CHECK_INDEX=0
+  STORY_RUNTIME_CURRENT_CHECK_TOTAL=0
+  STORY_RUNTIME_CURRENT_CHECK=""
+  write_story_runtime_manifest "$STORY_RUNTIME_PHASE"
+}
+
+start_heartbeat() {
+  local label="$1"
+  stop_heartbeat
+  (
+    local started_epoch
+    started_epoch="$(date +%s)"
+    while true; do
+      sleep "$HEARTBEAT_INTERVAL_SECONDS" || exit 0
+      local elapsed
+      elapsed=$(( $(date +%s) - started_epoch ))
+      log "Heartbeat: story=$STORY_ID phase=$STORY_RUNTIME_PHASE label=$label elapsed=${elapsed}s"
+    done
+  ) &
+  STORY_HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+  if [ -n "${STORY_HEARTBEAT_PID:-}" ] && kill -0 "$STORY_HEARTBEAT_PID" 2>/dev/null; then
+    kill "$STORY_HEARTBEAT_PID" 2>/dev/null || true
+    wait "$STORY_HEARTBEAT_PID" 2>/dev/null || true
+  fi
+  STORY_HEARTBEAT_PID=""
 }
 
 story_is_complete() {
@@ -893,6 +994,12 @@ run_story_cycle() {
   local prompt="$2"
   local log_file="$STORY_LOG_DIR/${cycle_kind}.log"
   local cycle_exit=0
+  local attempt=0
+
+  if [[ "$cycle_kind" =~ ^remediation-([0-9]+)$ ]]; then
+    attempt="${BASH_REMATCH[1]}"
+  fi
+  STORY_RUNTIME_ATTEMPT="$attempt"
 
   set_story_runtime_phase "running-${cycle_kind}"
 
@@ -905,10 +1012,12 @@ run_story_cycle() {
   fi
 
 log "Running story cycle via $(_get_harness): $cycle_kind"
+    start_heartbeat "story-cycle:$cycle_kind"
     set +e
     harness_exec_prompt_with_fallback "$prompt" "$WORKSPACE_ROOT" 2>&1 | tee "$log_file"
     cycle_exit=${PIPESTATUS[0]}
     set -e
+    stop_heartbeat
 
    if [ "$cycle_exit" -eq 124 ]; then
      log "WARN: Story cycle timed out; continuing with shell verification of any completed edits."
@@ -1020,6 +1129,8 @@ verify_story() {
   local task_id
   while IFS= read -r task_id; do
     [ -n "$task_id" ] || continue
+    STORY_RUNTIME_CURRENT_TASK_ID="$task_id"
+    touch_story_runtime_progress "Verifying task $task_id"
 
     if [ "$failure_seen" -eq 1 ] && ! deps_met "$task_id"; then
       set_task_field "$task_id" "status" '"blocked"'
@@ -1043,16 +1154,22 @@ verify_story() {
     : > "$fail_file"
     printf '[]' > "$bundle_file"
 
-    local check_num=0 check failed=0
+    local check_num=0 check failed=0 check_total
+    check_total="$(jq -r --arg id "$task_id" '.tasks[] | select(.id == $id) | (.checks // []) | length' "$STORY_FILE" 2>/dev/null || echo 0)"
     while IFS= read -r check; do
       [ -z "$check" ] && continue
       check_num=$((check_num + 1))
       local stdout_tmp stderr_tmp check_exit
       stdout_tmp="$(mktemp)"
       stderr_tmp="$(mktemp)"
+      set_story_runtime_check_context "$task_id" "$check_num" "$check_total" "$check"
+      log "Verifying task $task_id check $check_num/$check_total"
+      start_heartbeat "verify:$task_id:$check_num"
       if (cd "$WORKSPACE_ROOT" && eval "$check") >"$stdout_tmp" 2>"$stderr_tmp"; then
+        stop_heartbeat
         :
       else
+        stop_heartbeat
         failed=1
         check_exit=$?
         echo "${task_id}|${check_num}|$(check_fp "$check" "$task_id")" >> "$fp_file"
@@ -1090,6 +1207,8 @@ verify_story() {
     if [ "$failed" -eq 0 ]; then
       mark_task_done "$task_id"
       ensure_task_handoff_fallback "$task_id"
+      clear_story_runtime_check_context
+      touch_story_runtime_progress "Verified task $task_id"
       rm -f "$fp_file" "$fail_file" "$bundle_file"
       continue
     fi
@@ -1119,6 +1238,7 @@ verify_story() {
     break
   done < <(if [ -n "$TARGET_TASK_ID" ]; then printf '%s\n' "$TARGET_TASK_ID"; else jq -r '.tasks[].id' "$STORY_FILE"; fi)
 
+  clear_story_runtime_check_context
   [ -z "$VERIFY_FAILED_TASK_ID" ]
 }
 
@@ -1274,6 +1394,9 @@ export RALPH_AGENT_SELECTION_SOURCE
 _apply_agent_profile "$effective_agent"
 STORY_EXECUTION_PROFILE_JSON="$(get_execution_profile_json "$effective_agent")"
 ensure_story_runtime_dir
+STORY_RUNTIME_STARTED_AT="$(timestamp_utc)"
+STORY_RUNTIME_STARTED_EPOCH="$(date +%s)"
+STORY_RUNTIME_LAST_PROGRESS_AT="$STORY_RUNTIME_STARTED_AT"
 write_story_runtime_manifest "started"
 
 log ""
@@ -1314,6 +1437,7 @@ fi
 rm -f "$baseline_fp_file"
 
 if [ -n "$VERIFY_FAILED_TASK_ID" ]; then
+  stop_heartbeat
   write_story_runtime_manifest "failed"
   log "=== Story $STORY_ID: some tasks incomplete or blocked ==="
   exit 1
@@ -1322,7 +1446,7 @@ fi
 finalize_story_handoff
 mark_story_done
 sync_story_metadata_to_backlog
-write_story_runtime_manifest "completed"
+set_story_runtime_phase "completed" "Story verification complete"
 merge_story_branch
 
 log "=== Story $STORY_ID COMPLETE ==="
