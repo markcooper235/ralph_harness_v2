@@ -859,7 +859,7 @@ _codex_exec_prompt() {
       export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
       export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
       export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
-      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
     )
   else
     (
@@ -869,7 +869,7 @@ _codex_exec_prompt() {
       export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
       export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
       export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
-      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
     )
   fi
 }
@@ -987,7 +987,7 @@ _codex_exec_prompt() {
       XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
       XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
       XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
-      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
     )
   else
     (
@@ -997,7 +997,7 @@ _codex_exec_prompt() {
       XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
       XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
       XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
-      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@" -
+      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
     )
   fi
 }
