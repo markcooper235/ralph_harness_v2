@@ -1,5 +1,5 @@
 # Ralph Environment Variables
-# Copy this file to $HOME/.ralph-env or scripts/ralph/.ralph-env and fill in your values.
+# Copy this file to scripts/ralph/.ralph-env (preferred) or $HOME/.ralph-env and fill in your values.
 # This file is NOT tracked by git.
 #
 # Ralph runs harnesses inside an isolated home directory under

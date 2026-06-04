@@ -21,9 +21,9 @@ load_ralph_env() {
 }
 
 # Load environment variables from .ralph-env files
-# Priority: $HOME/.ralph-env (user-specific) then scripts/ralph/.ralph-env (project-specific fallback)
-if ! load_ralph_env "${HOME}/.ralph-env"; then
-    load_ralph_env "${SCRIPT_DIR}/.ralph-env" || true
+# Priority: scripts/ralph/.ralph-env (project-specific) then $HOME/.ralph-env (user-specific fallback)
+if ! load_ralph_env "${SCRIPT_DIR}/.ralph-env"; then
+    load_ralph_env "${HOME}/.ralph-env" || true
 fi
 
 normalize_claude_openrouter_env() {
