@@ -21,7 +21,7 @@ Commands:
   create <sprint-name> [--no-activate]  Create sprint structure and stories.json scaffold
   remove <sprint-name> [options]    Remove sprint (archive by default)
   use <sprint-name>                 Activate sprint (requires status=ready, previous=closed)
-  mark-ready <sprint-name> [--no-commit]  Mark sprint ready for activation (all stories must be ready)
+  mark-ready <sprint-name> [--no-commit]  Promote eligible planned stories and mark sprint ready
   restage <sprint-name>             Reset sprint + story statuses to planned for lifecycle reruns
   next [--activate]                 Show the next ready sprint, optionally activate it
   branch <sprint-name>              Ensure sprint branch exists (ralph/sprint/<sprint-name>)
@@ -483,13 +483,53 @@ cmd_mark_ready() {
     fail "Sprint '$sprint' has no stories. Add stories with: ./ralph-story.sh add --title '<title>'"
   fi
 
-  # Validate all non-done/abandoned stories are ready
+  # Promote eligible planned stories to ready. This is the explicit readiness
+  # boundary after prepare-all, which now only generates and validates artifacts.
+  local promoted_any=0
+  while IFS=$'\t' read -r sid status raw_path; do
+    [ -n "$sid" ] || continue
+    [ "$status" = "planned" ] || continue
+
+    local story_path_abs
+    if [[ "$raw_path" != /* ]]; then
+      story_path_abs="$WORKSPACE_ROOT/$raw_path"
+    else
+      story_path_abs="$raw_path"
+    fi
+
+    if [ ! -f "$story_path_abs" ]; then
+      continue
+    fi
+
+    if ! jq -e '.tasks | length > 0' "$story_path_abs" >/dev/null 2>&1; then
+      continue
+    fi
+
+    if ! RALPH_STORIES_FILE="$sf" "$SCRIPT_DIR/ralph-story.sh" health "$sid" >/dev/null 2>&1; then
+      continue
+    fi
+
+    local tmp
+    tmp="$(mktemp)"
+    jq --arg id "$sid" '
+      .stories = (
+        .stories
+        | map(if .id == $id then .status = "ready" else . end)
+      )
+    ' "$sf" > "$tmp"
+    mv "$tmp" "$sf"
+    promoted_any=1
+  done < <(jq -r '.stories[] | select((.status != "done") and (.status != "abandoned")) | [.id, (.status // "planned"), (.story_path // "")] | @tsv' "$sf")
+
+  [ "$promoted_any" -eq 1 ] && echo "Promoted eligible planned stories to ready."
+
+  # Validate all non-done/abandoned stories are now ready
   local not_ready
   not_ready="$(jq -r '.stories[] | select((.status != "done") and (.status != "abandoned") and (.status != "ready")) | "\(.id)\t\(.status // "planned")"' "$sf")"
   if [ -n "$not_ready" ]; then
     echo "Sprint has stories not yet ready:" >&2
     printf '%s\n' "$not_ready" >&2
-    fail "All active stories must be 'ready' before marking the sprint ready. Run: ./ralph-story.sh prepare-all"
+    fail "All active stories must be eligible and healthy before marking the sprint ready. Run: ./ralph-story.sh prepare-all and fix any remaining health issues."
   fi
 
   set_sprint_status "$sprint" "ready"
