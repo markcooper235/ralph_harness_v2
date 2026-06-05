@@ -274,6 +274,13 @@ latest_prep_summary_for_sprint() {
   find "$prep_root" -type f -name 'prepare-run.json' -path "*-${sprint}-*/prepare-run.json" 2>/dev/null | sort | tail -n1
 }
 
+latest_prep_summary_any() {
+  local prep_root
+  prep_root="$(prep_runtime_root)"
+  [ -d "$prep_root" ] || return 1
+  find "$prep_root" -type f -name 'prepare-run.json' 2>/dev/null | sort | tail -n1
+}
+
 ensure_prep_run_dir() {
   local sprint="$1"
   local mode="${2:-prep}"
@@ -326,6 +333,71 @@ prep_stage_status_path() {
   printf '%s/stages/%s-%s.json\n' "$RALPH_PREP_RUN_DIR" "$story_id" "$stage"
 }
 
+prep_collect_stage_rollup() {
+  local summary_path="${1:-}"
+  local stage_dir
+  stage_dir="${2:-${RALPH_PREP_RUN_DIR:-}/stages}"
+
+  if [ -z "$stage_dir" ] || [ ! -d "$stage_dir" ]; then
+    printf '%s\n' '{"stories":{},"metrics":{"stage_count":0,"passed_stages":0,"skipped_stages":0,"failed_stages":0,"running_stages":0,"total_duration_ms":0},"active_story_id":null,"active_stage":null,"latest_execution_profile":null}'
+    return 0
+  fi
+
+  find "$stage_dir" -type f -name '*.json' -print \
+    | sort \
+    | while IFS= read -r stage_file; do
+        jq -c '.' "$stage_file"
+      done \
+    | jq -sc '
+        . as $entries
+        | {
+            stories: (
+              reduce $entries[] as $entry ({};
+                .[$entry.storyId] = ((.[$entry.storyId] // {}) + {
+                  ($entry.stage): {
+                    status: $entry.status,
+                    detail: $entry.detail,
+                    artifacts: $entry.artifacts,
+                    duration_ms: ($entry.duration_ms // 0),
+                    updated_at: $entry.updated_at,
+                    execution_profile: ($entry.execution_profile // null)
+                  }
+                })
+              )
+            ),
+            metrics: {
+              stage_count: ($entries | length),
+              passed_stages: ($entries | map(select(.status == "passed")) | length),
+              skipped_stages: ($entries | map(select(.status == "skipped")) | length),
+              failed_stages: ($entries | map(select(.status == "failed")) | length),
+              running_stages: ($entries | map(select(.status == "running")) | length),
+              total_duration_ms: ($entries | map(.duration_ms // 0) | add // 0)
+            },
+            active_story_id: (
+              $entries
+              | map(select(.status == "running"))
+              | sort_by(.updated_at, .storyId, .stage)
+              | last
+              | .storyId // null
+            ),
+            active_stage: (
+              $entries
+              | map(select(.status == "running"))
+              | sort_by(.updated_at, .storyId, .stage)
+              | last
+              | .stage // null
+            ),
+            latest_execution_profile: (
+              $entries
+              | map(select(.execution_profile != null))
+              | sort_by(.updated_at, .storyId, .stage)
+              | last
+              | .execution_profile // null
+            )
+          }
+      '
+}
+
 prep_record_stage() {
   local story_id="$1"
   local stage="$2"
@@ -365,82 +437,65 @@ prep_touch_summary() {
   local active_story_id="${2:-}"
   local active_stage="${3:-}"
   local execution_profile_json="${4:-null}"
-  local summary_path tmp
+  local summary_path tmp rollup_json effective_phase
   summary_path="$(prep_summary_path 2>/dev/null || true)"
   [ -n "$summary_path" ] && [ -f "$summary_path" ] || return 0
+  rollup_json="$(prep_collect_stage_rollup "$summary_path")"
+  effective_phase="$phase"
+  if [ -n "$active_stage" ] && [ "$active_stage" != "null" ]; then
+    case "$active_stage" in
+      specify|generate)
+        effective_phase="${active_stage}-all"
+        ;;
+    esac
+  fi
   tmp="$(mktemp)"
   jq \
     --arg updated_at "$(timestamp_utc)" \
-    --arg phase "$phase" \
+    --arg phase "$effective_phase" \
     --arg active_story_id "$active_story_id" \
     --arg active_stage "$active_stage" \
     --argjson execution_profile "$execution_profile_json" \
+    --argjson rollup "$rollup_json" \
     '
       .updated_at = $updated_at
       | .last_progress_at = $updated_at
       | .phase = (if $phase == "" then (.phase // "running") else $phase end)
-      | .active_story_id = (if $active_story_id == "" then null else $active_story_id end)
-      | .active_stage = (if $active_stage == "" then null else $active_stage end)
-      | .execution_profile = (if $execution_profile == null then (.execution_profile // null) else $execution_profile end)
+      | .active_story_id = (
+          if $rollup.active_story_id != null then $rollup.active_story_id
+          elif $active_story_id == "" then null
+          else $active_story_id
+          end
+        )
+      | .active_stage = (
+          if $rollup.active_stage != null then $rollup.active_stage
+          elif $active_stage == "" then null
+          else $active_stage
+          end
+        )
+      | .execution_profile = (
+          if $execution_profile != null then $execution_profile
+          elif $rollup.latest_execution_profile != null then $rollup.latest_execution_profile
+          else (.execution_profile // null)
+          end
+        )
+      | .stories = ($rollup.stories // (.stories // {}))
+      | .metrics = ($rollup.metrics // (.metrics // null))
     ' "$summary_path" > "$tmp"
   mv "$tmp" "$summary_path"
 }
 
 prep_finalize_summary() {
   local final_status="$1"
-  local summary_path tmp stories_json metrics_json stage_dir
+  local summary_path tmp rollup_json
   summary_path="$(prep_summary_path 2>/dev/null || true)"
   [ -n "$summary_path" ] && [ -f "$summary_path" ] || return 0
-  stage_dir="$RALPH_PREP_RUN_DIR/stages"
-  if [ -d "$stage_dir" ]; then
-    stories_json="$(
-      find "$stage_dir" -type f -name '*.json' -print \
-        | sort \
-        | while IFS= read -r stage_file; do
-            jq -c '.' "$stage_file"
-          done \
-        | jq -sc '
-            reduce .[] as $entry ({};
-              .[$entry.storyId] = ((.[$entry.storyId] // {}) + {
-                ($entry.stage): {
-                  status: $entry.status,
-                  detail: $entry.detail,
-                  artifacts: $entry.artifacts,
-                  duration_ms: ($entry.duration_ms // 0),
-                  updated_at: $entry.updated_at,
-                  execution_profile: ($entry.execution_profile // null)
-                }
-              })
-            )
-          '
-    )"
-    metrics_json="$(
-      find "$stage_dir" -type f -name '*.json' -print \
-        | sort \
-        | while IFS= read -r stage_file; do
-            jq -c '.' "$stage_file"
-          done \
-        | jq -sc '
-            {
-              stage_count: length,
-              passed_stages: map(select(.status == "passed")) | length,
-              skipped_stages: map(select(.status == "skipped")) | length,
-              failed_stages: map(select(.status == "failed")) | length,
-              running_stages: map(select(.status == "running")) | length,
-              total_duration_ms: (map(.duration_ms // 0) | add // 0)
-            }
-          '
-    )"
-  else
-    stories_json='{}'
-    metrics_json='{"stage_count":0,"passed_stages":0,"skipped_stages":0,"failed_stages":0,"running_stages":0,"total_duration_ms":0}'
-  fi
+  rollup_json="$(prep_collect_stage_rollup "$summary_path")"
   tmp="$(mktemp)"
   jq \
     --arg status "$final_status" \
     --arg finished_at "$(timestamp_utc)" \
-    --argjson stories "$stories_json" \
-    --argjson metrics "$metrics_json" \
+    --argjson rollup "$rollup_json" \
     '.status = $status
       | .phase = $status
       | .finished_at = $finished_at
@@ -448,10 +503,38 @@ prep_finalize_summary() {
       | .last_progress_at = $finished_at
       | .active_story_id = null
       | .active_stage = null
-      | .stories = $stories
-      | .metrics = $metrics' \
+      | .execution_profile = (
+          if $rollup.latest_execution_profile != null then $rollup.latest_execution_profile
+          else (.execution_profile // null)
+          end
+        )
+      | .stories = ($rollup.stories // (.stories // {}))
+      | .metrics = ($rollup.metrics // (.metrics // null))' \
     "$summary_path" > "$tmp"
   mv "$tmp" "$summary_path"
+}
+
+prep_finalize_if_mode() {
+  local expected_mode="$1"
+  local final_status="$2"
+  local summary_path mode
+  summary_path="$(prep_summary_path 2>/dev/null || true)"
+  [ -n "$summary_path" ] && [ -f "$summary_path" ] || return 0
+  mode="$(jq -r '.mode // empty' "$summary_path" 2>/dev/null || true)"
+  [ "$mode" = "$expected_mode" ] || return 0
+  prep_finalize_summary "$final_status"
+}
+
+prep_fail_stage_and_exit() {
+  local mode="$1"
+  local story_id="$2"
+  local stage="$3"
+  local detail="$4"
+  local artifacts_json="${5:-[]}"
+  local execution_profile_json="${6:-null}"
+  prep_record_stage "$story_id" "$stage" "failed" "$detail" "$artifacts_json" 0 "$execution_profile_json"
+  prep_finalize_if_mode "$mode" "failed"
+  fail "$detail"
 }
 
 require_story_sprint() {
@@ -2493,6 +2576,7 @@ cmd_generate() {
   if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ] && [ -n "$existing_generate_fingerprint" ] && [ "$existing_generate_fingerprint" = "$prep_fingerprint" ]; then
     echo "story.json up to date for $story_id (prep fingerprint match)"
     prep_record_stage "$story_id" "generate" "skipped" "story.json up to date (prep fingerprint match)" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0
+    prep_finalize_if_mode "generate" "passed"
     return 0
   fi
   if [ -f "$story_path_abs" ] && [ "$force" -eq 0 ]; then
@@ -2608,13 +2692,14 @@ GENPROMPT
     return 0
   fi
 
-  local stage_started_at stage_duration_ms
+  local stage_started_at stage_duration_ms prep_execution_profile_json="null"
   stage_started_at="$(epoch_seconds)"
   echo "Generating story.json for $story_id..."
-  prep_record_stage "$story_id" "generate" "running" "Generating story container" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0
   mkdir -p "$(dirname "$story_path_abs")"
   local deterministic_recovery=0 prd_bridge_recovery=0 fallback_reason="" temp_bridge_prd=""
   story_harness_profile_push "$story_meta"
+  prep_execution_profile_json="${STORY_EXECUTION_PROFILE_JSON:-null}"
+  prep_record_stage "$story_id" "generate" "running" "Generating story container" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" 0 "$prep_execution_profile_json"
   if [ "$placeholder_recovery" -eq 1 ] && [ -n "$existing_prd_ref" ] && [ -f "$existing_prd_abs" ]; then
     if parse_legacy_markdown_story_json \
       "$existing_prd_abs" \
@@ -2667,7 +2752,7 @@ GENPROMPT
     if ! harness_exec_prompt "$prompt" "$WORKSPACE_ROOT"; then
       prep_heartbeat_stop
       story_harness_profile_pop
-      fail "story.json generation failed for $story_id"
+      prep_fail_stage_and_exit "generate" "$story_id" "generate" "story.json generation failed for $story_id" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" "$prep_execution_profile_json"
     fi
     prep_heartbeat_stop
   fi
@@ -2720,7 +2805,8 @@ GENPROMPT
   task_count="$(jq '.tasks | length' "$story_path_abs")"
   stage_duration_ms="$(( ($(epoch_seconds) - stage_started_at) * 1000 ))"
   write_story_generate_provenance "$prep_context_path" "$prep_fingerprint" "story.json" "$raw_path"
-  prep_record_stage "$story_id" "generate" "passed" "Generated $task_count tasks" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" "$stage_duration_ms"
+  prep_record_stage "$story_id" "generate" "passed" "Generated $task_count tasks" "$(jq -nc --arg path "$raw_path" --arg prep "$prep_context_path" '[$path, $prep]')" "$stage_duration_ms" "$prep_execution_profile_json"
+  prep_finalize_if_mode "generate" "passed"
   echo "Generated: $raw_path ($task_count tasks)"
   echo "Run './ralph-story.sh health $story_id' to validate."
 }
@@ -2987,6 +3073,7 @@ $dep_entry"
         fi
       fi
     fi
+    prep_finalize_if_mode "specify" "passed"
     return 0
   fi
 
@@ -3101,13 +3188,14 @@ SKPROMPT
 )"
 
   echo "Running SpecKit analysis for $story_id (phases: specify → plan → tasks)..."
-  prep_record_stage "$story_id" "specify" "running" "Running SpecKit workflow" "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" 0
   story_harness_profile_push "$story_meta"
+  local prep_execution_profile_json="${STORY_EXECUTION_PROFILE_JSON:-null}"
+  prep_record_stage "$story_id" "specify" "running" "Running SpecKit workflow" "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" 0 "$prep_execution_profile_json"
   prep_heartbeat_start "specify:$story_id"
   if ! harness_exec_prompt "$speckit_prompt" "$WORKSPACE_ROOT"; then
     prep_heartbeat_stop
     story_harness_profile_pop
-    fail "SpecKit analysis failed for $story_id"
+    prep_fail_stage_and_exit "specify" "$story_id" "specify" "SpecKit analysis failed for $story_id" "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" "$prep_execution_profile_json"
   fi
   prep_heartbeat_stop
   story_harness_profile_pop
@@ -3119,11 +3207,12 @@ SKPROMPT
   done
 
   if [ "$missing" -gt 0 ]; then
-    fail "SpecKit did not produce all required artifacts ($missing missing). Check the Codex session log and re-run with --force."
+    prep_fail_stage_and_exit "specify" "$story_id" "specify" "SpecKit did not produce all required artifacts ($missing missing). Check the Codex session log and re-run with --force." "$(jq -nc --arg dir "$specify_dir" --arg prep "$prep_context_path" '[$dir, $prep]')" "$prep_execution_profile_json"
   fi
 
   stage_duration_ms="$(( ($(epoch_seconds) - stage_started_at) * 1000 ))"
-  prep_record_stage "$story_id" "specify" "passed" "SpecKit artifacts created" "$(jq -nc --arg spec "$specify_dir/spec.md" --arg plan "$specify_dir/plan.md" --arg tasks "$specify_dir/tasks.md" --arg prep "$prep_context_path" '[$spec, $plan, $tasks, $prep]')" "$stage_duration_ms"
+  prep_record_stage "$story_id" "specify" "passed" "SpecKit artifacts created" "$(jq -nc --arg spec "$specify_dir/spec.md" --arg plan "$specify_dir/plan.md" --arg tasks "$specify_dir/tasks.md" --arg prep "$prep_context_path" '[$spec, $plan, $tasks, $prep]')" "$stage_duration_ms" "$prep_execution_profile_json"
+  prep_finalize_if_mode "specify" "passed"
   echo "SpecKit artifacts written: $specify_dir/{spec.md,plan.md,tasks.md}"
 
   if [ "$no_generate" -eq 0 ]; then

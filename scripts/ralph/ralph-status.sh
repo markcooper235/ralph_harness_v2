@@ -96,6 +96,12 @@ latest_prep_summary_for_sprint() {
   find "$prep_root" -type f -name 'prepare-run.json' -path "*-${sprint}-*/prepare-run.json" 2>/dev/null | sort | tail -n1
 }
 
+latest_prep_summary_any() {
+  local prep_root="$SCRIPT_DIR/runtime/prep-runs"
+  [ -d "$prep_root" ] || return 1
+  find "$prep_root" -type f -name 'prepare-run.json' 2>/dev/null | sort | tail -n1
+}
+
 latest_sprint_run_manifest_for_sprint() {
   local sprint="$1"
   local runs_root="$SCRIPT_DIR/runtime/sprint-runs"
@@ -427,6 +433,15 @@ main() {
     echo "Active sprint: (none)"
     render_loop_line
     echo "Worktree: $(worktree_status)"
+    local latest_prep
+    latest_prep="$(latest_prep_summary_any || true)"
+    if [ -n "$latest_prep" ] && [ -f "$latest_prep" ]; then
+      local latest_prep_sprint
+      latest_prep_sprint="$(jq -r '.sprint // empty' "$latest_prep" 2>/dev/null || true)"
+      if [ -n "$latest_prep_sprint" ]; then
+        prep_status_line "$latest_prep_sprint" "$prep_details" "$prep_story_limit"
+      fi
+    fi
     echo "Next action: run ./scripts/ralph/ralph-sprint.sh use <sprint-name>."
     exit 0
   fi
