@@ -1061,23 +1061,23 @@ _codex_exec_prompt() {
   if _supports_codex_yolo; then
     (
       _ensure_ralph_runtime_home
-      HOME="$RALPH_RUNTIME_HOME_DIR" \
-      CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex" \
-      XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
-      XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
-      XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
-      XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
+      export HOME="$RALPH_RUNTIME_HOME_DIR"
+      export CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex"
+      export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
+      export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
+      export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
+      export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
       printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
     )
   else
     (
       _ensure_ralph_runtime_home
-      HOME="$RALPH_RUNTIME_HOME_DIR" \
-      CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex" \
-      XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
-      XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
-      XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
-      XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
+      export HOME="$RALPH_RUNTIME_HOME_DIR"
+      export CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex"
+      export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
+      export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
+      export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
+      export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
       printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
     )
   fi
