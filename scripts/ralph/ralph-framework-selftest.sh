@@ -635,7 +635,7 @@ validate_complexity_and_tier_matrix() {
     printf '%s' "$profile_json" | jq -e '
       .execution_tier == "full-composite"
       and .model == "gpt-5.4"
-      and .model_source == "agent-profile"
+      and .model_source == "complexity-tier-high"
       and .composite_profile == "chain_review_v1"
     ' >/dev/null || fail "full-composite tier routing failed for reviewer high-complexity profile"
 
@@ -652,7 +652,7 @@ validate_complexity_and_tier_matrix() {
     printf '%s' "$profile_json" | jq -e '
       .execution_tier == "full-composite"
       and .model == "gpt-5.5"
-      and .model_source == "agent-profile"
+      and .model_source == "complexity-tier-extreme"
       and .composite_profile == "fanout_research_v1"
     ' >/dev/null || fail "full-composite tier routing failed for researcher extreme-complexity profile"
   )

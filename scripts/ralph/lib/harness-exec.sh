@@ -940,7 +940,7 @@ _apply_agent_profile() {
 
   # Only override model if not explicitly set via command line/environment
   if [ -z "${RALPH_MODEL:-}" ]; then
-    local suggested_model="" preferred_model lite_model dynamic_model complexity_tier allow_lite=0
+    local suggested_model="" preferred_model lite_model dynamic_model tier_model complexity_tier allow_lite=0
     complexity_tier="$(_story_complexity_tier_from_score "${RALPH_STORY_COMPLEXITY_SCORE:-0}")"
     case "$complexity_tier" in
       low|medium) allow_lite=1 ;;
@@ -967,9 +967,34 @@ _apply_agent_profile() {
       dynamic_model=""
     fi
 
+    if [ -n "$composite_profile" ]; then
+      case "$complexity_tier" in
+        high)
+          tier_model="$(_resolve_model_for_harness "gpt-5.4" "$effective_harness")"
+          if ! is_model_supported_by_harness "$effective_harness" "$tier_model"; then
+            tier_model=""
+          fi
+          ;;
+        extreme)
+          tier_model="$(_resolve_model_for_harness "gpt-5.5" "$effective_harness")"
+          if ! is_model_supported_by_harness "$effective_harness" "$tier_model"; then
+            tier_model=""
+          fi
+          ;;
+        *)
+          tier_model=""
+          ;;
+      esac
+    else
+      tier_model=""
+    fi
+
     if [ "$allow_lite" -eq 1 ] && [ -n "$lite_model" ]; then
       suggested_model="$lite_model"
       RALPH_MODEL_SELECTION_SOURCE="agent-profile-lite"
+    elif [ -n "$tier_model" ]; then
+      suggested_model="$tier_model"
+      RALPH_MODEL_SELECTION_SOURCE="complexity-tier-$complexity_tier"
     elif [ -n "$preferred_model" ]; then
       suggested_model="$preferred_model"
       RALPH_MODEL_SELECTION_SOURCE="agent-profile"
