@@ -64,6 +64,10 @@ DRY_RUN=0
 QUIET=0
 RUNTIME_RETENTION=3
 HEARTBEAT_INTERVAL_SECONDS="${RALPH_HEARTBEAT_INTERVAL_SECONDS:-45}"
+HARNESS_WAS_EXPLICIT=0
+if [ "${RALPH_HARNESS+x}" = "x" ] && [ -n "${RALPH_HARNESS:-}" ]; then
+  HARNESS_WAS_EXPLICIT=1
+fi
 STORY_RUNTIME_STARTED_AT=""
 STORY_RUNTIME_STARTED_EPOCH=0
 STORY_RUNTIME_LAST_PROGRESS_AT=""
@@ -121,7 +125,7 @@ while [[ $# -gt 0 ]]; do
     --max-retries) MAX_RETRIES="${2:-1}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
     --quiet)       QUIET=1; shift ;;
-    --harness)     RALPH_HARNESS="${2:-}"; shift 2 ;;
+    --harness)     RALPH_HARNESS="${2:-}"; HARNESS_WAS_EXPLICIT=1; shift 2 ;;
     --model)       RALPH_MODEL="${2:-}"; shift 2 ;;
     --agent)       RALPH_AGENT="${2:-}"; shift 2 ;;
     --skip-fallow) shift ;; # deprecated compatibility flag
@@ -132,6 +136,12 @@ done
 
 # Export for subprocesses (especially harness-exec.sh)
 export RALPH_HARNESS RALPH_MODEL RALPH_AGENT RALPH_CODEX_PROFILE
+if [ "$HARNESS_WAS_EXPLICIT" -eq 1 ]; then
+  RALPH_HARNESS_SELECTION_SOURCE="explicit"
+else
+  RALPH_HARNESS_SELECTION_SOURCE="default"
+fi
+export RALPH_HARNESS_SELECTION_SOURCE
 
 # Function to wrap harness execution with automatic fallback to native providers on failure
 harness_exec_prompt_with_fallback() {
@@ -420,6 +430,25 @@ touch_story_runtime_progress() {
   write_story_runtime_manifest "$STORY_RUNTIME_PHASE"
 }
 
+touch_sprint_runtime_progress() {
+  local sprint_manifest="${RALPH_SPRINT_RUN_DIR:-}/sprint-run.json"
+  [ -f "$sprint_manifest" ] || return 0
+  local tmp
+  tmp="$(mktemp)"
+  jq \
+    --arg updated_at "$(timestamp_utc)" \
+    --arg last_progress_at "$(timestamp_utc)" \
+    --arg active_story_id "$STORY_ID" \
+    --arg active_story_title "$STORY_TITLE" \
+    '
+      .updated_at = $updated_at
+      | .last_progress_at = $last_progress_at
+      | .active_story_id = (if $active_story_id == "" then .active_story_id else $active_story_id end)
+      | .active_story_title = (if $active_story_title == "" then .active_story_title else $active_story_title end)
+    ' "$sprint_manifest" > "$tmp"
+  mv "$tmp" "$sprint_manifest"
+}
+
 set_story_runtime_phase() {
   local phase="$1"
   local milestone="${2:-}"
@@ -455,6 +484,8 @@ start_heartbeat() {
     started_epoch="$(date +%s)"
     while true; do
       sleep "$HEARTBEAT_INTERVAL_SECONDS" || exit 0
+      touch_story_runtime_progress
+      touch_sprint_runtime_progress
       local elapsed
       elapsed=$(( $(date +%s) - started_epoch ))
       log "Heartbeat: story=$STORY_ID phase=$STORY_RUNTIME_PHASE label=$label elapsed=${elapsed}s"
@@ -915,7 +946,8 @@ build_execution_bundle() {
 
 build_composite_prompt_addition() {
   local composite_profile="${RALPH_COMPOSITE_PROFILE:-}"
-  [ "${RALPH_ENABLE_COMPOSITES:-0}" != "1" ] && return 0
+  [ "${RALPH_DISABLE_COMPOSITES:-0}" = "1" ] && return 0
+  [ "${RALPH_ENABLE_COMPOSITES:-1}" != "1" ] && return 0
   [ -n "$composite_profile" ] || return 0
 
   local harness
@@ -929,12 +961,20 @@ build_composite_prompt_addition() {
 
 Composite strategy:
 - profile: $composite_profile
+- execution tier: ${RALPH_EXECUTION_TIER:-full-composite}
 - shape: ${RALPH_COMPOSITE_SHAPE:-unknown}
 - required extensions: ${required_extensions:-none}
 - subagent roles: ${subagent_roles:-none}
 - steps: ${steps:-none}
 
-$(if [ "$harness" = "piagent" ]; then
+$(if [ "${RALPH_EXECUTION_TIER:-full-composite}" = "composite-lite" ]; then
+  cat <<'HINT'
+Use the composite profile as a concise execution strategy.
+- Keep the handoff short.
+- Use the minimum fanout and the minimum verification steps that still preserve quality.
+- Avoid broad discovery unless a failing check or missing fact requires it.
+HINT
+elif [ "$harness" = "piagent" ]; then
   cat <<'HINT'
 Harness: piagent
 - The `pi-subagents` package is installed.
@@ -953,6 +993,9 @@ PROMPT
 
 build_story_prompt() {
   local effective_agent="${1:-default}"
+  local story_dir story_capsule_path
+  story_dir="$(dirname "$STORY_FILE")"
+  story_capsule_path="$(printf '%s/.prep/story-capsule.json' "$story_dir")"
 
   build_execution_bundle
   
@@ -969,11 +1012,14 @@ ${composite_prompt_addition}
 
 Read these files in order:
 1. $(execution_baseline_path)
-2. $EXEC_BUNDLE_SUMMARY_PATH
-3. $STORY_FILE
+2. $story_capsule_path
+3. $EXEC_BUNDLE_SUMMARY_PATH
+4. $STORY_FILE
 
 Primary durable story file:
 $STORY_FILE
+
+Use the story capsule as the compact summary and the execution bundle summary for task details.
 
 Rules:
 - Treat the execution bundle as authoritative for task scope, commands, checks, invariants, and dependency handoff.
@@ -1331,10 +1377,12 @@ build_remediation_prompt() {
   local checks_json="$2"
   local failure_summary_path="$3"
   local failure_bundle_path="$4"
-  local task_scope checks_text failure_summary
+  local task_scope checks_text failure_summary story_dir story_capsule_path
   task_scope="$(filtered_task_scope_json "$task_id" | jq -r 'join(", ")')"
   checks_text="$(jq -r '.[]' <<< "$checks_json" 2>/dev/null || printf '%s\n' "$checks_json")"
   failure_summary="$(cat "$failure_summary_path" 2>/dev/null || echo "Failure summary unavailable.")"
+  story_dir="$(dirname "$STORY_FILE")"
+  story_capsule_path="$(printf '%s/.prep/story-capsule.json' "$story_dir")"
   local composite_prompt_addition=""
   composite_prompt_addition="$(build_composite_prompt_addition)"
   cat <<PROMPT
@@ -1342,8 +1390,9 @@ Repair the remaining failing story checks.
 
 Read these files in order:
 1. $(execution_baseline_path)
-2. $EXEC_BUNDLE_SUMMARY_PATH
-3. $STORY_FILE
+2. $story_capsule_path
+3. $EXEC_BUNDLE_SUMMARY_PATH
+4. $STORY_FILE
 
 Focus only on task $task_id.
 Writable scope: ${task_scope:-none}
@@ -1354,6 +1403,8 @@ Failure bundle: $failure_bundle_path
 
 Compact error context:
 $failure_summary
+
+Use the story capsule as the compact summary and the failure bundle for the exact failing checks.
 
 ${composite_prompt_addition}
 
@@ -1372,7 +1423,8 @@ acquire_lock
 
 STORY_ID="$(jq -r '.storyId' "$STORY_FILE")"
 STORY_TITLE="$(jq -r '.title' "$STORY_FILE")"
-if [ -n "${RALPH_AGENT:-}" ]; then
+explicit_story_agent="$(jq -r '.agent // empty' "$STORY_FILE" 2>/dev/null || true)"
+if [ -n "${RALPH_AGENT:-}" ] || [ -n "$explicit_story_agent" ]; then
   RALPH_AGENT_SELECTION_SOURCE="explicit"
 else
   RALPH_AGENT_SELECTION_SOURCE=""

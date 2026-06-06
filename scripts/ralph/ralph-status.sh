@@ -135,6 +135,8 @@ print_execution_profile_line() {
         + (if ($p.model // "") == "" then "" else " model=" + $p.model end)
         + (if ($p.agent // "") == "" then "" else " agent=" + $p.agent end)
         + (if ($p.composite_profile // "") == "" then "" else " composite=" + $p.composite_profile end)
+        + (if ($p.execution_tier // "") == "" then "" else " tier=" + $p.execution_tier end)
+        + (if ($p.composites_enabled // false) then " composites=on" else " composites=off" end)
         + (if ($p.codex_profile // "") == "" then "" else " codex-profile=" + $p.codex_profile end)
         + (if ($p.harness_source // "") == "" then "" else " harness-source=" + $p.harness_source end)
         + (if ($p.model_source // "") == "" then "" else " model-source=" + $p.model_source end)
@@ -165,6 +167,7 @@ print_sprint_runtime_line() {
     "Sprint runtime: phase=" + (.phase // "unknown")
     + (if (.active_story_id // "") == "" then "" else " active-story=" + .active_story_id end)
     + (if (.updated_at // "") == "" then "" else " updated=" + .updated_at end)
+    + (if (.last_progress_at // "") == "" then "" else " progress=" + .last_progress_at end)
   ' "$sprint_manifest" 2>/dev/null || true
 }
 
@@ -179,13 +182,14 @@ prep_status_line() {
     return 0
   fi
 
-  local mode status phase active_story_id active_stage finished_at story_count failed_count skipped_count passed_count total_duration_ms
+  local mode status phase active_story_id active_stage updated_at progress_at story_count failed_count skipped_count passed_count total_duration_ms
   mode="$(jq -r '.mode // "prep"' "$summary_path" 2>/dev/null || echo "prep")"
   status="$(jq -r '.status // "running"' "$summary_path" 2>/dev/null || echo "running")"
   phase="$(jq -r '.phase // empty' "$summary_path" 2>/dev/null || true)"
   active_story_id="$(jq -r '.active_story_id // empty' "$summary_path" 2>/dev/null || true)"
   active_stage="$(jq -r '.active_stage // empty' "$summary_path" 2>/dev/null || true)"
-  finished_at="$(jq -r '.finished_at // .started_at // ""' "$summary_path" 2>/dev/null || true)"
+  updated_at="$(jq -r '.updated_at // .started_at // ""' "$summary_path" 2>/dev/null || true)"
+  progress_at="$(jq -r '.last_progress_at // .updated_at // ""' "$summary_path" 2>/dev/null || true)"
   story_count="$(jq -r '(.stories // {}) | length' "$summary_path" 2>/dev/null || echo 0)"
   failed_count="$(jq -r '.metrics.failed_stages // ([.stories[]?[]? | select(.status == "failed")] | length)' "$summary_path" 2>/dev/null || echo 0)"
   skipped_count="$(jq -r '.metrics.skipped_stages // ([.stories[]?[]? | select(.status == "skipped")] | length)' "$summary_path" 2>/dev/null || echo 0)"
@@ -196,7 +200,10 @@ prep_status_line() {
   if [ -n "$active_story_id" ] || [ -n "$active_stage" ]; then
     printf 'Prep active: story=%s stage=%s\n' "${active_story_id:-none}" "${active_stage:-none}"
   fi
-  [ -n "$finished_at" ] && printf 'Prep updated: %s\n' "$finished_at"
+  [ -n "$updated_at" ] && printf 'Prep updated: %s\n' "$updated_at"
+  if [ -n "$progress_at" ] && [ "$progress_at" != "$updated_at" ]; then
+    printf 'Prep progress: %s\n' "$progress_at"
+  fi
   printf 'Prep journal: %s\n' "$summary_path"
   prep_story_stage_lines "$summary_path" "$prep_story_limit"
   if [ "$prep_details" -eq 1 ]; then
@@ -246,6 +253,8 @@ prep_story_stage_detail_lines() {
           + (if (.value.execution_profile.model // "") == "" then "" else " model=" + .value.execution_profile.model end)
           + (if (.value.execution_profile.agent // "") == "" then "" else " agent=" + .value.execution_profile.agent end)
           + (if (.value.execution_profile.composite_profile // "") == "" then "" else " composite=" + .value.execution_profile.composite_profile end)
+          + (if (.value.execution_profile.execution_tier // "") == "" then "" else " tier=" + .value.execution_profile.execution_tier end)
+          + (if (.value.execution_profile.composites_enabled // false) then " composites=on" else " composites=off" end)
           + "]"
         end)
       + " (duration-ms=" + ((.value.duration_ms // 0) | tostring) + ", updated=" + (.value.updated_at // "unknown") + ")"

@@ -6,16 +6,17 @@
 # Also provides automatic agent selection based on story content.
 
 # Default harness if none specified
-RALPH_HARNESS_DEFAULT="${RALPH_HARNISH_DEFAULT:-codex}"
+RALPH_HARNESS_DEFAULT="${RALPH_HARNESS_DEFAULT:-${RALPH_HARNISH_DEFAULT:-codex}}"
 
 # Model and agent selection (if supported by harness)
 # Paths to configuration files (relative to this library directory)
 HARNESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RALPH_RUNTIME_BASE_DIR="$(cd "$HARNESS_LIB_DIR/.." && pwd)"
 AGENT_PROFILES_FILE="$HARNESS_LIB_DIR/agent-profiles.json"
 COMPOSITE_PROFILES_FILE="$HARNESS_LIB_DIR/composite-profiles.json"
 LABEL_MAPPING_FILE="$HARNESS_LIB_DIR/label-to-agent-mapping.json"
 HARNESS_CAPABILITIES_FILE="$HARNESS_LIB_DIR/harness-capabilities.json"
-RALPH_RUNTIME_HOME_DIR="${RALPH_HOME_DIR:-$HARNESS_LIB_DIR/../runtime/home}"
+RALPH_RUNTIME_HOME_DIR="${RALPH_HOME_DIR:-$RALPH_RUNTIME_BASE_DIR/runtime/home}"
 RALPH_REPO_ROOT="$(cd "$HARNESS_LIB_DIR/../../.." && pwd)"
 RALPH_RUNTIME_HOME_CONFIG_FILE="$RALPH_RUNTIME_HOME_DIR/.codex/config.toml"
 RALPH_RUNTIME_PI_AGENT_DIR="$RALPH_RUNTIME_HOME_DIR/.pi/agent"
@@ -37,7 +38,9 @@ _get_harness() {
 }
 
 _get_harness_selection_source() {
-  if [ -n "${RALPH_HARNESS_OVERRIDE:-}" ]; then
+  if [ -n "${RALPH_HARNESS_SELECTION_SOURCE:-}" ]; then
+    echo "$RALPH_HARNESS_SELECTION_SOURCE"
+  elif [ -n "${RALPH_HARNESS_OVERRIDE:-}" ]; then
     echo "override"
   elif [ -n "${RALPH_HARNESS:-}" ]; then
     echo "explicit"
@@ -64,6 +67,42 @@ _load_json_value() {
   fi
 }
 
+_story_input_json() {
+  local input="${1:-}"
+  [ -n "$input" ] || return 0
+  if [ -f "$input" ]; then
+    cat "$input"
+  else
+    printf '%s' "$input"
+  fi
+}
+
+_normalize_story_metadata_json() {
+  local input="${1:-}"
+  _story_input_json "$input" | jq -c '
+    {
+      storyId: (.storyId // .id // ""),
+      title: (.title // ""),
+      description: (.description // ""),
+      goal: (.goal // ""),
+      promptContext: (.promptContext // ""),
+      agent: (.agent // ""),
+      labels: (.labels // []),
+      tags: (.tags // []),
+      tasks: (
+        (.tasks // [])
+        | map(
+            if type == "object" then
+              (.title // .context // .acceptance // "")
+            else
+              ""
+            end
+          )
+      )
+    }
+  ' 2>/dev/null
+}
+
 # Get a field from an agent profile for a specific harness
 _get_agent_profile_field() {
   local agent_name="$1"
@@ -79,6 +118,8 @@ _get_agent_profile_field() {
     | if . == null then empty else . end
     | if $profile_key == ".models" then
         if has("models") then .models[$harness_name] // empty else empty end
+      elif $profile_key == ".lite_models" then
+        if has("lite_models") then .lite_models[$harness_name] // empty else empty end
       elif $profile_key == "." then
         .
       else
@@ -228,16 +269,47 @@ _ensure_ralph_runtime_home() {
     "$RALPH_RUNTIME_PI_AGENT_DIR"
 }
 
-_seed_ralph_runtime_home_config() {
-  _ensure_ralph_runtime_home
-
-  if [ -f "$RALPH_RUNTIME_HOME_CONFIG_FILE" ]; then
+_resolve_codex_runtime_profile_name() {
+  if [ -n "${RALPH_CODEX_PROFILE:-}" ]; then
+    printf '%s\n' "$RALPH_CODEX_PROFILE"
     return 0
   fi
+
+  if [ -n "${OPENAI_BASE_URL:-}" ] && [ -n "${OPENAI_API_KEY:-}" ]; then
+    printf '%s\n' "ralph_primary"
+    return 0
+  fi
+
+  if [ -n "${OPENAI_API_BASE_NATIVE:-}" ] && [ -n "${OPENAI_API_KEY_NATIVE:-}" ]; then
+    printf '%s\n' "ralph_openai_native"
+    return 0
+  fi
+}
+
+_seed_ralph_runtime_home_config() {
+  _ensure_ralph_runtime_home
 
   cat > "$RALPH_RUNTIME_HOME_CONFIG_FILE" <<EOF
 model = 'gpt-5.4'
 model_reasoning_effort = 'medium'
+
+[model_providers.ralph_primary]
+name = "Ralph Primary Provider"
+base_url = "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+
+[profiles.ralph_primary]
+model_provider = "ralph_primary"
+
+[model_providers.ralph_openai_native]
+name = "Ralph OpenAI Native"
+base_url = "${OPENAI_API_BASE_NATIVE:-https://api.openai.com/v1}"
+env_key = "OPENAI_API_KEY_NATIVE"
+wire_api = "responses"
+
+[profiles.ralph_openai_native]
+model_provider = "ralph_openai_native"
 
 [projects."$RALPH_REPO_ROOT"]
 trust_level = "trusted"
@@ -280,19 +352,22 @@ EOF
 }
 
 _story_complexity_text() {
-  local story_json="${1:-}"
+  local story_json
+  story_json="$(_normalize_story_metadata_json "${1:-}")"
   [ -n "$story_json" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
 
   printf '%s' "$story_json" | jq -r '
     [
       (.title // ""),
-      (.description // .goal // ""),
+      (.description // ""),
+      (.goal // ""),
       (.promptContext // ""),
       (.agent // ""),
-      ((.labels // [])[]?),
-      ((.tags // [])[]?),
-      ((.tasks // [])[]? | (.title? // ""))
+      (.storyId // ""),
+      (.labels[]?),
+      (.tags[]?),
+      (.tasks[]?)
     ]
     | map(select(length > 0))
     | join(" ")
@@ -386,6 +461,35 @@ _story_complexity_tier_from_score() {
   fi
 }
 
+_model_is_lite_like() {
+  local model="${1:-}"
+  local lower
+
+  [ -n "$model" ] || { echo 0; return; }
+  lower="$(_model_family_name "$model")"
+  case "$lower" in
+    *gpt-5.4-mini*|*gpt-5-mini*|*gpt-4.1-mini*|*gpt-4o-mini*|*gpt-mini*|*gpt-4.1-nano*|*gpt-5-nano*|*haiku*|*flash-lite*|*mini*|*nano*)
+      echo 1
+      ;;
+    *)
+      echo 0
+      ;;
+  esac
+}
+
+_execution_tier_for_profile() {
+  local model="${1:-}"
+  local composite_profile="${2:-}"
+
+  if [ -z "$composite_profile" ]; then
+    echo "simple"
+  elif [ "$(_model_is_lite_like "$model")" = "1" ]; then
+    echo "composite-lite"
+  else
+    echo "full-composite"
+  fi
+}
+
 _agent_selection_priority() {
   local agent_name="$1"
   case "$agent_name" in
@@ -395,7 +499,7 @@ _agent_selection_priority() {
     senior-dev|reviewer)
       echo "advanced"
       ;;
-    reviewer|qa-test|devops)
+    qa-test|devops)
       echo "strong"
       ;;
     documentation|junior-dev|default|*)
@@ -625,109 +729,89 @@ _select_dynamic_model_for_agent() {
 
 # Determine agent from story content (explicit field, labels, or content analysis)
 _determine_agent_from_story() {
-  local story_file="$1"
-  
-  if [ ! -f "$story_file" ]; then
-    echo "default"
-    return
-  fi
-  
-  # Check for explicit agent field in story.json
-  local explicit_agent
-  explicit_agent="$(_load_json_value "$story_file" '.agent // empty')"
+  local story_input="$1"
+  local story_json explicit_agent labels_json tags_json all_labels_json content
+
+  story_json="$(_normalize_story_metadata_json "$story_input")"
+  [ -n "$story_json" ] || { echo "default"; return; }
+
+  explicit_agent="$(printf '%s' "$story_json" | jq -r '.agent // empty' 2>/dev/null)"
   if [ -n "$explicit_agent" ]; then
     echo "$explicit_agent"
     return
   fi
-  
-  # Check for labels/tags array and apply mapping
-  local labels
-  labels="$(_load_json_value "$story_file" '.labels // []')"
-  local tags
-  tags="$(_load_json_value "$story_file" '.tags // []')"
-  
-  # Combine labels and tags
-  local all_labels="[$(echo "$labels" "$tags" | jq -s 'add' 2>/dev/null || echo "[]")]"
-  
-  # Check each label against mapping
+
+  labels_json="$(printf '%s' "$story_json" | jq -c '.labels // []' 2>/dev/null || echo '[]')"
+  tags_json="$(printf '%s' "$story_json" | jq -c '.tags // []' 2>/dev/null || echo '[]')"
+  all_labels_json="$(jq -cn --argjson labels "$labels_json" --argjson tags "$tags_json" '$labels + $tags')"
+
   if [ -f "$LABEL_MAPPING_FILE" ] && command -v jq >/dev/null 2>&1; then
-    local label_count
-    label_count="$(echo "$all_labels" | jq 'length' 2>/dev/null)"
-    
-    if [ "$label_count" -gt 0 ]; then
-      local i=0
-      while [ $i -lt "$label_count" ]; do
-        local label
-        label="$(echo "$all_labels" | jq -r ".[$i] | ascii_downcase" 2>/dev/null)"
-        if [ -n "$label" ]; then
-          local mapped_agent
-          mapped_agent="$(_load_json_value "$LABEL_MAPPING_FILE" ".label_mappings.\"$label\" // empty")"
-          if [ -n "$mapped_agent" ]; then
-            echo "$mapped_agent"
-            return
-          fi
-        fi
-        i=$((i + 1))
-      done
-    fi
+    while IFS= read -r label; do
+      [ -n "$label" ] || continue
+      local mapped_agent
+      mapped_agent="$(_load_json_value "$LABEL_MAPPING_FILE" ".label_mappings.\"$label\" // empty")"
+      if [ -n "$mapped_agent" ]; then
+        echo "$mapped_agent"
+        return
+      fi
+    done < <(printf '%s' "$all_labels_json" | jq -r '.[]? | ascii_downcase' 2>/dev/null)
   fi
-  
-  # Content-based inference from title, description, and tasks
-  local title description tasks_content
-  title="$(_load_json_value "$story_file" '.title // ""' | tr '[:upper:]' '[:lower:]')"
-  description="$(_load_json_value "$story_file" '.description // ""' | tr '[:upper:]' '[:lower:]')"
-  tasks_content="$(_load_json_value "$story_file" '.tasks[].title // ""' | tr '[:upper:]' '[:lower:]' | tr '\n' ' ')"
-  
-  local content="$title $description $tasks_content"
-  
-  
-  # Define keyword patterns for each agent type
-  if echo "$content" | rg -q "(debug|debugging|investigate|investigation|research|analyze|analysis|troubleshoot|troubleshooting|diagnose|diagnosis|root cause|explore|exploration)"; then
+
+  content="$(
+    printf '%s' "$story_json" | jq -r '
+      [
+        .title,
+        .description,
+        .goal,
+        .promptContext,
+        (.tasks[]?)
+      ]
+      | map(select(type == "string" and length > 0))
+      | join(" ")
+    ' 2>/dev/null | tr '[:upper:]' '[:lower:]'
+  )"
+
+  if printf '%s' "$content" | rg -q "(debug|debugging|investigate|investigation|research|analyze|analysis|troubleshoot|troubleshooting|diagnose|diagnosis|root cause|explore|exploration)"; then
     echo "researcher"
     return
   fi
 
-  if echo "$content" | rg -q "(refactor|refactoring|restructure|restructuring|architecture|architectural|design|design pattern|design patterns|pattern|patterns|scalability|scalable|performance|optimize|optimization|efficiency|algorithm|algorithms|data structure|database|db|sql|nosql|api|microservice|microservices|service|services|backend|system|systems|enterprise)"; then
+  if printf '%s' "$content" | rg -q "(refactor|refactoring|restructure|restructuring|architecture|architectural|design pattern|design patterns|scalability|performance|optimize|optimization|efficiency|algorithm|data structure|database|db|sql|nosql|api|microservice|backend|system|systems|enterprise)"; then
     echo "senior-dev"
     return
   fi
 
-  # Security terms with word boundaries for single words, and substring for multi-word term
-  if echo "$content" | rg -q '(^|[^a-zA-Z0-9_])(security|vulnerability|vulnerabilities|exploit|exploits|patch|patching|auth|authentication|authorization|encrypt|encryption|decrypt|decryption|token|tokens|oauth|password|passwords|secret|secrets|key|keys|cert|certificate|ssl|tls|xss|csrf|injection|xxe|rce|privilege|escalation|audit|auditing|compliance)([^a-zA-Z0-9_]|$)' || echo "$content" | rg -q "sql injection"; then
+  if printf '%s' "$content" | rg -q '(^|[^a-zA-Z0-9_])(security|vulnerability|vulnerabilities|exploit|exploits|patch|patching|auth|authentication|authorization|encrypt|encryption|decrypt|decryption|token|tokens|oauth|password|passwords|secret|secrets|key|keys|cert|certificate|ssl|tls|xss|csrf|injection|xxe|rce|privilege|escalation|compliance)([^a-zA-Z0-9_]|$)' \
+    || printf '%s' "$content" | rg -q "(sql injection|security audit)"; then
     echo "security"
     return
   fi
 
-  if echo "$content" | rg -q "(code review|peer review|review comments|review feedback|review findings|reviewer|regression risk|change assessment)"; then
+  if printf '%s' "$content" | rg -q "(code review|peer review|review comments|review feedback|review findings|reviewer|regression risk|change assessment)"; then
     echo "reviewer"
     return
   fi
 
-  if echo "$content" | rg -q "(typo|typos|text|string|label|labels|button|buttons|ui|ux|frontend|minor|minors|small|trivial|fix|fixes|fixing|spelling|grammar|style|styling|css|ui/css|theme|theming|color|colors|font|fonts|icon|icons|image|images|logo|logos)"; then
-    echo "junior-dev"
-    return
-  fi
-
-  if echo "$content" | rg -q "(test|testing|unit test|unit-test|integration test|integration-test|e2e|end-to-end|end to end|validation|valid|verify|verification|assert|assertion|mock|mocks|stub|stubs|fixture|fixtures|test case|test cases|test suite|test driven|tdd|bdd)"; then
+  if printf '%s' "$content" | rg -q "(test|testing|unit test|unit-test|integration test|integration-test|e2e|end-to-end|end to end|validation|valid|verify|verification|assert|assertion|mock|mocks|stub|stubs|fixture|fixtures|test case|test cases|test suite|test driven|tdd|bdd)"; then
     echo "qa-test"
     return
   fi
 
-  if echo "$content" | rg -q "(deploy|deployment|deploying|infrastructure|infrastructural|docker|kubernetes|k8s|aws|azure|gcp|cloud|server|servers|network|networking|ci|ci/cd|continuous integration|continuous delivery|continuous deployment|pipeline|pipelines|jenkins|gitlab|github actions|terraform|ansible|puppet|chef|monitoring|logging|logs|metrics|alerting)"; then
+  if printf '%s' "$content" | rg -q "(deploy|deployment|deploying|infrastructure|docker|kubernetes|k8s|aws|azure|gcp|cloud|server|servers|network|networking|ci|ci/cd|continuous integration|continuous delivery|continuous deployment|pipeline|pipelines|terraform|ansible|monitoring|logging|logs|metrics|alerting)"; then
     echo "devops"
     return
   fi
 
-  if echo "$content" | rg -q "(doc|documentation|comment|comments|explain|explanation|description|descriptions|readme|readmes|guide|guides|tutorial|tutorials|walkthrough|faq|faqs|wiki|wikis|markdown|md)"; then
+  if printf '%s' "$content" | rg -q "(doc|documentation|comment|comments|explain|explanation|readme|guide|tutorial|walkthrough|faq|wiki|markdown)"; then
     echo "documentation"
     return
   fi
-  if echo "$content" | rg -q "(doc|documentation|comment|comments|explain|explanation|description|descriptions|readme|readmes|guide|guides|tutorial|tutorials|walkthrough|faq|faqs|wiki|wikis|markdown|md)"; then
-    echo "documentation"
+
+  if printf '%s' "$content" | rg -q "(typo|typos|text|string|label|labels|button|buttons|ui|ux|frontend|minor|minors|small|trivial|spelling|grammar|style|styling|css|theme|theming|color|colors|font|fonts|icon|icons|image|images|logo|logos)"; then
+    echo "junior-dev"
     return
   fi
-  
-  # Fallback to default agent
+
   echo "default"
 }
 
@@ -759,7 +843,7 @@ get_execution_profile_json() {
   effective_harness="$(_get_harness)"
   model_value="${RALPH_MODEL:-}"
   composite_value="${RALPH_COMPOSITE_PROFILE:-}"
-  codex_profile="${RALPH_CODEX_PROFILE:-}"
+  codex_profile="$(_resolve_codex_runtime_profile_name)"
 
   jq -nc \
     --arg harness "$effective_harness" \
@@ -771,6 +855,9 @@ get_execution_profile_json() {
     --arg composite_profile "$composite_value" \
     --arg codex_profile "$codex_profile" \
     --arg pi_role "${RALPH_PIAGENT_ROLE:-}" \
+    --arg execution_tier "${RALPH_EXECUTION_TIER:-}" \
+    --arg runtime_home "$RALPH_RUNTIME_HOME_DIR" \
+    --argjson composites_enabled "$(if _composites_enabled; then printf 'true'; else printf 'false'; fi)" \
     --arg complexity_tier "${STORY_COMPLEXITY_TIER:-}" \
     --argjson complexity_score "${STORY_COMPLEXITY_SCORE:-0}" \
     '{
@@ -781,11 +868,18 @@ get_execution_profile_json() {
       agent: (if $agent == "" then null else $agent end),
       agent_source: (if $agent_source == "" then null else $agent_source end),
       composite_profile: (if $composite_profile == "" then null else $composite_profile end),
+      composites_enabled: $composites_enabled,
       codex_profile: (if $codex_profile == "" then null else $codex_profile end),
       piagent_role: (if $pi_role == "" then null else $pi_role end),
+      execution_tier: (if $execution_tier == "" then null else $execution_tier end),
+      runtime_home: (if $runtime_home == "" then null else $runtime_home end),
       complexity_tier: (if $complexity_tier == "" then null else $complexity_tier end),
       complexity_score: (if $complexity_tier == "" then null else $complexity_score end)
     }'
+}
+
+_composites_enabled() {
+  [ "${RALPH_DISABLE_COMPOSITES:-0}" != "1" ] && [ "${RALPH_ENABLE_COMPOSITES:-1}" = "1" ]
 }
 
 # Apply agent profile settings (model, etc.)
@@ -812,7 +906,7 @@ _apply_agent_profile() {
       unset RALPH_PIAGENT_ROLE
     fi
     composite_profile="$(printf '%s' "$profile_json" | jq -r '.composite_profile // empty' 2>/dev/null)"
-    if [ "${RALPH_ENABLE_COMPOSITES:-0}" = "1" ] && [ "${RALPH_DISABLE_COMPOSITES:-0}" != "1" ]; then
+    if _composites_enabled; then
       if [ -n "$composite_profile" ]; then
         composite_shape="$( _get_composite_profile_field "$composite_profile" ".shape" )"
         composite_required_extensions="$( _get_composite_profile_field "$composite_profile" ".required_extensions" )"
@@ -846,8 +940,12 @@ _apply_agent_profile() {
 
   # Only override model if not explicitly set via command line/environment
   if [ -z "${RALPH_MODEL:-}" ]; then
-    local suggested_model="" preferred_model preferred_score dynamic_model dynamic_score
-    preferred_score=-99999
+    local suggested_model="" preferred_model lite_model dynamic_model complexity_tier allow_lite=0
+    complexity_tier="$(_story_complexity_tier_from_score "${RALPH_STORY_COMPLEXITY_SCORE:-0}")"
+    case "$complexity_tier" in
+      low|medium) allow_lite=1 ;;
+    esac
+
     preferred_model="$(_get_agent_profile "$agent_name" "$effective_harness" '.models')"
     if [ -n "$preferred_model" ]; then
       preferred_model="$(_resolve_model_for_harness "$preferred_model" "$effective_harness")"
@@ -856,41 +954,42 @@ _apply_agent_profile() {
       fi
     fi
 
+    lite_model="$(_get_agent_profile_field "$agent_name" "$effective_harness" '.lite_models')"
+    if [ -n "$lite_model" ]; then
+      lite_model="$(_resolve_model_for_harness "$lite_model" "$effective_harness")"
+      if ! is_model_supported_by_harness "$effective_harness" "$lite_model"; then
+        lite_model=""
+      fi
+    fi
+
     dynamic_model="$(_select_dynamic_model_for_agent "$agent_name" "$effective_harness")"
     if [ -n "$dynamic_model" ] && ! is_model_supported_by_harness "$effective_harness" "$dynamic_model"; then
       dynamic_model=""
     fi
 
-    if [ -n "$preferred_model" ]; then
+    if [ "$allow_lite" -eq 1 ] && [ -n "$lite_model" ]; then
+      suggested_model="$lite_model"
+      RALPH_MODEL_SELECTION_SOURCE="agent-profile-lite"
+    elif [ -n "$preferred_model" ]; then
       suggested_model="$preferred_model"
-      preferred_score="$(_score_model_for_agent "$agent_name" "$effective_harness" "$preferred_model")"
-    fi
-
-    if [ -n "$dynamic_model" ]; then
-      dynamic_score="$(_score_model_for_agent "$agent_name" "$effective_harness" "$dynamic_model")"
-      if [ -z "$suggested_model" ] || [ "${dynamic_score:-0}" -gt "$preferred_score" ]; then
-        suggested_model="$dynamic_model"
-        preferred_score="$dynamic_score"
-      fi
+      RALPH_MODEL_SELECTION_SOURCE="agent-profile"
+    elif [ -n "$dynamic_model" ]; then
+      suggested_model="$dynamic_model"
+      RALPH_MODEL_SELECTION_SOURCE="dynamic"
+    else
+      RALPH_MODEL_SELECTION_SOURCE="default"
     fi
 
     if [ -n "$suggested_model" ]; then
       RALPH_MODEL="$suggested_model"
       export RALPH_MODEL
-      if [ -n "$dynamic_model" ] && [ "$suggested_model" = "$dynamic_model" ]; then
-        RALPH_MODEL_SELECTION_SOURCE="dynamic"
-      elif [ -n "$preferred_model" ] && [ "$suggested_model" = "$preferred_model" ]; then
-        RALPH_MODEL_SELECTION_SOURCE="agent-profile"
-      else
-        RALPH_MODEL_SELECTION_SOURCE="default"
-      fi
-    else
-      RALPH_MODEL_SELECTION_SOURCE="default"
     fi
   elif [ "$model_was_explicit" -eq 1 ]; then
     RALPH_MODEL_SELECTION_SOURCE="explicit"
   fi
   export RALPH_MODEL_SELECTION_SOURCE
+  RALPH_EXECUTION_TIER="$(_execution_tier_for_profile "${RALPH_MODEL:-}" "${RALPH_COMPOSITE_PROFILE:-}")"
+  export RALPH_EXECUTION_TIER
 
   case "${RALPH_AGENT_SELECTION_SOURCE:-}" in
     explicit|inferred|default) ;;
@@ -906,21 +1005,18 @@ _apply_agent_profile() {
   esac
   export RALPH_AGENT_SELECTION_SOURCE
   
-  # Note: System prompt additions would need to be handled by modifying the prompt itself
-  # This is more complex and would require changes to the prompt building logic
-  # For now, we focus on model selection, but the profile contains system_prompt_addition
-  # for future enhancement
 }
 
 # Harness-specific execution functions
 
-# Original Codex executor (from codex-exec.sh)
 _codex_exec_prompt() {
   local prompt="$1"
   local workspace="${2:-$PWD}"
   shift 2 || true
+  local runtime_profile=""
   local profile_args=()
-  [ -n "${RALPH_CODEX_PROFILE:-}" ] && profile_args=(--profile "$RALPH_CODEX_PROFILE")
+  runtime_profile="$(_resolve_codex_runtime_profile_name)"
+  [ -n "$runtime_profile" ] && profile_args=(--profile "$runtime_profile")
   local model_args=()
   [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "codex" && model_args=(--model "$RALPH_MODEL")
   local agent_args=()
@@ -952,16 +1048,11 @@ _codex_exec_prompt() {
   fi
 }
 
-# PI Agent executor
 _piagent_exec_prompt() {
   local prompt="$1"
   local workspace="${2:-$PWD}"
   shift 2 || true
 
-  # PI Agent uses `pi -p` for print/non-interactive mode.
-  # Set the permission mode as an environment variable for the command.
-
-  # Build arguments array
   local pi_args=()
   [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && pi_args+=("--mode" "json")
   if [ -n "${RALPH_PIAGENT_ROLE:-}" ]; then
@@ -989,13 +1080,11 @@ _piagent_exec_prompt() {
   local pi_provider="${PI_PROVIDER:-}"
   local resolved_model="${RALPH_MODEL:-}"
   local pi_provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
+  local pi_api_key="${PI_API_KEY:-${OPENROUTER_API_KEY:-${OPENAI_API_KEY:-${ANTHROPIC_API_KEY:-}}}}"
   _seed_ralph_runtime_home_config
+  _seed_ralph_runtime_pi_config
   if [ -z "$pi_provider" ] && [ -n "$resolved_model" ]; then
     case "$resolved_model" in
-      opencode/*)
-        pi_provider="opencode"
-        resolved_model="${resolved_model#opencode/}"
-        ;;
       openrouter/*)
         pi_provider="openrouter"
         resolved_model="${resolved_model#openrouter/}"
@@ -1021,15 +1110,13 @@ _piagent_exec_prompt() {
     pi_provider="openai-native"
   fi
 
-  # Add model selection if specified (if supported by PI Agent)
   [ -n "$pi_provider" ] && pi_args+=("--provider" "$pi_provider")
   [ -n "$resolved_model" ] && pi_args+=("--model" "$resolved_model")
+  [ -n "$pi_api_key" ] && pi_args+=("--api-key" "$pi_api_key")
 
-  # Pass through any additional arguments
   pi_args+=("$@")
   pi_args+=("$prompt")
 
-  # Change to workspace directory and run pi with prompt
   (
     cd "$workspace"
     _ensure_ralph_runtime_home
@@ -1039,118 +1126,6 @@ _piagent_exec_prompt() {
     export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
     export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
     export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
-    PI_PERMISSION_LEVEL=bypassed pi -p "${pi_args[@]}"
-  )
-}
-
-# Harness-specific execution functions
-
-# Original Codex executor (from codex-exec.sh)
-_codex_exec_prompt() {
-  local prompt="$1"
-  local workspace="${2:-$PWD}"
-  shift 2 || true
-  local profile_args=()
-  [ -n "${RALPH_CODEX_PROFILE:-}" ] && profile_args=(--profile "$RALPH_CODEX_PROFILE")
-  local model_args=()
-  [ -n "${RALPH_MODEL:-}" ] && harness_supports_model_selection "codex" && model_args=(--model "$RALPH_MODEL")
-  local agent_args=()
-  [ -n "${RALPH_AGENT:-}" ] && harness_supports_agent_selection "codex" && agent_args=(--agent "$RALPH_AGENT")
-  _seed_ralph_runtime_home_config
-  
-  if _supports_codex_yolo; then
-    (
-      _ensure_ralph_runtime_home
-      export HOME="$RALPH_RUNTIME_HOME_DIR"
-      export CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex"
-      export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
-      export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
-      export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
-      export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
-      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" --yolo exec "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
-    )
-  else
-    (
-      _ensure_ralph_runtime_home
-      export HOME="$RALPH_RUNTIME_HOME_DIR"
-      export CODEX_HOME="$RALPH_RUNTIME_HOME_DIR/.codex"
-      export XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config"
-      export XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache"
-      export XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state"
-      export XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share"
-      printf '%s\n' "$prompt" | "${CODEX_BIN:-codex}" exec --dangerously-bypass-approvals-and-sandbox "${profile_args[@]+"${profile_args[@]}"}" "${model_args[@]+"${model_args[@]}"}" "${agent_args[@]+"${agent_args[@]}"}" -C "$workspace" "$@"
-    )
-  fi
-}
-
-# PI Agent executor
-_piagent_exec_prompt() {
-  local prompt="$1"
-  local workspace="${2:-$PWD}"
-  shift 2 || true
-
-  # PI Agent uses `pi -p` for print/non-interactive mode.
-  # Set the permission mode as an environment variable for the command.
-
-  # Build arguments array
-  local pi_args=()
-  [ "${RALPH_STRUCTURED_OUTPUT:-}" = "1" ] && pi_args+=("--mode" "json")
-
-  local pi_provider="${PI_PROVIDER:-}"
-  local resolved_model="${RALPH_MODEL:-}"
-  local pi_provider_base="${PI_BASE_URL:-${OPENAI_BASE_URL:-}}"
-  local pi_api_key="${PI_API_KEY:-${OPENROUTER_API_KEY:-${OPENAI_API_KEY:-${ANTHROPIC_API_KEY:-}}}}"
-  if [ -z "$pi_provider" ] && [ -n "$resolved_model" ]; then
-    case "$resolved_model" in
-      openrouter/*)
-        pi_provider="openrouter"
-        resolved_model="${resolved_model#openrouter/}"
-        ;;
-      anthropic/*)
-        pi_provider="anthropic"
-        resolved_model="${resolved_model#anthropic/}"
-        ;;
-      openai/*)
-        pi_provider="openai"
-        resolved_model="${resolved_model#openai/}"
-        ;;
-      google/*)
-        pi_provider="google"
-        resolved_model="${resolved_model#google/}"
-        ;;
-    esac
-  fi
-
-  if [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *openrouter.ai* ]]; then
-    pi_provider="openrouter"
-  elif [ -z "$pi_provider" ] && [[ "$pi_provider_base" == *api.openai.com* ]]; then
-    pi_provider="openai-native"
-  fi
-
-  # Add model selection if specified (if supported by PI Agent)
-  [ -n "$pi_provider" ] && pi_args+=("--provider" "$pi_provider")
-  [ -n "$resolved_model" ] && pi_args+=("--model" "$resolved_model")
-  [ -n "$pi_api_key" ] && pi_args+=("--api-key" "$pi_api_key")
-
-  # Add agent selection if specified (if supported by PI Agent)
-  [ -n "${RALPH_AGENT:-}" ] && pi_args+=("--agent" "$RALPH_AGENT")
-  _seed_ralph_runtime_home_config
-  _seed_ralph_runtime_pi_config
-
-  # Pass through any additional arguments
-  pi_args+=("$@")
-  pi_args+=("$prompt")
-
-  # Change to workspace directory and run pi with prompt
-  (
-    cd "$workspace"
-    _ensure_ralph_runtime_home
-    HOME="$RALPH_RUNTIME_HOME_DIR" \
-    PI_CODING_AGENT_DIR="$RALPH_RUNTIME_HOME_DIR/.pi/agent" \
-    XDG_CONFIG_HOME="$RALPH_RUNTIME_HOME_DIR/.config" \
-    XDG_CACHE_HOME="$RALPH_RUNTIME_HOME_DIR/.cache" \
-    XDG_STATE_HOME="$RALPH_RUNTIME_HOME_DIR/.local/state" \
-    XDG_DATA_HOME="$RALPH_RUNTIME_HOME_DIR/.local/share" \
     PI_PERMISSION_LEVEL=bypassed pi -p "${pi_args[@]}"
   )
 }
