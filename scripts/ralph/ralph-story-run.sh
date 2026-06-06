@@ -1301,18 +1301,13 @@ merge_story_branch() {
     return 0
   fi
 
-  local tracked_files_json tracked_path
-  tracked_files_json="$(story_tracked_files_json)"
-  while IFS= read -r tracked_path; do
-    [ -n "$tracked_path" ] || continue
-    git -C "$WORKSPACE_ROOT" add -- "$tracked_path" 2>/dev/null || true
-  done < <(jq -r '.[]?' <<< "$tracked_files_json")
+  # Stage the verified story checkpoint before we merge so the sprint closeout
+  # gate never sees story-owned implementation changes lingering uncommitted.
+  git -C "$WORKSPACE_ROOT" add -A .
 
-  git -C "$WORKSPACE_ROOT" add "$STORY_FILE" 2>/dev/null || true
-  [ -f "$meta_stories_file" ] && git -C "$WORKSPACE_ROOT" add "$meta_stories_file" 2>/dev/null || true
   if ! git -C "$WORKSPACE_ROOT" diff --cached --quiet 2>/dev/null; then
-    git -C "$WORKSPACE_ROOT" commit -m "chore(ralph): $STORY_ID complete — story metadata"
-    log "Committed story metadata on story branch."
+    git -C "$WORKSPACE_ROOT" commit -m "chore(ralph): checkpoint verified $STORY_ID implementation"
+    log "Committed verified story checkpoint on story branch."
   fi
 
   log "--- Merging $STORY_ID → parent branch ---"
