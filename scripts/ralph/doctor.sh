@@ -7,8 +7,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 RALPH_HARNESS="${RALPH_HARNESS:-codex}"
+
+load_ralph_env() {
+  local env_file="$1"
+  [ -f "$env_file" ] || return 1
+  set -a
+  # shellcheck source=/dev/null
+  . "$env_file"
+  set +a
+  return 0
+}
+
+if ! load_ralph_env "${SCRIPT_DIR}/.ralph-env"; then
+  load_ralph_env "${HOME}/.ralph-env" || true
+fi
+
 source "$SCRIPT_DIR/lib/specify.sh"
 source "$SCRIPT_DIR/lib/harness-capabilities.sh"
+source "$SCRIPT_DIR/lib/harness-exec.sh"
 ROADMAP_FILE="$SCRIPT_DIR/roadmap.json"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
@@ -31,6 +47,20 @@ require_cmd() {
 echo "Ralph doctor"
 echo "ralph dir: $SCRIPT_DIR"
 echo "harness: $RALPH_HARNESS"
+echo "runtime home: $RALPH_RUNTIME_HOME_DIR"
+case "$RALPH_RUNTIME_HOME_DIR" in
+  "$SCRIPT_DIR"/runtime/home|"$SCRIPT_DIR"/runtime/home/*)
+    echo "OK: runtime home is project-local"
+    ;;
+  *)
+    echo "WARN: runtime home is not project-local"
+    ;;
+esac
+if _composites_enabled; then
+  echo "composites: enabled"
+else
+  echo "composites: disabled"
+fi
 
 require_cmd git
 require_cmd jq

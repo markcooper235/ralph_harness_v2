@@ -13,6 +13,7 @@ SELFTEST_SPRINT="sprint-framework-selftest"
 TEMP_ROOT=""
 WORKTREE_DIR=""
 WORKTREE_BRANCH=""
+WORKTREE_BASE_BRANCH=""
 ARTIFACT_DIR=""
 SELFTEST_TMP_BASE="${RALPH_SELFTEST_TMP_BASE:-$HOME/.cache}"
 KEEP_WORKTREE=0
@@ -51,6 +52,9 @@ cleanup() {
   fi
   if [ -n "$WORKTREE_BRANCH" ] && git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$WORKTREE_BRANCH"; then
     git -C "$REPO_ROOT" branch -D "$WORKTREE_BRANCH" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$WORKTREE_BASE_BRANCH" ] && git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$WORKTREE_BASE_BRANCH"; then
+    git -C "$REPO_ROOT" branch -D "$WORKTREE_BASE_BRANCH" >/dev/null 2>&1 || true
   fi
   if [ -n "$TEMP_ROOT" ] && [ -d "$TEMP_ROOT" ] && [ "$KEEP_WORKTREE" -eq 0 ]; then
     rm -rf "$TEMP_ROOT"
@@ -545,6 +549,9 @@ snapshot_worktree_for_loop() {
     git -C "$WORKTREE_DIR" add -A
     git -C "$WORKTREE_DIR" commit -m "chore(selftest): snapshot framework under test" >/dev/null
   fi
+  WORKTREE_BASE_BRANCH="framework-selftest-base-$(date +%Y%m%d%H%M%S)"
+  git -C "$WORKTREE_DIR" checkout -b "$WORKTREE_BASE_BRANCH" >/dev/null
+  log "Created temporary self-test base branch: $WORKTREE_BASE_BRANCH"
 }
 
 validate_doctor_output() {
@@ -644,7 +651,7 @@ validate_complexity_and_tier_matrix() {
     profile_json="$(get_execution_profile_json researcher)"
     printf '%s' "$profile_json" | jq -e '
       .execution_tier == "full-composite"
-      and .model == "gpt-5.4"
+      and .model == "gpt-5.5"
       and .model_source == "agent-profile"
       and .composite_profile == "fanout_research_v1"
     ' >/dev/null || fail "full-composite tier routing failed for researcher extreme-complexity profile"
@@ -732,6 +739,11 @@ run_loop_and_closeout() {
     cd "$WORKTREE_DIR"
     ./scripts/ralph/ralph-sprint.sh use "$SELFTEST_SPRINT"
   )
+
+  if [ -n "$WORKTREE_BASE_BRANCH" ]; then
+    git -C "$REPO_ROOT" branch -D "$WORKTREE_BASE_BRANCH" >/dev/null 2>&1 || true
+    WORKTREE_BASE_BRANCH=""
+  fi
 
   (
     cd "$WORKTREE_DIR"
