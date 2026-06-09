@@ -7,6 +7,12 @@ const { execFileSync, spawnSync } = require('node:child_process')
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const RUNTIME_ROOT = path.join(REPO_ROOT, 'scripts', 'ralph')
+const TRANSIENT_FRAMEWORK_SEGMENTS = [
+  `${path.sep}runtime${path.sep}home`,
+  `${path.sep}runtime${path.sep}story-runs`,
+  `${path.sep}runtime${path.sep}sprint-runs`,
+  `${path.sep}runtime${path.sep}prep-runs`,
+]
 
 function run(cmd, args, { cwd, env, stdio = 'pipe' } = {}) {
   return execFileSync(cmd, args, {
@@ -42,14 +48,20 @@ function chmodScripts(rootDir) {
   }
 }
 
+function frameworkFilter(sourcePath) {
+  if (sourcePath.includes(`${path.sep}.git${path.sep}`) || sourcePath.endsWith(`${path.sep}.git`)) return false
+  return !TRANSIENT_FRAMEWORK_SEGMENTS.some((segment) => sourcePath.includes(segment))
+}
+
 function initTempRepo() {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-verify-'))
   const frameworkRoot = path.join(repoDir, 'scripts', 'ralph')
   fs.mkdirSync(path.dirname(frameworkRoot), { recursive: true })
   fs.cpSync(RUNTIME_ROOT, frameworkRoot, {
     recursive: true,
-    filter: (sourcePath) => !sourcePath.includes(`${path.sep}.git${path.sep}`) && !sourcePath.endsWith(`${path.sep}.git`),
+    filter: frameworkFilter,
   })
+  fs.mkdirSync(path.join(frameworkRoot, 'runtime'), { recursive: true })
   chmodScripts(frameworkRoot)
 
   writeFile(
@@ -135,8 +147,9 @@ test('ralph-verify targeted mode falls back to repo regression script when lint 
   fs.mkdirSync(path.dirname(frameworkRoot), { recursive: true })
   fs.cpSync(RUNTIME_ROOT, frameworkRoot, {
     recursive: true,
-    filter: (sourcePath) => !sourcePath.includes(`${path.sep}.git${path.sep}`) && !sourcePath.endsWith(`${path.sep}.git`),
+    filter: frameworkFilter,
   })
+  fs.mkdirSync(path.join(frameworkRoot, 'runtime'), { recursive: true })
   chmodScripts(frameworkRoot)
 
   writeFile(

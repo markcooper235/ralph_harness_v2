@@ -9,6 +9,12 @@ const { execFileSync, spawnSync } = require('node:child_process')
 
 const REPO_ROOT = path.resolve(__dirname, '..')
 const RUNTIME_ROOT = path.join(REPO_ROOT, 'scripts', 'ralph')
+const TRANSIENT_FRAMEWORK_SEGMENTS = [
+  `${path.sep}runtime${path.sep}home`,
+  `${path.sep}runtime${path.sep}story-runs`,
+  `${path.sep}runtime${path.sep}sprint-runs`,
+  `${path.sep}runtime${path.sep}prep-runs`,
+]
 
 function run(cmd, args, { cwd, env } = {}) {
   return execFileSync(cmd, args, {
@@ -50,16 +56,20 @@ function chmodScripts(rootDir) {
   }
 }
 
+function frameworkFilter(src) {
+  if (src.includes(`${path.sep}.git${path.sep}`) || src.endsWith(`${path.sep}.git`)) return false
+  return !TRANSIENT_FRAMEWORK_SEGMENTS.some((segment) => src.includes(segment))
+}
+
 function initTempRepo({ branch = 'master' } = {}) {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ralph-test-'))
   const frameworkRoot = path.join(repoDir, 'scripts', 'ralph')
   fs.mkdirSync(path.dirname(frameworkRoot), { recursive: true })
   fs.cpSync(RUNTIME_ROOT, frameworkRoot, {
     recursive: true,
-    filter: (src) =>
-      !src.includes(`${path.sep}.git${path.sep}`) &&
-      !src.endsWith(`${path.sep}.git`),
+    filter: frameworkFilter,
   })
+  fs.mkdirSync(path.join(frameworkRoot, 'runtime'), { recursive: true })
   chmodScripts(frameworkRoot)
 
   run('git', ['init', '-b', branch], { cwd: repoDir })
@@ -614,6 +624,57 @@ test('specify helper joins sanitized path lists with readable separators', () =>
   )
 
   assert.equal(output.trim(), 'src/app.js, tests/app.test.js')
+})
+
+test('sprint layout helpers resolve from RALPH_SCRIPT_DIR when SCRIPT_DIR is unset', () => {
+  const repoDir = initTempRepo()
+  const output = run(
+    'bash',
+    [
+      '-lc',
+      'set -u; unset SCRIPT_DIR RALPH_LAYOUT_SCRIPT_DIR; RALPH_SCRIPT_DIR="$PWD/scripts/ralph"; source "$RALPH_SCRIPT_DIR/lib/sprint-layout.sh"; ralph_backlog_root; ralph_sprints_root',
+    ],
+    { cwd: repoDir }
+  )
+
+  assert.deepEqual(output.trim().split('\n'), [
+    `${path.join(repoDir, 'scripts/ralph/backlog')}`,
+    `${path.join(repoDir, 'scripts/ralph/sprints')}`,
+  ])
+})
+
+test('composite agent profiles auto-route to piagent while simple profiles stay on codex', () => {
+  const repoDir = initTempRepo()
+  const output = run(
+    'bash',
+    [
+      '-lc',
+      [
+        'source "$PWD/scripts/ralph/lib/harness-exec.sh"',
+        'unset RALPH_HARNESS_OVERRIDE RALPH_HARNESS_SELECTION_SOURCE RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON RALPH_COMPOSITE_STEPS_JSON RALPH_PIAGENT_ROLE STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER RALPH_STORY_COMPLEXITY_SCORE',
+        'RALPH_STORY_COMPLEXITY_SCORE=0',
+        'STORY_COMPLEXITY_SCORE=0',
+        'STORY_COMPLEXITY_TIER=low',
+        '_apply_agent_profile reviewer',
+        'get_execution_profile_json reviewer',
+        'unset RALPH_HARNESS_OVERRIDE RALPH_HARNESS_SELECTION_SOURCE RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON RALPH_COMPOSITE_STEPS_JSON RALPH_PIAGENT_ROLE STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER RALPH_STORY_COMPLEXITY_SCORE',
+        'RALPH_STORY_COMPLEXITY_SCORE=0',
+        'STORY_COMPLEXITY_SCORE=0',
+        'STORY_COMPLEXITY_TIER=low',
+        '_apply_agent_profile documentation',
+        'get_execution_profile_json documentation',
+      ].join('; '),
+    ],
+    { cwd: repoDir }
+  )
+
+  const [reviewerProfile, documentationProfile] = output.trim().split('\n').map((line) => JSON.parse(line))
+  assert.equal(reviewerProfile.harness, 'piagent')
+  assert.equal(reviewerProfile.harness_source, 'composite-auto')
+  assert.equal(reviewerProfile.piagent_role, 'reviewer')
+  assert.equal(reviewerProfile.composite_profile, 'chain_review_v1')
+  assert.equal(documentationProfile.harness, 'codex')
+  assert.equal(documentationProfile.composite_profile, null)
 })
 
 test('ralph-story-run completes a simple story in one primary Codex cycle and syncs backlog state', () => {
@@ -2230,7 +2291,7 @@ JSON
   assert.equal(stories.stories[0].status, 'planned')
 })
 
-test('ralph-story prepare-all --force recovers a placeholder during generate phase and marks sprint ready', () => {
+test('ralph-story prepare-all --force recovers a placeholder during generate phase and reports ready candidates', () => {
   const repoDir = initTempRepo()
   const prdPath = 'scripts/ralph/tasks/prds/prd-epic-003.md'
   const storyPath = path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories/S-003/story.json')
@@ -2368,12 +2429,12 @@ JSON
 
   assert.match(output, /SKIP S-003: migration placeholder \(recover in generate phase\)/)
   assert.match(output, /Recovered migration placeholder for S-003; story status reset to planned/)
-  assert.match(output, /Promoted 1 story\/stories to ready\./)
-  assert.match(output, /All stories ready — sprint automatically marked ready\./)
+  assert.match(output, /1 story\/stories passed prep health and are ready candidates for \.\/ralph-sprint\.sh mark-ready\./)
+  assert.match(output, /Next step: \.\/ralph-sprint\.sh mark-ready sprint-1/)
 
   const stories = JSON.parse(fs.readFileSync(path.join(repoDir, 'scripts/ralph/sprints/sprint-1/stories.json'), 'utf8'))
-  assert.equal(stories.status, 'ready')
-  assert.equal(stories.stories[0].status, 'ready')
+  assert.equal(stories.status, 'planned')
+  assert.equal(stories.stories[0].status, 'planned')
 })
 
 test('ralph-story specify skips when prep fingerprint matches existing artifacts', () => {
@@ -2672,8 +2733,8 @@ test('ralph-status reports latest prep journal for the active sprint', () => {
   )
 
   const output = run('./scripts/ralph/ralph-status.sh', [], { cwd: repoDir })
-  assert.match(output, /Prep: passed \(prepare-all, stories=1, passed-stages=1, failed-stages=0, skipped-stages=1, duration-ms=1200\)/)
-  assert.match(output, /Prep updated: 2026-05-22T00:01:00Z/)
+  assert.match(output, /Prep: passed \(prepare-all, phase=unknown, stories=1, passed-stages=1, failed-stages=0, skipped-stages=1, duration-ms=1200\)/)
+  assert.match(output, /Prep updated: 2026-05-22T00:00:00Z/)
   assert.match(output, /Prep story S-001: generate=skipped, specify=passed/)
   assert.match(output, new RegExp(prepSummaryPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 })
@@ -2833,11 +2894,12 @@ echo "mock codex"
   )
 
   run('./scripts/ralph/ralph-sprint.sh', ['create', 'sprint-1'], { cwd: repoDir })
+  fs.rmSync(path.join(repoDir, 'scripts/ralph/backlog/sprint-1'), { recursive: true, force: true })
 
   writeFile(
     storiesPath,
     storiesJson('sprint-1', {
-      status: 'active',
+      status: 'ready',
       stories: [
         {
           id: 'S-001',
@@ -2868,7 +2930,7 @@ echo "mock codex"
       sprint: 'sprint-1',
       priority: 1,
       depends_on: [],
-      status: 'planned',
+      status: 'ready',
       spec: {
         scope: 'Update one file and verify the manifest is live.',
         out_of_scope: [],
@@ -2924,6 +2986,9 @@ mv "$tmp" "$stories"
 git checkout ralph/sprint/sprint-1 >/dev/null 2>&1 || true
 `
   )
+
+  writeFile(path.join(repoDir, 'scripts/ralph/.active-sprint'), 'sprint-1\n')
+  run('git', ['checkout', 'ralph/sprint/sprint-1'], { cwd: repoDir })
 
   run('git', ['add', '.'], { cwd: repoDir })
   run('git', ['commit', '-m', 'setup live manifest test'], { cwd: repoDir })
