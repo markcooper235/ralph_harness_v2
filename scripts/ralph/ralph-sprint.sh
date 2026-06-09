@@ -11,10 +11,13 @@ SPRINTS_DIR="$SCRIPT_DIR/sprints"
 ARCHIVE_ROOT="$SPRINTS_DIR/archive"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINT_BRANCH_PREFIX="ralph/sprint"
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_FREE_MODE
+source "$SCRIPT_DIR/lib/sprint-layout.sh"
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/ralph/ralph-sprint.sh <command> [args]
+Usage: ./scripts/ralph/ralph-sprint.sh [--free] <command> [args]
 
 Commands:
   list                              List available sprints
@@ -27,6 +30,9 @@ Commands:
   branch <sprint-name>              Ensure sprint branch exists (ralph/sprint/<sprint-name>)
   status                            Show active sprint + story readiness
   -h, --help                        Show this help
+
+Global options:
+  --free                            Prefer the OpenRouter free-tier model mapping
 
 Remove options:
   --hard                            Permanently delete sprint dirs instead of archiving
@@ -57,11 +63,6 @@ normalize_sprint_name() {
     | tr '[:upper:]' '[:lower:]' \
     | sed -E 's|[^a-z0-9._-]+|-|g' \
     | sed -E 's|^-+||; s|-+$||'
-}
-
-sprint_stories_file() {
-  local sprint="$1"
-  printf '%s/sprints/%s/stories.json' "$SCRIPT_DIR" "$sprint"
 }
 
 sprint_branch_name() {
@@ -139,28 +140,7 @@ checkout_sprint_branch() {
 
 ensure_sprint_structure() {
   local sprint="$1"
-  local stories_file stories_dir
-  stories_file="$(sprint_stories_file "$sprint")"
-  stories_dir="$SPRINTS_DIR/$sprint/stories"
-
-  mkdir -p "$SPRINTS_DIR/$sprint" "$stories_dir"
-
-  if [ ! -f "$stories_file" ]; then
-    jq -n \
-      --argjson version 1 \
-      --arg project "$(basename "$WORKSPACE_ROOT")" \
-      --arg sprint "$sprint" \
-      '{
-        "version": $version,
-        "project": $project,
-        "sprint": $sprint,
-        "status": "planned",
-        "capacityTarget": 8,
-        "capacityCeiling": 10,
-        "activeStoryId": null,
-        "stories": []
-      }' > "$stories_file"
-  fi
+  ensure_sprint_backlog_structure "$sprint"
 }
 
 get_sprint_status() {
@@ -186,7 +166,7 @@ commit_sprint_ready_checkpoint() {
   local sprint="$1"
   local sprint_dir stories_file
 
-  sprint_dir="$SCRIPT_DIR/sprints/$sprint"
+  sprint_dir="$(sprint_live_dir "$sprint")"
   stories_file="$(sprint_stories_file "$sprint")"
 
   git add "$stories_file" "$sprint_dir" 2>/dev/null || true
@@ -210,7 +190,19 @@ set_active_sprint() {
 
 activate_sprint() {
   local sprint="$1"
-  [ -f "$(sprint_stories_file "$sprint")" ] || fail "Sprint does not exist: $sprint"
+  local backlog_dir live_dir stories_file
+
+  backlog_dir="$(sprint_backlog_dir "$sprint")"
+  live_dir="$(sprint_live_dir "$sprint")"
+
+  if [ -d "$backlog_dir" ] && [ ! -d "$live_dir" ]; then
+    move_sprint_dir "$sprint" "$backlog_dir" "$live_dir" \
+      "${SCRIPT_DIR#${WORKSPACE_ROOT}/}/backlog/$sprint" \
+      "${SCRIPT_DIR#${WORKSPACE_ROOT}/}/sprints/$sprint"
+  fi
+
+  stories_file="$(sprint_stories_file "$sprint")" || fail "Sprint does not exist: $sprint"
+  [ -f "$stories_file" ] || fail "Sprint does not exist: $sprint"
 
   # Gate: sprint must be marked ready before activation
   local sprint_status
@@ -235,9 +227,7 @@ activate_sprint() {
   set_sprint_status "$sprint" "active"
   set_active_sprint "$sprint"
 
-  local sf
-  sf="$(sprint_stories_file "$sprint")"
-  git add "$sf" "$ACTIVE_SPRINT_FILE" 2>/dev/null || true
+  git add -A "$backlog_dir" "$live_dir" 2>/dev/null || true
   if ! git diff --cached --quiet 2>/dev/null; then
     git commit -m "chore(ralph): activate sprint $sprint"
   fi
@@ -248,9 +238,10 @@ activate_sprint() {
 }
 
 sorted_sprints() {
-  [ -d "$SPRINTS_DIR" ] || return 0
-
-  find "$SPRINTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null -exec basename {} \; \
+  {
+    [ -d "$(ralph_backlog_root)" ] && find "$(ralph_backlog_root)" -mindepth 1 -maxdepth 1 -type d 2>/dev/null -exec basename {} \;
+    [ -d "$SPRINTS_DIR" ] && find "$SPRINTS_DIR" -mindepth 1 -maxdepth 1 -type d ! -name archive 2>/dev/null -exec basename {} \;
+  } \
     | awk '
         /^sprint-[0-9]+$/ {
           num = $0; sub(/^sprint-/, "", num)
@@ -612,7 +603,7 @@ remove_sprint() {
   done
 
   stories_file="$(sprint_stories_file "$sprint")"
-  sprint_dir="$SPRINTS_DIR/$sprint"
+  sprint_dir="$(dirname "$stories_file")"
   [ -f "$stories_file" ] || fail "Sprint does not exist: $sprint"
 
   active="$(get_active_sprint || true)"
@@ -679,6 +670,30 @@ main() {
   require_cmd jq
   require_cmd sed
   require_cmd tr
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --free)
+        RALPH_FREE_MODE=1
+        export RALPH_FREE_MODE
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -h|--help|help)
+        usage
+        return 0
+        ;;
+      -*)
+        fail "Unknown global option: $1"
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
 
   local cmd="${1:-}"
   case "$cmd" in

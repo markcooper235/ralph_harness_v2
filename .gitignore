@@ -10,6 +10,7 @@ scripts/ralph/runtime/
 scripts/ralph/sprints/**/.task-log-*.txt
 scripts/ralph/sprints/**/.fallow-report.json
 scripts/ralph/sprints/**/.fallow-autofix.txt
+scripts/ralph/sprints/archive/*.zip
 .fallow/
 
 # prd.json only if import-prd is used to seed a sprint

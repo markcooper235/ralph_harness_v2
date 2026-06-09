@@ -58,7 +58,8 @@ LOCK_DIR="$SCRIPT_DIR/.workflow-lock"
 RALPH_HARNESS="${RALPH_HARNESS:-codex}"
 RALPH_MODEL="${RALPH_MODEL:-}"
 RALPH_AGENT="${RALPH_AGENT:-}"
-export RALPH_HARNESS RALPH_MODEL RALPH_AGENT
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_HARNESS RALPH_MODEL RALPH_AGENT RALPH_FREE_MODE
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
 RUNTIME_ROOT="$SCRIPT_DIR/runtime"
@@ -89,6 +90,7 @@ Options:
    --harness HARNESS       Specify harness to use (codex|piagent) (default: codex)
    --model MODEL           Specify model to use with the harness (default: harness-specific)
    --agent AGENT           Specify agent/subagent type to use (default: harness-specific)
+   --free                  Prefer the OpenRouter free-tier model mapping
    -h, --help              Show this help
 
 Environment:
@@ -97,6 +99,7 @@ Environment:
    RALPH_HARNESS           Harness to use (overridden by --harness)
    RALPH_MODEL             Model to use (overridden by --model)
    RALPH_AGENT             Agent to use (overridden by --agent)
+   RALPH_FREE_MODE         Prefer free-tier OpenRouter models when set to 1
 EOF
 }
 
@@ -112,6 +115,7 @@ while [[ $# -gt 0 ]]; do
     --harness)             RALPH_HARNESS="${2:-}"; shift 2 ;;
     --model)               RALPH_MODEL="${2:-}"; shift 2 ;;
     --agent)               RALPH_AGENT="${2:-}"; shift 2 ;;
+    --free)                RALPH_FREE_MODE=1; shift ;;
     -h|--help)             usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac

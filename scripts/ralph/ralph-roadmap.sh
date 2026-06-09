@@ -5,7 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_FREE_MODE
 source "$SCRIPT_DIR/lib/codex-exec.sh"
+source "$SCRIPT_DIR/lib/sprint-layout.sh"
 ROADMAP_JSON="$SCRIPT_DIR/roadmap.json"
 ROADMAP_MD="$SCRIPT_DIR/roadmap.md"
 ROADMAP_SOURCE="$SCRIPT_DIR/roadmap-source.md"
@@ -46,6 +49,7 @@ Options:
   --capacity-target N       Sprint effort target (default: 8)
   --capacity-ceiling N      Sprint effort ceiling (default: 10)
   --apply-only              Apply existing scripts/ralph/roadmap.json without re-planning
+  --free                    Prefer the OpenRouter free-tier model mapping
   --quiet                   Reduce wrapper output
   -h, --help                Show help
 
@@ -362,7 +366,7 @@ render_roadmap_markdown() {
 
 ensure_empty_sprint_backlog() {
   local sprint="$1"
-  local stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
+  local stories_file="$(sprint_backlog_dir "$sprint")/stories.json"
   [ -f "$stories_file" ] || return 0
   if jq -e '(.stories | length) == 0' "$stories_file" >/dev/null 2>&1; then
     return 0
@@ -399,8 +403,8 @@ reset_seed_example_backlog() {
 
 ensure_sprint_structure_local() {
   local sprint="$1"
-  local stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
-  mkdir -p "$SCRIPT_DIR/sprints/$sprint/stories"
+  local stories_file="$(sprint_backlog_dir "$sprint")/stories.json"
+  mkdir -p "$(sprint_backlog_dir "$sprint")/stories"
   if [ ! -f "$stories_file" ]; then
     jq -n \
       --arg project "$(basename "$WORKSPACE_ROOT")" \
@@ -423,7 +427,7 @@ ensure_sprint_structure_local() {
 write_sprint_capacity_metadata() {
   local sprint="$1"
   local sprint_title="$2"
-  local stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
+  local stories_file="$(sprint_backlog_dir "$sprint")/stories.json"
   local tmp_file
   tmp_file="$(mktemp)"
   jq --arg sprint "$sprint" --arg title "$sprint_title" \
@@ -478,7 +482,7 @@ upsert_story_metadata() {
 
 reconcile_sprint_backlog() {
   local sprint_name="$1"
-  local stories_file="$SCRIPT_DIR/sprints/$sprint_name/stories.json"
+  local stories_file="$(sprint_backlog_dir "$sprint_name")/stories.json"
   local story_json story_id depends_json story_path tmp_file
 
   while IFS= read -r story_json; do
@@ -489,7 +493,7 @@ reconcile_sprint_backlog() {
       upsert_story_metadata "$stories_file" "$story_json"
     else
       depends_json="$(printf '%s\n' "$story_json" | jq -c '(.dependsOn // [])')"
-      story_path="${SCRIPT_DIR#${WORKSPACE_ROOT}/}/sprints/$sprint_name/stories/$story_id/story.json"
+      story_path="${SCRIPT_DIR#${WORKSPACE_ROOT}/}/backlog/$sprint_name/stories/$story_id/story.json"
       tmp_file="$(mktemp)"
       jq \
         --argjson story "$story_json" \
@@ -529,10 +533,10 @@ apply_roadmap_to_sprints() {
     fi
 
     ensure_sprint_structure_local "$sprint_name"
-    if [ -f "$SCRIPT_DIR/sprints/$sprint_name/stories.json" ]; then
+    if [ -f "$(sprint_backlog_dir "$sprint_name")/stories.json" ]; then
       if [ "$REFINE_MODE" -eq 1 ]; then
-        if is_seed_example_backlog "$SCRIPT_DIR/sprints/$sprint_name/stories.json"; then
-          reset_seed_example_backlog "$SCRIPT_DIR/sprints/$sprint_name/stories.json" "$sprint_name"
+        if is_seed_example_backlog "$(sprint_backlog_dir "$sprint_name")/stories.json"; then
+          reset_seed_example_backlog "$(sprint_backlog_dir "$sprint_name")/stories.json" "$sprint_name"
         fi
       else
         ensure_empty_sprint_backlog "$sprint_name"
@@ -611,6 +615,11 @@ main() {
         ;;
       --apply-only)
         APPLY_ONLY=1
+        shift
+        ;;
+      --free)
+        RALPH_FREE_MODE=1
+        export RALPH_FREE_MODE
         shift
         ;;
       --quiet)

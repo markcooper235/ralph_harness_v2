@@ -86,7 +86,7 @@ Or let `next --activate` select the next ready sprint automatically:
 
 ## Story Format
 
-Stories live in `scripts/ralph/sprints/<sprint-name>/stories.json`. Each entry is a backlog item; the full task container lives in `scripts/ralph/sprints/<sprint-name>/stories/<ID>/story.json`.
+Planned stories live in `scripts/ralph/backlog/<sprint-name>/stories.json`. Ready and active sprint stories live in `scripts/ralph/sprints/<sprint-name>/stories.json`, and archived sprints move under `scripts/ralph/sprints/archive/`.
 
 ### stories.json entry
 
@@ -100,7 +100,7 @@ Stories live in `scripts/ralph/sprints/<sprint-name>/stories.json`. Each entry i
   "effort": 3,
   "status": "planned",
   "depends_on": [],
-  "story_path": "sprints/sprint-1/stories/S-001/story.json"
+  "story_path": "backlog/sprint-1/stories/S-001/story.json"
 }
 ```
 

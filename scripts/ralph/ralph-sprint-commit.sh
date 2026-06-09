@@ -12,6 +12,9 @@ PRD_FILE="$SCRIPT_DIR/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 LAST_BRANCH_FILE="$SCRIPT_DIR/.last-branch"
 SPRINT_BRANCH_PREFIX="ralph/sprint"
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_FREE_MODE
+source "$SCRIPT_DIR/lib/sprint-layout.sh"
 TARGET_BRANCH=""
 DRY_RUN=false
 KEEP_SOURCE=false
@@ -22,7 +25,7 @@ FULL_REGRESSION=false
 
 usage() {
   cat <<'USAGE'
-Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression]
+Usage: ./scripts/ralph/ralph-sprint-commit.sh [--target BRANCH] [--dry-run] [--keep] [--skip-regression] [--run-fallow] [--fallow-autofix] [--full-regression] [--free]
 
 Behavior:
   1. Validates active sprint exists and all stories are done/abandoned
@@ -41,6 +44,7 @@ Options:
   --run-fallow         Run optional fallow cleanup/checks before regression
   --fallow-autofix     Allow scoped fallow auto-fix during --run-fallow cleanup
   --full-regression    Run repo-wide regression instead of sprint-scoped verification
+  --free               Prefer the OpenRouter free-tier model mapping
   -h, --help           Show this help
 USAGE
 }
@@ -132,6 +136,32 @@ ensure_transient_files_untracked() {
   fi
 }
 
+prune_archive_retention() {
+  local keep_count="${1:-7}"
+  [ -d "$ARCHIVE_DIR" ] || return 0
+
+  local -a archive_dirs=()
+  mapfile -t archive_dirs < <(
+    find "$ARCHIVE_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@\t%f\n' 2>/dev/null \
+      | sort -nr \
+      | awk -F '\t' '{print $2}'
+  )
+
+  [ "${#archive_dirs[@]}" -gt "$keep_count" ] || return 0
+
+  local i dir_name dir_path
+  for ((i = keep_count; i < ${#archive_dirs[@]}; i++)); do
+    dir_name="${archive_dirs[$i]}"
+    dir_path="$ARCHIVE_DIR/$dir_name"
+    [ -d "$dir_path" ] || continue
+    if [ ! -f "$ARCHIVE_DIR/$dir_name.zip" ]; then
+      (cd "$ARCHIVE_DIR" && zip -rq "$dir_name.zip" "$dir_name")
+    fi
+    rm -rf "$dir_path"
+    echo "Compressed archived sprint: $ARCHIVE_DIR/$dir_name.zip"
+  done
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --target)
@@ -163,6 +193,11 @@ while [ $# -gt 0 ]; do
       FULL_REGRESSION=true
       shift
       ;;
+    --free)
+      RALPH_FREE_MODE=1
+      export RALPH_FREE_MODE
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -177,6 +212,7 @@ require_cmd git
 require_cmd jq
 require_cmd sed
 require_cmd awk
+require_cmd zip
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fail "Must be run inside a git repository."
@@ -185,7 +221,7 @@ fi
 ACTIVE_SPRINT="$(get_active_sprint || true)"
 [ -n "$ACTIVE_SPRINT" ] || fail "No active sprint set."
 
-STORIES_FILE="$SPRINTS_DIR/$ACTIVE_SPRINT/stories.json"
+STORIES_FILE="$(sprint_stories_file "$ACTIVE_SPRINT")"
 [ -f "$STORIES_FILE" ] || fail "Missing stories file: $STORIES_FILE"
 
 SPRINT_BRANCH="$(sprint_branch_name "$ACTIVE_SPRINT")"
@@ -301,11 +337,9 @@ ARCHIVE_PATH="$ARCHIVE_DIR/$DATE_PREFIX-$ACTIVE_SPRINT"
 if [ -e "$ARCHIVE_PATH" ]; then
   ARCHIVE_PATH="$ARCHIVE_DIR/$DATE_PREFIX-$ACTIVE_SPRINT-$(date +%H%M%S)"
 fi
-mkdir -p "$ARCHIVE_PATH"
-cp "$STORIES_FILE" "$ARCHIVE_PATH/stories.json"
-if [ -d "$SPRINTS_DIR/$ACTIVE_SPRINT/stories" ]; then
-  cp -r "$SPRINTS_DIR/$ACTIVE_SPRINT/stories" "$ARCHIVE_PATH/stories"
-fi
+SOURCE_SPRINT_DIR="$(dirname "$STORIES_FILE")"
+ARCHIVE_TARGET_PREFIX="${SCRIPT_DIR#${WORKSPACE_ROOT}/}/sprints/archive/$(basename "$ARCHIVE_PATH")"
+move_sprint_dir "$ACTIVE_SPRINT" "$SOURCE_SPRINT_DIR" "$ARCHIVE_PATH" "${SCRIPT_DIR#${WORKSPACE_ROOT}/}/sprints/$ACTIVE_SPRINT" "$ARCHIVE_TARGET_PREFIX"
 [ -f "$ACTIVE_SPRINT_FILE" ] && cp "$ACTIVE_SPRINT_FILE" "$ARCHIVE_PATH/.active-sprint"
 [ -f "$ACTIVE_PRD_FILE" ] && cp "$ACTIVE_PRD_FILE" "$ARCHIVE_PATH/.active-prd"
 [ -f "$LAST_BRANCH_FILE" ] && cp "$LAST_BRANCH_FILE" "$ARCHIVE_PATH/.last-branch"
@@ -318,20 +352,14 @@ target_branch=$TARGET_BRANCH
 source_stories_file=$STORIES_FILE
 MANIFEST
 
-if [ -n "$(git status --porcelain -- "$ARCHIVE_PATH")" ]; then
-  git add "$ARCHIVE_PATH"
-  if ! git diff --cached --quiet; then
-    git commit -m "chore(ralph): archive sprint $ACTIVE_SPRINT closeout artifacts"
-  fi
-fi
-
-# Clear activeStoryId before merge
 TMP_FILE="$(mktemp)"
-jq '.activeStoryId = null' "$STORIES_FILE" > "$TMP_FILE"
-mv "$TMP_FILE" "$STORIES_FILE"
-if ! git diff --quiet -- "$STORIES_FILE"; then
-  git add "$STORIES_FILE"
-  git commit -m "chore(ralph): finalize sprint $ACTIVE_SPRINT story state"
+jq '.status = "closed" | .activeStoryId = null' "$ARCHIVE_PATH/stories.json" > "$TMP_FILE"
+mv "$TMP_FILE" "$ARCHIVE_PATH/stories.json"
+prune_archive_retention 7
+
+git add -A "$SOURCE_SPRINT_DIR" "$ARCHIVE_DIR"
+if ! git diff --cached --quiet; then
+  git commit -m "chore(ralph): archive sprint $ACTIVE_SPRINT closeout artifacts"
 fi
 
 # Merge sprint branch into target

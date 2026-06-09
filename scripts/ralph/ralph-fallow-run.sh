@@ -39,7 +39,7 @@ Story-gate options:
   --quiet             Reduce output
 
 Examples:
-  ./scripts/ralph/ralph-fallow-run.sh --story scripts/ralph/sprints/sprint-1/stories/S-001/story.json
+  ./scripts/ralph/ralph-fallow-run.sh --story scripts/ralph/backlog/sprint-1/stories/S-001/story.json
   ./scripts/ralph/ralph-fallow-run.sh --global --mode all --format json --score
   ./scripts/ralph/ralph-fallow-run.sh --changed-since main --mode audit --format json
   ./scripts/ralph/ralph-fallow-run.sh --changed-since HEAD~5 --mode dead-code --summary

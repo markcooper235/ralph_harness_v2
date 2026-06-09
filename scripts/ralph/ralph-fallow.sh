@@ -22,6 +22,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_FREE_MODE
+source "$SCRIPT_DIR/lib/sprint-layout.sh"
 source "$SCRIPT_DIR/lib/codex-exec.sh"
 
 STORY_FILE=""
@@ -48,6 +51,7 @@ Options:
   --dry-run       Report issues without auto-fixing or failing
   --no-autofix    Report and fail without attempting auto-fix
   --quiet         Suppress verbose output
+  --free          Prefer the OpenRouter free-tier model mapping for Codex auto-fix
   -h, --help      Show help
 
 Environment:
@@ -67,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run)    DRY_RUN=1; shift ;;
     --no-autofix) NO_AUTOFIX=1; shift ;;
     --quiet)      QUIET=1; shift ;;
+    --free)       RALPH_FREE_MODE=1; export RALPH_FREE_MODE; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac
@@ -91,7 +96,7 @@ resolve_story_file() {
   local sprint
   sprint="$(awk 'NF {print; exit}' "$active_sprint_file")"
 
-  local stories_file="$SCRIPT_DIR/sprints/$sprint/stories.json"
+  local stories_file="$(sprint_stories_file "$sprint")"
   [ -f "$stories_file" ] || fail "No stories.json for sprint $sprint: $stories_file"
 
   local active_id

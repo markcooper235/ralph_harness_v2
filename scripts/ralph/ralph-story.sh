@@ -31,6 +31,10 @@ if ! load_ralph_env "${SCRIPT_DIR}/.ralph-env"; then
   load_ralph_env "${HOME}/.ralph-env" || true
 fi
 
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_FREE_MODE
+
+source "$SCRIPT_DIR/lib/sprint-layout.sh"
 source "$SCRIPT_DIR/lib/harness-exec.sh"
 source "$SCRIPT_DIR/lib/specify.sh"
 
@@ -1096,14 +1100,14 @@ resolve_stories_file() {
   local active_sprint
   active_sprint="$(get_active_sprint)" || fail "No active sprint. Use ralph-sprint.sh use <sprint-name>."
 
-  STORIES_FILE="$SPRINTS_DIR/$active_sprint/stories.json"
+  STORIES_FILE="$(sprint_stories_file "$active_sprint")"
   [ -f "$STORIES_FILE" ] || fail "No stories.json for sprint '$active_sprint'. Run ralph-roadmap.sh or create the sprint backlog first."
 }
 
 resolve_stories_file_for_sprint() {
   local sprint_name="$1"
   [ -n "$sprint_name" ] || fail "Missing sprint name."
-  STORIES_FILE="$SPRINTS_DIR/$sprint_name/stories.json"
+  STORIES_FILE="$(sprint_stories_file "$sprint_name")"
   [ -f "$STORIES_FILE" ] || fail "No stories.json for sprint '$sprint_name'. Run ralph-roadmap.sh or create the sprint backlog first."
 }
 
@@ -2483,8 +2487,10 @@ cmd_add() {
   # Determine active sprint for story_path
   local active_sprint
   active_sprint="$(get_active_sprint)" || fail "No active sprint."
-  local dest_rel="${SCRIPT_DIR#${WORKSPACE_ROOT}/}"
-  local story_path="$dest_rel/sprints/$active_sprint/stories/$new_id/story.json"
+  local sprint_dir_rel
+  sprint_dir_rel="$(dirname "$(sprint_stories_file "$active_sprint")")"
+  sprint_dir_rel="${sprint_dir_rel#${WORKSPACE_ROOT}/}"
+  local story_path="$sprint_dir_rel/stories/$new_id/story.json"
 
   local tmp
   tmp="$(mktemp)"
@@ -3024,8 +3030,10 @@ cmd_import_prd() {
     done < <(jq -r '.stories[].id' "$STORIES_FILE")
     local new_id
     new_id="$(printf 'S-%03d' $((max_n + 1)))"
-    local dest_rel="${SCRIPT_DIR#${WORKSPACE_ROOT}/}"
-    local story_path="$dest_rel/sprints/$active_sprint/stories/$new_id/story.json"
+    local sprint_dir_rel
+    sprint_dir_rel="$(dirname "$(sprint_stories_file "$active_sprint")")"
+    sprint_dir_rel="${sprint_dir_rel#${WORKSPACE_ROOT}/}"
+    local story_path="$sprint_dir_rel/stories/$new_id/story.json"
 
     local tmp
     tmp="$(mktemp)"

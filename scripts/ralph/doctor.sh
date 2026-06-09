@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 RALPH_HARNESS="${RALPH_HARNESS:-codex}"
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_FREE_MODE
 
 load_ralph_env() {
   local env_file="$1"
@@ -22,9 +24,34 @@ if ! load_ralph_env "${SCRIPT_DIR}/.ralph-env"; then
   load_ralph_env "${HOME}/.ralph-env" || true
 fi
 
+source "$SCRIPT_DIR/lib/sprint-layout.sh"
 source "$SCRIPT_DIR/lib/specify.sh"
 source "$SCRIPT_DIR/lib/harness-capabilities.sh"
 source "$SCRIPT_DIR/lib/harness-exec.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/ralph/doctor.sh [--free]
+
+Sanity checks for running Ralph in the current project.
+
+Options:
+  --free      Preview agent/model routing with the OpenRouter free-tier map
+  -h, --help  Show help
+
+Environment:
+  RALPH_FREE_MODE  Prefer free-tier OpenRouter models when set to 1
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --free) RALPH_FREE_MODE=1; export RALPH_FREE_MODE; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "Unknown argument: $1" ;;
+  esac
+done
+
 ROADMAP_FILE="$SCRIPT_DIR/roadmap.json"
 ACTIVE_SPRINT_FILE="$SCRIPT_DIR/.active-sprint"
 SPRINTS_DIR="$SCRIPT_DIR/sprints"
@@ -88,7 +115,7 @@ if [ ! -f "$SPRINT_TEST_FILE" ]; then
 fi
 
 # SpecKit artifacts should be committed with the sprint, not gitignored
-SAMPLE_SPECIFY_PATH="$SCRIPT_DIR/sprints/sprint-1/stories/S-001/.specify/spec.md"
+SAMPLE_SPECIFY_PATH="$SCRIPT_DIR/backlog/sprint-1/stories/S-001/.specify/spec.md"
 if git check-ignore -q "$SAMPLE_SPECIFY_PATH" 2>/dev/null; then
   echo "WARN: SpecKit .specify/ artifacts appear to be gitignored — spec files will not be committed."
   echo "      Check .gitignore for patterns matching '.specify' and remove them."
@@ -130,7 +157,7 @@ fi
 if [ -f "$ACTIVE_SPRINT_FILE" ]; then
   ACTIVE_SPRINT="$(awk 'NF {print; exit}' "$ACTIVE_SPRINT_FILE" || true)"
   if [ -n "${ACTIVE_SPRINT:-}" ]; then
-    STORIES_FILE="$SPRINTS_DIR/$ACTIVE_SPRINT/stories.json"
+    STORIES_FILE="$(sprint_stories_file "$ACTIVE_SPRINT")"
     if [ -f "$STORIES_FILE" ]; then
       echo "OK: active sprint '$ACTIVE_SPRINT' has stories.json"
     else

@@ -19,6 +19,8 @@ SELFTEST_TMP_BASE="${RALPH_SELFTEST_TMP_BASE:-$HOME/.cache}"
 KEEP_WORKTREE=0
 EXERCISE_PREP=0
 HEARTBEAT_INTERVAL="${RALPH_HEARTBEAT_INTERVAL_SECONDS:-5}"
+RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+export RALPH_FREE_MODE
 
 usage() {
   cat <<'EOF'
@@ -164,7 +166,7 @@ EOF
 }
 
 write_story_files() {
-  local sprint_dir="$WORKTREE_DIR/scripts/ralph/sprints/$SELFTEST_SPRINT"
+  local sprint_dir="$WORKTREE_DIR/scripts/ralph/backlog/$SELFTEST_SPRINT"
   mkdir -p \
     "$sprint_dir/stories/S-901" \
     "$sprint_dir/stories/S-902" \
@@ -193,7 +195,7 @@ write_story_files() {
       "status": "planned",
       "agent": "researcher",
       "depends_on": [],
-      "story_path": "scripts/ralph/sprints/sprint-framework-selftest/stories/S-901/story.json",
+      "story_path": "scripts/ralph/backlog/sprint-framework-selftest/stories/S-901/story.json",
       "goal": "Exercise the researcher profile deterministically.",
       "promptContext": "Research and investigation smoke validation for the Ralph framework."
     },
@@ -209,7 +211,7 @@ write_story_files() {
       "depends_on": [
         "S-901"
       ],
-      "story_path": "scripts/ralph/sprints/sprint-framework-selftest/stories/S-902/story.json",
+      "story_path": "scripts/ralph/backlog/sprint-framework-selftest/stories/S-902/story.json",
       "goal": "Exercise the senior-dev profile deterministically.",
       "promptContext": "Architecture and refactor smoke validation for the Ralph framework."
     },
@@ -225,7 +227,7 @@ write_story_files() {
       "depends_on": [
         "S-902"
       ],
-      "story_path": "scripts/ralph/sprints/sprint-framework-selftest/stories/S-903/story.json",
+      "story_path": "scripts/ralph/backlog/sprint-framework-selftest/stories/S-903/story.json",
       "goal": "Exercise the qa-test profile deterministically.",
       "promptContext": "Test, verification, and acceptance smoke validation for the Ralph framework."
     },
@@ -241,7 +243,7 @@ write_story_files() {
       "depends_on": [
         "S-903"
       ],
-      "story_path": "scripts/ralph/sprints/sprint-framework-selftest/stories/S-904/story.json",
+      "story_path": "scripts/ralph/backlog/sprint-framework-selftest/stories/S-904/story.json",
       "goal": "Exercise the reviewer profile deterministically.",
       "promptContext": "Code review and regression risk smoke validation for the Ralph framework."
     },
@@ -257,7 +259,7 @@ write_story_files() {
       "depends_on": [
         "S-904"
       ],
-      "story_path": "scripts/ralph/sprints/sprint-framework-selftest/stories/S-905/story.json",
+      "story_path": "scripts/ralph/backlog/sprint-framework-selftest/stories/S-905/story.json",
       "goal": "Exercise the documentation profile deterministically.",
       "promptContext": "Documentation and explanation smoke validation for the Ralph framework."
     }
@@ -495,7 +497,7 @@ EOF
 
 write_prepare_smoke_sprint() {
   local prep_sprint="sprint-framework-prepare-selftest"
-  local sprint_dir="$WORKTREE_DIR/scripts/ralph/sprints/$prep_sprint"
+  local sprint_dir="$WORKTREE_DIR/scripts/ralph/backlog/$prep_sprint"
   mkdir -p "$sprint_dir"
   cat > "$sprint_dir/stories.json" <<'EOF'
 {
@@ -518,7 +520,7 @@ write_prepare_smoke_sprint() {
       "status": "planned",
       "agent": "researcher",
       "depends_on": [],
-      "story_path": "scripts/ralph/sprints/sprint-framework-prepare-selftest/stories/S-991/story.json",
+      "story_path": "scripts/ralph/backlog/sprint-framework-prepare-selftest/stories/S-991/story.json",
       "goal": "Exercise prepare-all while preserving an explicit researcher assignment.",
       "promptContext": "Research and investigation prepare smoke test for deterministic agent routing."
     }
@@ -535,11 +537,11 @@ run_prepare_smoke_if_requested() {
     cd "$WORKTREE_DIR"
     RALPH_HEARTBEAT_INTERVAL_SECONDS="$HEARTBEAT_INTERVAL" ./scripts/ralph/ralph-story.sh prepare-all --sprint sprint-framework-prepare-selftest --jobs 1
   )
-  local story_path="$WORKTREE_DIR/scripts/ralph/sprints/sprint-framework-prepare-selftest/stories/S-991/story.json"
+  local story_path="$WORKTREE_DIR/scripts/ralph/backlog/sprint-framework-prepare-selftest/stories/S-991/story.json"
   [ -f "$story_path" ] || fail "prepare-all did not generate story.json for S-991"
   assert_json_value "$story_path" '.agent == "researcher"' "prepare-all preserved explicit agent"
 
-  rm -rf "$WORKTREE_DIR/scripts/ralph/sprints/sprint-framework-prepare-selftest"
+  rm -rf "$WORKTREE_DIR/scripts/ralph/backlog/sprint-framework-prepare-selftest"
   rm -rf "$WORKTREE_DIR/scripts/ralph/runtime/prep-runs"
 }
 
@@ -717,7 +719,7 @@ wait_for_live_status_and_isolation() {
 }
 
 run_loop_and_closeout() {
-  local selftest_stories_json="$WORKTREE_DIR/scripts/ralph/sprints/$SELFTEST_SPRINT/stories.json"
+  local selftest_stories_json="$WORKTREE_DIR/scripts/ralph/backlog/$SELFTEST_SPRINT/stories.json"
   if [ ! -f "$selftest_stories_json" ]; then
     log "Self-test sprint backlog missing; re-seeding $SELFTEST_SPRINT before loop start."
     write_story_files
@@ -760,7 +762,7 @@ run_loop_and_closeout() {
   )
   assert_contains "$ARTIFACT_DIR/status-final.out" "Loop: stopped" "final status"
 
-  local stories_json="$WORKTREE_DIR/scripts/ralph/sprints/$SELFTEST_SPRINT/stories.json"
+  local stories_json="$WORKTREE_DIR/scripts/ralph/backlog/$SELFTEST_SPRINT/stories.json"
   assert_json_value "$stories_json" 'all(.stories[]; .status == "done")' "all self-test stories done"
 
   (
@@ -814,12 +816,12 @@ main() {
   validate_doctor_output
   validate_complexity_and_tier_matrix
   validate_dry_run_prompt \
-    "$WORKTREE_DIR/scripts/ralph/sprints/$SELFTEST_SPRINT/stories/S-901/story.json" \
+    "$WORKTREE_DIR/scripts/ralph/backlog/$SELFTEST_SPRINT/stories/S-901/story.json" \
     "\"agent\":\"researcher\"" \
     "profile: fanout_research_v1" \
     "$WORKTREE_DIR/.selftest-researcher-dryrun.out"
   validate_dry_run_prompt \
-    "$WORKTREE_DIR/scripts/ralph/sprints/$SELFTEST_SPRINT/stories/S-902/story.json" \
+    "$WORKTREE_DIR/scripts/ralph/backlog/$SELFTEST_SPRINT/stories/S-902/story.json" \
     "\"agent\":\"senior-dev\"" \
     "profile: chain_implement_verify_v1" \
     "$WORKTREE_DIR/.selftest-senior-dryrun.out"
