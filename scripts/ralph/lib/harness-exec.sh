@@ -26,8 +26,8 @@ RALPH_RUNTIME_PI_MODELS_FILE="$RALPH_RUNTIME_PI_AGENT_DIR/models.json"
 # Source harness capabilities helpers
 source "$HARNESS_LIB_DIR/harness-capabilities.sh"
 
-# Determine which harness to use
-_get_harness() {
+# Determine which harness was requested before any auto-routing
+_get_requested_harness() {
   if [ -n "${RALPH_HARNESS_OVERRIDE:-}" ]; then
     echo "$RALPH_HARNESS_OVERRIDE"
   elif [ -n "${RALPH_HARNESS:-}" ]; then
@@ -35,6 +35,11 @@ _get_harness() {
   else
     echo "$RALPH_HARNESS_DEFAULT"
   fi
+}
+
+# Determine which harness to use
+_get_harness() {
+  _get_requested_harness
 }
 
 _get_harness_selection_source() {
@@ -47,6 +52,36 @@ _get_harness_selection_source() {
   else
     echo "default"
   fi
+}
+
+_agent_composite_profile_name() {
+  local agent_name="$1"
+  local requested_harness="${2:-$(_get_requested_harness)}"
+  local composite_profile=""
+
+  composite_profile="$(_get_agent_profile_field "$agent_name" "$requested_harness" ".composite_profile")"
+  [ -n "$composite_profile" ] || composite_profile="$(_get_agent_profile_field "$agent_name" "codex" ".composite_profile")"
+  [ -n "$composite_profile" ] || composite_profile="$(_get_agent_profile_field "$agent_name" "piagent" ".composite_profile")"
+  printf '%s\n' "$composite_profile"
+}
+
+_resolve_harness_for_agent() {
+  local agent_name="$1"
+  local requested_harness="${2:-$(_get_requested_harness)}"
+  local composite_profile=""
+
+  if ! _composites_enabled; then
+    printf '%s\n' "$requested_harness"
+    return 0
+  fi
+
+  composite_profile="$(_agent_composite_profile_name "$agent_name" "$requested_harness")"
+  if [ -n "$composite_profile" ] && command -v pi >/dev/null 2>&1; then
+    printf 'piagent\n'
+    return 0
+  fi
+
+  printf '%s\n' "$requested_harness"
 }
 
 # Load JSON value safely (handles missing files or invalid JSON)
@@ -342,6 +377,7 @@ EOF
       "api": "openai-responses",
       "apiKey": "OPENAI_API_KEY",
       "models": [
+        { "id": "gpt-5.4-mini" },
         { "id": "gpt-5.4" },
         { "id": "gpt-5.5" }
       ]
@@ -888,9 +924,17 @@ _apply_agent_profile() {
   local profile_json composite_profile composite_shape composite_required_extensions composite_subagent_roles composite_steps piagent_role
   local model_was_explicit=0
 
-  # Determine effective harness (same logic as in harness_exec_prompt)
-  local effective_harness
-  effective_harness="$(_get_harness)"
+  local requested_harness effective_harness
+  requested_harness="$(_get_requested_harness)"
+  effective_harness="$(_resolve_harness_for_agent "$agent_name" "$requested_harness")"
+  if [ "$effective_harness" != "$requested_harness" ]; then
+    RALPH_HARNESS_OVERRIDE="$effective_harness"
+    RALPH_HARNESS_SELECTION_SOURCE="composite-auto"
+    export RALPH_HARNESS_OVERRIDE RALPH_HARNESS_SELECTION_SOURCE
+  elif [ "${RALPH_HARNESS_SELECTION_SOURCE:-}" = "composite-auto" ]; then
+    unset RALPH_HARNESS_OVERRIDE
+    unset RALPH_HARNESS_SELECTION_SOURCE
+  fi
 
   if [ -n "${RALPH_MODEL:-}" ]; then
     model_was_explicit=1
