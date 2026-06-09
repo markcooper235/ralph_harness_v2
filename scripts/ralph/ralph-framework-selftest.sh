@@ -20,6 +20,7 @@ KEEP_WORKTREE=0
 EXERCISE_PREP=0
 HEARTBEAT_INTERVAL="${RALPH_HEARTBEAT_INTERVAL_SECONDS:-5}"
 RALPH_FREE_MODE="${RALPH_FREE_MODE:-0}"
+SELFTEST_LOOP_DISABLE_COMPOSITES="${RALPH_SELFTEST_LOOP_DISABLE_COMPOSITES:-0}"
 export RALPH_FREE_MODE
 
 usage() {
@@ -37,6 +38,7 @@ worktree. Validates:
 
 Options:
   --exercise-prepare   Also run prepare-all on a generated micro sprint
+  --disable-composites-loop Disable composite orchestration during the live loop
   --keep-worktree      Keep the temporary worktree for inspection
   -h, --help           Show help
 EOF
@@ -118,6 +120,22 @@ prune_stale_selftest_worktrees() {
           END { if (worktree != "") { print worktree "\t" branch } }
         '
   )
+}
+
+prune_stale_selftest_story_branches() {
+  local stories_root="$WORKTREE_DIR/scripts/ralph/backlog/$SELFTEST_SPRINT/stories"
+  [ -d "$stories_root" ] || return 0
+
+  local story_file story_branch
+  while IFS= read -r story_file; do
+    [ -n "$story_file" ] || continue
+    story_branch="$(jq -r '.branchName // empty' "$story_file" 2>/dev/null || true)"
+    [ -n "$story_branch" ] || continue
+    if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$story_branch"; then
+      log "Dropping stale self-test story branch before activation: $story_branch"
+      git -C "$REPO_ROOT" branch -D "$story_branch" >/dev/null 2>&1 || true
+    fi
+  done < <(find "$stories_root" -mindepth 2 -maxdepth 2 -name story.json | sort)
 }
 
 overlay_local_framework_tree() {
@@ -436,8 +454,8 @@ EOF
       ],
       "acceptance": "The quality notes mention both regression risk and missing tests.",
       "checks": [
-        "rg -q 'regression risk' scripts/ralph/selftest-fixtures/quality-notes.md",
-        "rg -q 'missing tests' scripts/ralph/selftest-fixtures/quality-notes.md"
+        "rg -qi 'regression risk' scripts/ralph/selftest-fixtures/quality-notes.md",
+        "rg -qi 'missing tests' scripts/ralph/selftest-fixtures/quality-notes.md"
       ],
       "depends_on": [],
       "status": "pending",
@@ -590,7 +608,8 @@ validate_complexity_and_tier_matrix() {
 
     local profile_json
 
-    unset RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
+    unset RALPH_HARNESS_OVERRIDE RALPH_HARNESS_SELECTION_SOURCE RALPH_PIAGENT_ROLE \
+      RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
       RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
       RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
       RALPH_COMPOSITE_STEPS_JSON STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER \
@@ -607,7 +626,8 @@ validate_complexity_and_tier_matrix() {
       and .composite_profile == null
     ' >/dev/null || fail "simple tier routing failed for documentation profile"
 
-    unset RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
+    unset RALPH_HARNESS_OVERRIDE RALPH_HARNESS_SELECTION_SOURCE RALPH_PIAGENT_ROLE \
+      RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
       RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
       RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
       RALPH_COMPOSITE_STEPS_JSON STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER \
@@ -618,13 +638,17 @@ validate_complexity_and_tier_matrix() {
     _apply_agent_profile reviewer
     profile_json="$(get_execution_profile_json reviewer)"
     printf '%s' "$profile_json" | jq -e '
-      .execution_tier == "composite-lite"
+      .harness == "piagent"
+      and .harness_source == "composite-auto"
+      and .execution_tier == "composite-lite"
       and .model == "gpt-5.4-mini"
       and .model_source == "agent-profile-lite"
+      and .piagent_role == "reviewer"
       and .composite_profile == "chain_review_v1"
     ' >/dev/null || fail "composite-lite tier routing failed for reviewer low-complexity profile"
 
-    unset RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
+    unset RALPH_HARNESS_OVERRIDE RALPH_HARNESS_SELECTION_SOURCE RALPH_PIAGENT_ROLE \
+      RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
       RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
       RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
       RALPH_COMPOSITE_STEPS_JSON STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER \
@@ -635,13 +659,17 @@ validate_complexity_and_tier_matrix() {
     _apply_agent_profile reviewer
     profile_json="$(get_execution_profile_json reviewer)"
     printf '%s' "$profile_json" | jq -e '
-      .execution_tier == "full-composite"
+      .harness == "piagent"
+      and .harness_source == "composite-auto"
+      and .execution_tier == "full-composite"
       and .model == "gpt-5.4"
       and .model_source == "complexity-tier-high"
+      and .piagent_role == "reviewer"
       and .composite_profile == "chain_review_v1"
     ' >/dev/null || fail "full-composite tier routing failed for reviewer high-complexity profile"
 
-    unset RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
+    unset RALPH_HARNESS_OVERRIDE RALPH_HARNESS_SELECTION_SOURCE RALPH_PIAGENT_ROLE \
+      RALPH_MODEL RALPH_MODEL_SELECTION_SOURCE RALPH_EXECUTION_TIER \
       RALPH_COMPOSITE_PROFILE RALPH_COMPOSITE_PROFILE_JSON RALPH_COMPOSITE_SHAPE \
       RALPH_COMPOSITE_REQUIRED_EXTENSIONS_JSON RALPH_COMPOSITE_SUBAGENT_ROLES_JSON \
       RALPH_COMPOSITE_STEPS_JSON STORY_COMPLEXITY_SCORE STORY_COMPLEXITY_TIER \
@@ -652,9 +680,12 @@ validate_complexity_and_tier_matrix() {
     _apply_agent_profile researcher
     profile_json="$(get_execution_profile_json researcher)"
     printf '%s' "$profile_json" | jq -e '
-      .execution_tier == "full-composite"
+      .harness == "piagent"
+      and .harness_source == "composite-auto"
+      and .execution_tier == "full-composite"
       and .model == "gpt-5.5"
       and .model_source == "complexity-tier-extreme"
+      and .piagent_role == "researcher"
       and .composite_profile == "fanout_research_v1"
     ' >/dev/null || fail "full-composite tier routing failed for researcher extreme-complexity profile"
   )
@@ -680,7 +711,7 @@ wait_for_live_status_and_isolation() {
   local env_file="$ARTIFACT_DIR/codex-env.out"
   local manifest_file=""
   local timeout_epoch=$(( $(date +%s) + 240 ))
-  local codex_pid=""
+  local harness_pid=""
 
   while [ "$(date +%s)" -lt "$timeout_epoch" ]; do
     (
@@ -688,14 +719,14 @@ wait_for_live_status_and_isolation() {
       ./scripts/ralph/ralph-status.sh > "$status_file" || true
     )
     manifest_file="$(find "$WORKTREE_DIR/scripts/ralph/runtime/story-runs" -name story-summary.json -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n1 | cut -d' ' -f2- || true)"
-    if [ -n "$manifest_file" ] && jq -e '.execution_profile.harness == "codex" and .execution_profile.composites_enabled == true and (.execution_profile.runtime_home | type == "string")' "$manifest_file" >/dev/null 2>&1; then
+    if [ -n "$manifest_file" ] && jq -e '.execution_profile.harness == "piagent" and .execution_profile.composites_enabled == true and (.execution_profile.runtime_home | type == "string")' "$manifest_file" >/dev/null 2>&1; then
       break
     fi
     sleep 2
   done
 
   [ -n "$manifest_file" ] || fail "Could not find live story summary in self-test worktree."
-  assert_json_value "$manifest_file" '.execution_profile.harness == "codex"' "live story summary"
+  assert_json_value "$manifest_file" '.execution_profile.harness == "piagent"' "live story summary"
   assert_json_value "$manifest_file" '.execution_profile.composites_enabled == true' "live story summary"
   assert_json_value "$manifest_file" '.execution_profile.runtime_home | type == "string"' "live story summary"
 
@@ -705,16 +736,16 @@ wait_for_live_status_and_isolation() {
 
   timeout_epoch=$(( $(date +%s) + 120 ))
   while [ "$(date +%s)" -lt "$timeout_epoch" ]; do
-    codex_pid="$(pgrep -f "codex.*-C $WORKTREE_DIR" | head -n1 || true)"
-    [ -n "$codex_pid" ] && break
+    harness_pid="$(pgrep -f "pi -p" | head -n1 || true)"
+    [ -n "$harness_pid" ] && break
     sleep 1
   done
-  if [ -n "$codex_pid" ] && [ -r "/proc/$codex_pid/environ" ]; then
-    tr '\0' '\n' < "/proc/$codex_pid/environ" > "$env_file"
-    assert_contains "$env_file" "HOME=$WORKTREE_DIR/scripts/ralph/runtime/home" "codex child env"
-    assert_contains "$env_file" "CODEX_HOME=$WORKTREE_DIR/scripts/ralph/runtime/home/.codex" "codex child env"
+  if [ -n "$harness_pid" ] && [ -r "/proc/$harness_pid/environ" ]; then
+    tr '\0' '\n' < "/proc/$harness_pid/environ" > "$env_file"
+    assert_contains "$env_file" "HOME=$WORKTREE_DIR/scripts/ralph/runtime/home" "piagent child env"
+    assert_contains "$env_file" "PI_CODING_AGENT_DIR=$WORKTREE_DIR/scripts/ralph/runtime/home/.pi/agent" "piagent child env"
   else
-    log "Live codex pid was not available before timeout; runtime manifest and prep output already confirm isolated runtime-home routing."
+    log "Live piagent pid was not available before timeout; runtime manifest and prep output already confirm isolated runtime-home routing."
   fi
 }
 
@@ -742,14 +773,11 @@ run_loop_and_closeout() {
     ./scripts/ralph/ralph-sprint.sh use "$SELFTEST_SPRINT"
   )
 
-  if [ -n "$WORKTREE_BASE_BRANCH" ]; then
-    git -C "$REPO_ROOT" branch -D "$WORKTREE_BASE_BRANCH" >/dev/null 2>&1 || true
-    WORKTREE_BASE_BRANCH=""
-  fi
-
   (
     cd "$WORKTREE_DIR"
-    RALPH_HEARTBEAT_INTERVAL_SECONDS="$HEARTBEAT_INTERVAL" ./scripts/ralph/ralph.sh > "$ARTIFACT_DIR/loop.out" 2>&1
+    RALPH_HEARTBEAT_INTERVAL_SECONDS="$HEARTBEAT_INTERVAL" \
+    RALPH_DISABLE_COMPOSITES="$SELFTEST_LOOP_DISABLE_COMPOSITES" \
+    ./scripts/ralph/ralph.sh > "$ARTIFACT_DIR/loop.out" 2>&1
   ) &
   local loop_pid=$!
 
@@ -762,7 +790,7 @@ run_loop_and_closeout() {
   )
   assert_contains "$ARTIFACT_DIR/status-final.out" "Loop: stopped" "final status"
 
-  local stories_json="$WORKTREE_DIR/scripts/ralph/backlog/$SELFTEST_SPRINT/stories.json"
+  local stories_json="$WORKTREE_DIR/scripts/ralph/sprints/$SELFTEST_SPRINT/stories.json"
   assert_json_value "$stories_json" 'all(.stories[]; .status == "done")' "all self-test stories done"
 
   (
@@ -783,6 +811,8 @@ parse_args() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --exercise-prepare) EXERCISE_PREP=1; shift ;;
+      --disable-composites-loop) SELFTEST_LOOP_DISABLE_COMPOSITES=1; shift ;;
+      --full-composite-loop) SELFTEST_LOOP_DISABLE_COMPOSITES=0; shift ;;
       --keep-worktree) KEEP_WORKTREE=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) fail "Unknown option: $1" ;;
@@ -812,6 +842,7 @@ main() {
   copy_project_env_if_present
   seed_fixture_files
   write_story_files
+  prune_stale_selftest_story_branches
   run_prepare_smoke_if_requested
   validate_doctor_output
   validate_complexity_and_tier_matrix

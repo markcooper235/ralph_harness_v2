@@ -373,15 +373,6 @@ fi
 
 ensure_transient_files_untracked
 
-# Mark sprint as closed in stories.json
-TMP_FILE="$(mktemp)"
-jq '.status = "closed"' "$STORIES_FILE" > "$TMP_FILE"
-mv "$TMP_FILE" "$STORIES_FILE"
-if ! git diff --quiet -- "$STORIES_FILE"; then
-  git add "$STORIES_FILE"
-  git commit -m "chore(ralph): mark sprint $ACTIVE_SPRINT closed"
-fi
-
 # Clear active Ralph state for next sprint
 rm -f "$ACTIVE_SPRINT_FILE" "$ACTIVE_PRD_FILE" "$LAST_BRANCH_FILE"
 
