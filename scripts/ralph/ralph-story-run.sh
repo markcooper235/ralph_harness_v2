@@ -483,17 +483,22 @@ start_heartbeat() {
   local label="$1"
   stop_heartbeat
   (
+    local sleep_pid=""
+    trap 'if [ -n "$sleep_pid" ]; then kill "$sleep_pid" 2>/dev/null || true; wait "$sleep_pid" 2>/dev/null || true; fi; exit 0' INT TERM
     local started_epoch
     started_epoch="$(date +%s)"
     while true; do
-      sleep "$HEARTBEAT_INTERVAL_SECONDS" || exit 0
+      sleep "$HEARTBEAT_INTERVAL_SECONDS" &
+      sleep_pid=$!
+      wait "$sleep_pid" || exit 0
+      sleep_pid=""
       touch_story_runtime_progress
       touch_sprint_runtime_progress
       local elapsed
       elapsed=$(( $(date +%s) - started_epoch ))
       log "Heartbeat: story=$STORY_ID phase=$STORY_RUNTIME_PHASE label=$label elapsed=${elapsed}s"
     done
-  ) &
+  ) >> "$STORY_LOG_DIR/heartbeat.log" 2>&1 &
   STORY_HEARTBEAT_PID=$!
 }
 
@@ -982,6 +987,13 @@ elif [ "$harness" = "piagent" ]; then
 Harness: piagent
 - The `pi-subagents` package is installed.
 - Use the `subagent` tool to delegate fanout/chain steps and let Pi manage child-agent orchestration.
+HINT
+elif [ "$harness" = "codex" ]; then
+  cat <<'HINT'
+Harness: codex
+- Stay in a single-agent flow for Ralph composite execution.
+- Do not spawn child agents or use collaboration/subagent orchestration tools.
+- Emulate the listed fanout/chain structure yourself with short internal checkpoints and explicit verification before finishing.
 HINT
 else
   cat <<'HINT'

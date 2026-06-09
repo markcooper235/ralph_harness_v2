@@ -83,6 +83,22 @@ story_harness_profile_push() {
       STORY_HARNESS_PROFILE_ORIG_COMPOSITE_STEPS_JSON=""
     fi
 
+    STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE_SET=0
+    if [ "${RALPH_HARNESS_OVERRIDE+x}" = "x" ]; then
+      STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE_SET=1
+      STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE="${RALPH_HARNESS_OVERRIDE:-}"
+    else
+      STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE=""
+    fi
+
+    STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE_SET=0
+    if [ "${RALPH_HARNESS_SELECTION_SOURCE+x}" = "x" ]; then
+      STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE_SET=1
+      STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE="${RALPH_HARNESS_SELECTION_SOURCE:-}"
+    else
+      STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE=""
+    fi
+
     tmp_story_meta="$(mktemp)"
     printf '%s' "$story_meta_json" | jq '{
       title: (.title // ""),
@@ -183,6 +199,20 @@ story_harness_profile_pop() {
         RALPH_COMPOSITE_STEPS_JSON
     fi
 
+    if [ "${STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE_SET:-0}" -eq 1 ]; then
+      RALPH_HARNESS_OVERRIDE="${STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE:-}"
+      export RALPH_HARNESS_OVERRIDE
+    else
+      unset RALPH_HARNESS_OVERRIDE
+    fi
+
+    if [ "${STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE_SET:-0}" -eq 1 ]; then
+      RALPH_HARNESS_SELECTION_SOURCE="${STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE:-}"
+      export RALPH_HARNESS_SELECTION_SOURCE
+    else
+      unset RALPH_HARNESS_SELECTION_SOURCE
+    fi
+
     unset STORY_HARNESS_PROFILE_ORIG_MODEL_SET
     unset STORY_HARNESS_PROFILE_ORIG_MODEL
     unset STORY_HARNESS_PROFILE_ORIG_AGENT_SET
@@ -194,6 +224,10 @@ story_harness_profile_pop() {
     unset STORY_HARNESS_PROFILE_ORIG_COMPOSITE_REQUIRED_EXTENSIONS_JSON
     unset STORY_HARNESS_PROFILE_ORIG_COMPOSITE_SUBAGENT_ROLES_JSON
     unset STORY_HARNESS_PROFILE_ORIG_COMPOSITE_STEPS_JSON
+    unset STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE_SET
+    unset STORY_HARNESS_PROFILE_ORIG_HARNESS_OVERRIDE
+    unset STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE_SET
+    unset STORY_HARNESS_PROFILE_ORIG_HARNESS_SELECTION_SOURCE
     unset STORY_HARNESS_EFFECTIVE_AGENT
     unset STORY_COMPLEXITY_SCORE
     unset STORY_COMPLEXITY_TIER
@@ -216,16 +250,21 @@ prep_heartbeat_start() {
   local label="$1"
   prep_heartbeat_stop
   (
+    local sleep_pid=""
+    trap 'if [ -n "$sleep_pid" ]; then kill "$sleep_pid" 2>/dev/null || true; wait "$sleep_pid" 2>/dev/null || true; fi; exit 0' INT TERM
     local started_epoch
     started_epoch="$(epoch_seconds)"
     while true; do
-      sleep "${RALPH_HEARTBEAT_INTERVAL_SECONDS:-45}" || exit 0
+      sleep "${RALPH_HEARTBEAT_INTERVAL_SECONDS:-45}" &
+      sleep_pid=$!
+      wait "$sleep_pid" || exit 0
+      sleep_pid=""
       prep_touch_summary "${RALPH_PREP_PHASE:-unknown}" "${RALPH_PREP_ACTIVE_STORY_ID:-}" "${RALPH_PREP_ACTIVE_STAGE:-}" "${RALPH_PREP_EXECUTION_PROFILE_JSON:-null}"
       local elapsed
       elapsed=$(( $(epoch_seconds) - started_epoch ))
       echo "Heartbeat: prep phase=${RALPH_PREP_PHASE:-unknown} label=$label elapsed=${elapsed}s"
     done
-  ) &
+  ) >> "${SCRIPT_DIR}/runtime/prep-heartbeat.log" 2>&1 &
   RALPH_PREP_HEARTBEAT_PID=$!
 }
 

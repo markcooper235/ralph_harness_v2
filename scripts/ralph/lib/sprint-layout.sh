@@ -1,12 +1,16 @@
 #!/bin/bash
 # Shared sprint/backlog/archive layout helpers for Ralph.
 
+# Resolve the Ralph script root even when this helper is sourced by callers that
+# do not export/use a uniform SCRIPT_DIR variable name.
+RALPH_LAYOUT_SCRIPT_DIR="${RALPH_LAYOUT_SCRIPT_DIR:-${SCRIPT_DIR:-${RALPH_SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}}"
+
 ralph_backlog_root() {
-  printf '%s/backlog\n' "$SCRIPT_DIR"
+  printf '%s/backlog\n' "$RALPH_LAYOUT_SCRIPT_DIR"
 }
 
 ralph_sprints_root() {
-  printf '%s/sprints\n' "$SCRIPT_DIR"
+  printf '%s/sprints\n' "$RALPH_LAYOUT_SCRIPT_DIR"
 }
 
 ralph_archive_root() {
